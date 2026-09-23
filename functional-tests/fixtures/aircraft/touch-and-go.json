@@ -1,0 +1,54 @@
+{
+  "id": "ft-touch-and-go",
+  "label": "Functional Test: Touch-and-Go Detection",
+  "description": "Aircraft descends to destination airport, taxis, then immediately takes off again within 2 minutes. Triggers TOUCH_AND_GO alert on agent-atc-alerts.",
+  "rule": "Touch-and-go: status was LANDING or GROUNDED, altitude starts rising, time since last event < 2 minutes",
+  "expected_alert_type": "TOUCH_AND_GO",
+  "expected_output_topic": "agent-atc-alerts",
+  "events": [
+    {
+      "type": "AircraftEvent",
+      "topic": "agent-aircraft-events",
+      "payload": {
+        "timestamp": "2026-09-09T16:40:00Z",
+        "aircraftId": "FT-AC-001",
+        "description": "FT descending toward NCE",
+        "airportCode": "NCE",
+        "position": { "latitude": 43.6584, "longitude": 7.2160, "elevation": 56 },
+        "groundSpeed": 350,
+        "type": "IN_FLIGHT"
+      }
+    },
+    {
+      "type": "AircraftEvent",
+      "topic": "agent-aircraft-events",
+      "payload": {
+        "timestamp": "2026-09-09T16:41:00Z",
+        "aircraftId": "FT-AC-001",
+        "description": "FT taxiing at destination (landed)",
+        "airportCode": "NCE",
+        "position": { "latitude": 43.6584, "longitude": 7.21595, "elevation": 4 },
+        "groundSpeed": 189,
+        "type": "TAXIING"
+      }
+    },
+    {
+      "type": "AircraftEvent",
+      "topic": "agent-aircraft-events",
+      "payload": {
+        "timestamp": "2026-09-09T16:42:00Z",
+        "aircraftId": "FT-AC-001",
+        "description": "FT taking off again (touch and go)",
+        "airportCode": "NCE",
+        "position": { "latitude": 43.6584, "longitude": 7.2158, "elevation": 78 },
+        "groundSpeed": 250,
+        "type": "IN_FLIGHT"
+      }
+    }
+  ],
+  "expected_output": {
+    "topic": "agent-atc-alerts",
+    "contains_fields": ["aircraftId", "flightNumber"],
+    "alert_type": "TOUCH_AND_GO"
+  }
+}

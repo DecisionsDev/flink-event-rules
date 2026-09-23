@@ -1,0 +1,20 @@
+{
+  "id": "ft-aircraft-initialization",
+  "label": "Functional Test: Aircraft Initialization",
+  "description": "Initialize one aircraft (AF082, CDG→NCE). No alert expected.",
+  "events": [
+    {
+      "type": "AircraftInitializationEvent",
+      "topic": "agent-aircraft-init-events",
+      "payload": {
+        "timestamp": "2026-09-09T15:00:00Z",
+        "aircraftId": "FT-AC-001",
+        "flightNumber": "FT-FL-001",
+        "originAirport": "CDG",
+        "destinationAirport": "NCE",
+        "position": { "latitude": 49.0097, "longitude": 2.5478, "elevation": 119 },
+        "groundSpeed": 0
+      }
+    }
+  ]
+}

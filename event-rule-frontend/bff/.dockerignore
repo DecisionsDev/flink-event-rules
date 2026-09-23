@@ -1,0 +1,8 @@
+# IMPORTANT: node_modules/ is now REQUIRED for Docker image
+# Remove node_modules from ignore since we need pre-installed dependencies
+# node_modules
+npm-debug.log
+.git
+.gitignore
+README.md
+.npmrc

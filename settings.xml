@@ -1,0 +1,91 @@
+<!--
+   Copyright IBM Corp. 2026
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 http://maven.apache.org/xsd/settings-1.2.0.xsd">
+
+    <!--
+        maven-designer — uses a locally installed Decision Designer instance as a Maven
+                         repository to resolve execution-api.jar, engine-de-api.jar, and
+                         foundation.jar.
+                         Requires:
+                           DI_ZEN_HOSTNAME     — Decision Designer hostname (no https://)
+                           DI_ZEN_API_KEY_B64  — base64(username:apikey)
+                             Compute with: printf 'user:key' | base64
+
+                         TLS: if your Decision Designer uses a self-signed certificate, either:
+                           - Import the Zen CA into your JVM truststore, OR
+                           - Pass -Dmaven.wagon.http.ssl.insecure=true  (CI/dev only)
+
+                         Activate with:  mvn ... -P maven-designer
+                         Use scripts/resolve-di-dependencies.sh to set up credentials and
+                         resolve all required JARs before building.
+    -->
+
+    <profiles>
+
+        <profile>
+            <id>maven-designer</id>
+            <repositories>
+                <repository>
+                    <id>ads-maven</id>
+                    <name>ADS Decision Designer Maven repository</name>
+                    <url>https://${env.DI_ZEN_HOSTNAME}/ads/static/maven-releases</url>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                    <releases>
+                        <updatePolicy>never</updatePolicy>
+                    </releases>
+                </repository>
+            </repositories>
+            <pluginRepositories>
+                <pluginRepository>
+                    <id>ads-maven</id>
+                    <name>ADS Decision Designer Maven repository</name>
+                    <url>https://${env.DI_ZEN_HOSTNAME}/ads/static/maven-releases</url>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                    <releases>
+                        <updatePolicy>never</updatePolicy>
+                    </releases>
+                </pluginRepository>
+            </pluginRepositories>
+        </profile>
+
+    </profiles>
+
+    <servers>
+        <!-- Zen API key for Decision Designer Maven repository.
+             DI_ZEN_API_KEY_B64 = base64(username:apikey)
+             Compute with: printf 'myuser:my-api-key' | base64
+             Or run: ./scripts/resolve-di-dependencies.sh -->
+        <server>
+            <id>ads-maven</id>
+            <configuration>
+                <httpHeaders>
+                    <property>
+                        <name>Authorization</name>
+                        <value>ZenApiKey ${env.DI_ZEN_API_KEY_B64}</value>
+                    </property>
+                </httpHeaders>
+            </configuration>
+        </server>
+    </servers>
+
+</settings>

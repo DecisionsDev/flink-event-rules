@@ -1,0 +1,89 @@
+{
+  "agents": [
+    {
+      "agentId": "banking-fraud-agent",
+      "name": "Banking Fraud Detection Agent",
+      "entityType": "Account",
+      "entityKeyExtractor": "$.accountNumber",
+      "subscriptions": [
+        {
+          "eventType": "Transaction",
+          "topic": "agent-transactions",
+          "operation": "EvaluateTransaction",
+          "horizon": {
+            "type": "hybrid",
+            "countLimit": 100,
+            "timeLimit": "30d",
+            "description": "Keep last 100 transactions or 24 hours of history"
+          }
+        },
+        {
+          "eventType": "AccountEvent",
+          "topic": "agent-account-events",
+          "operation": "HandleAccountEvent",
+          "horizon": {
+            "type": "count",
+            "value": 100,
+            "description": "Keep the last 100 account events"
+          }
+        }
+      ],
+      "ruleset": {
+        "path": "samples/banking-fraud-agent/FraudDetectionService_1.5.2.jar",
+        "archiveControlTopic": "agent-banking-archive-control",
+        "operations": [
+          {
+            "operation": "EvaluateTransaction",
+            "entityField": "theAccount",
+            "currentEventField": "theTransaction",
+            "history": [
+              {
+                "eventType": "Transaction",
+                "field": "thePastTransactions"
+              },
+              {
+                "eventType": "AccountEvent",
+                "field": "thePastAccountEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "theFraudAlerts",
+                "eventType": "Alert"
+              }
+            ]
+          },
+          {
+            "operation": "HandleAccountEvent",
+            "entityField": "account",
+            "currentEventField": "accountEvent",
+            "history": [
+              {
+                "eventType": "AccountEvent",
+                "field": "pastAccountEvents"
+              }
+            ]
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "eventType": "Alert",
+          "topic": "agent-fraud-alerts",
+          "description": "Transactions flagged as fraudulent"
+        },
+        {
+          "eventType": "agent-error",
+          "topic": "agent-banking-errors",
+          "description": "Processing errors for investigation"
+        }
+      ],
+      "stateConfig": {
+        "ttl": "30d",
+        "backend": "rocksdb",
+        "changeLogTopic": "agent-account-entity-changelog"
+      },
+      "parallelism": 1
+    }
+  ]
+}

@@ -1,0 +1,227 @@
+# Copyright IBM Corp. 2026
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+services:
+  # Kafka Broker — KRaft mode (no ZooKeeper required)
+  kafka:
+    image: ${KAFKA_IMAGE}
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
+      # Heap size configuration (50% of container memory)
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx1024m"
+      TOPIC_PARTITIONS: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - event-rule-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # Flink JobManager
+  jobmanager:
+    image: ${FLINK_IMAGE}
+    container_name: event-rule-backend-jobmanager
+    command: jobmanager
+    ports:
+      - "8081:8081"
+      - "6123:6123"
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2.5G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        jobmanager.rpc.port: 6123
+        jobmanager.memory.process.size: 2048m
+        taskmanager.memory.process.size: 1728m
+        taskmanager.numberOfTaskSlots: 6
+        parallelism.default: 1
+        rest.port: 8081
+        rest.address: 0.0.0.0
+        execution.checkpointing.interval: 60000
+        execution.checkpointing.mode: EXACTLY_ONCE
+        execution.checkpointing.timeout: 300000
+        execution.checkpointing.min-pause: 30000
+        execution.checkpointing.tolerable-failed-checkpoints: 2
+        state.backend.type: rocksdb
+        state.backend.rocksdb.localdir: /tmp/flink-rocksdb
+        heartbeat.timeout: 300000
+        heartbeat.interval: 50000
+        pekko.ask.timeout: 120s
+        pekko.tcp.timeout: 120s
+        restart-strategy.type: fixed-delay
+        restart-strategy.fixed-delay.attempts: 10
+        restart-strategy.fixed-delay.delay: 10 s
+      - JVM_ARGS=-XX:+UseG1GC
+      # Disable in-process agent chaining. Set to "true" to opt in to chaining.
+      - CHAINING_ENABLED=${CHAINING_ENABLED:-false}
+    volumes:
+      - ./event-rule-backend/target:/opt/flink/usrlib
+      - ./samples:/opt/flink/samples
+      - ./event-rule-backend/src/main/resources/log4j2.properties:/opt/flink/conf/log4j-console.properties:ro
+    networks:
+      event-rule-network:
+        aliases:
+          - jobmanager
+          - flink-jobmanager
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/8081 && echo -e \"GET /overview HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && grep -q flink-version <&3'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Flink TaskManager
+  taskmanager:
+    image: ${FLINK_IMAGE}
+    container_name: event-rule-backend-taskmanager
+    command: taskmanager
+    depends_on:
+      kafka:
+        condition: service_healthy
+      jobmanager:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3G
+        reservations:
+          cpus: '1.0'
+          memory: 1.5G
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        jobmanager.rpc.port: 6123
+        taskmanager.memory.process.size: 2048m
+        taskmanager.memory.flink.size: 1536m
+        taskmanager.numberOfTaskSlots: 6
+        taskmanager.registration.timeout: 10min
+        taskmanager.registration.max-backoff: 30s
+        parallelism.default: 1
+        heartbeat.timeout: 300000
+        heartbeat.interval: 50000
+        pekko.ask.timeout: 120s
+        pekko.tcp.timeout: 120s
+        restart-strategy.type: fixed-delay
+        restart-strategy.fixed-delay.attempts: 10
+        restart-strategy.fixed-delay.delay: 10 s
+      - JVM_ARGS=-XX:+UseG1GC -XX:MaxGCPauseMillis=200
+      # Disable in-process agent chaining. Set to "true" to opt in to chaining.
+      - CHAINING_ENABLED=${CHAINING_ENABLED:-false}
+    volumes:
+      - ./event-rule-backend/target:/opt/flink/usrlib
+      - ./samples:/opt/flink/samples
+      - ./event-rule-backend/src/main/resources/log4j2.properties:/opt/flink/conf/log4j-console.properties:ro
+    networks:
+      event-rule-network:
+        aliases:
+          - taskmanager
+          - flink-taskmanager
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/flink/bin/flink list -m jobmanager:8081 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 15s
+      retries: 8
+      start_period: 90s
+
+  # BFF - Backend-for-Frontend (Kafka to WebSocket bridge)
+  bff:
+    build:
+      context: ./event-rule-frontend/bff
+      dockerfile: Dockerfile
+    container_name: event-rule-bff
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      TOPIC_PARTITIONS: 1
+      PORT: 8080
+      SAMPLES_DIR: /app/samples
+      FLINK_URL: http://jobmanager:8081
+      JAR_PATH: /app/flink-jars/event-rule-backend-1.0-SNAPSHOT.jar
+      DI_RUNTIMES: ${DI_RUNTIMES:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./samples:/app/samples
+      - ./event-rule-backend/target:/app/flink-jars:ro
+    networks:
+      - event-rule-network
+    restart: unless-stopped
+
+  # Frontend - React Application
+  frontend:
+    build:
+      context: ./event-rule-frontend
+      dockerfile: Dockerfile
+    container_name: event-rule-frontend
+    depends_on:
+      - bff
+    environment:
+      VITE_WS_URL: ws://localhost:8080
+    ports:
+      - "3010:80"
+    networks:
+      - event-rule-network
+    restart: unless-stopped
+
+networks:
+  event-rule-network:
+    driver: bridge
+
+volumes:
+  # Named volume for Kafka KRaft data — survives container restarts
+  kafka-data:
+

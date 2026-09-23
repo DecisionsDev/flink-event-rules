@@ -1,0 +1,108 @@
+<!--
+   Copyright IBM Corp. 2026
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>com.ibm.di.event</groupId>
+	<artifactId>event-rule-parent</artifactId>
+	<version>1.0-SNAPSHOT</version>
+	<packaging>pom</packaging>
+
+	<name>Event Rule Parent</name>
+	<description>Parent project for Event Rule application with backend and frontend modules</description>
+
+	<modules>
+		<module>event-rule-backend</module>
+		<module>event-rule-frontend</module>
+	</modules>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<maven.compiler.source>21</maven.compiler.source>
+		<maven.compiler.target>21</maven.compiler.target>
+		<!-- Shared artifact versions — child modules reference these without repeating the version -->
+		<jackson.version>2.16.2</jackson.version>
+		<foundation.version>16.7.3</foundation.version>
+		<execution.api.version>4.1.4</execution.api.version>
+		<engine.de.api.version>3.12.0</engine.de.api.version>
+	</properties>
+
+	<dependencyManagement>
+		<dependencies>
+			<!-- Jackson BOM-style alignment — versions pinned once here, inherited by all modules -->
+			<dependency>
+				<groupId>com.fasterxml.jackson.core</groupId>
+				<artifactId>jackson-core</artifactId>
+				<version>${jackson.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>com.fasterxml.jackson.core</groupId>
+				<artifactId>jackson-databind</artifactId>
+				<version>${jackson.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>com.fasterxml.jackson.core</groupId>
+				<artifactId>jackson-annotations</artifactId>
+				<version>${jackson.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>com.fasterxml.jackson.datatype</groupId>
+				<artifactId>jackson-datatype-jsr310</artifactId>
+				<version>${jackson.version}</version>
+			</dependency>
+			<!-- IBM Decision artifacts — versions discovered via /ads/index.json -->
+			<dependency>
+				<groupId>com.ibm.decision</groupId>
+				<artifactId>foundation</artifactId>
+				<version>${foundation.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>com.ibm.decision.execution</groupId>
+				<artifactId>execution-api</artifactId>
+				<version>${execution.api.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>com.ibm.decision</groupId>
+				<artifactId>engine-de-api</artifactId>
+				<version>${engine.de.api.version}</version>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
+	<build>
+		<pluginManagement>
+			<plugins>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-compiler-plugin</artifactId>
+					<version>3.11.0</version>
+				</plugin>
+				<plugin>
+					<groupId>org.jacoco</groupId>
+					<artifactId>jacoco-maven-plugin</artifactId>
+					<version>0.8.13</version>
+				</plugin>
+				<plugin>
+					<groupId>com.github.eirslett</groupId>
+					<artifactId>frontend-maven-plugin</artifactId>
+					<version>1.15.0</version>
+				</plugin>
+			</plugins>
+		</pluginManagement>
+	</build>
+</project>
+

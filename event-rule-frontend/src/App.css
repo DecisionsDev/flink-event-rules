@@ -1,0 +1,2659 @@
+/* ─── Design tokens ──────────────────────────────────────────────────────────
+   Single source of truth for colours, spacing, and typography so every
+   component feels part of the same system.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --bg:          #f4f6f9;
+  --surface:     #ffffff;
+  --surface-alt: #f8fafc;
+  --border:      #e5e7eb;
+  --border-soft: #f0f2f5;
+  --text:        #1f2328;
+  --text-muted:  #57606a;
+  --text-faint:  #9ca3af;
+  --accent:      #2563eb;
+  --accent-soft: #eff6ff;
+  --accent-border: #bfdbfe;
+  --green:       #16a34a;
+  --green-soft:  #f0fdf4;
+  --green-border:#86efac;
+  --amber:       #b45309;
+  --amber-soft:  #fffbeb;
+  --amber-border:#fbbf24;
+  --red:         #b91c1c;
+  --red-soft:    #fef2f2;
+  --red-border:  #fca5a5;
+  --purple:      #7c3aed;
+  --purple-soft: #faf5ff;
+  --radius-sm:   6px;
+  --radius-md:   10px;
+  --radius-lg:   14px;
+  --shadow-sm:   0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:   0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-lg:   0 8px 24px rgba(0,0,0,0.1),  0 4px 8px rgba(0,0,0,0.04);
+}
+
+/* ─── App shell ──────────────────────────────────────────────────────────── */
+.App {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* ─── Header ─────────────────────────────────────────────────────────────── */
+.App-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  min-height: 64px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--shadow-sm);
+}
+
+.App-header-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.App-header h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.App-header-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0;
+  font-weight: 400;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* ─── Connection status pill ─────────────────────────────────────────────── */
+.connection-status {
+  padding: 4px 12px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.connection-status.connected {
+  background: var(--green-soft);
+  color: var(--green);
+  border-color: var(--green-border);
+}
+
+.connection-status.connecting\.\.\.,
+.connection-status.reconnecting\.\.\. {
+  background: var(--amber-soft);
+  color: var(--amber);
+  border-color: var(--amber-border);
+}
+
+.connection-status.disconnected,
+.connection-status.error,
+.connection-status.failed {
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: var(--red-border);
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.connection-status.connected .status-indicator {
+  background-color: var(--green);
+  animation: pulse 2.2s ease-in-out infinite;
+}
+
+.connection-status.connecting\.\.\. .status-indicator,
+.connection-status.reconnecting\.\.\. .status-indicator {
+  background-color: var(--amber);
+  animation: blink 1s ease-in-out infinite;
+}
+
+.connection-status.disconnected .status-indicator,
+.connection-status.error .status-indicator,
+.connection-status.failed .status-indicator {
+  background-color: var(--red);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1);   }
+  50%       { opacity: 0.5; transform: scale(0.9); }
+}
+
+@keyframes blink {
+  0%, 50%, 100% { opacity: 1; }
+  25%, 75%      { opacity: 0.25; }
+}
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+.change-use-case-button,
+.reconnect-button,
+.refresh-button {
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.change-use-case-button:hover,
+.reconnect-button:hover,
+.refresh-button:hover {
+  background: #dbeafe;
+  box-shadow: var(--shadow-sm);
+}
+
+.change-use-case-button:active,
+.reconnect-button:active,
+.refresh-button:active {
+  transform: translateY(1px);
+}
+
+.reconnect-button {
+  display: inline-block;
+  margin-top: 0.75rem;
+}
+
+.refresh-button {
+  display: block;
+  margin: 1.5rem auto;
+}
+
+/* ─── Main content area ──────────────────────────────────────────────────── */
+.App-main {
+  flex: 1;
+  padding: 1.5rem 2rem 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+/* ─── Full-width layout for Landing / DI pages ───────────────────────────── */
+.App-main--fullwidth {
+  max-width: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+}
+
+/* ─── Dashboard split-pane layout ────────────────────────────────────────── */
+.App-main--split {
+  max-width: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dashboard-split {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  height: calc(100vh - 64px); /* header height */
+  overflow: hidden;
+}
+
+/* Left pane — scenarios / agent management */
+.dashboard-left {
+  flex: 0 0 45%;
+  overflow-y: auto;
+  padding: 1.25rem 1.25rem 2rem;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  min-width: 220px;
+}
+
+/* Draggable splitter bar */
+.dashboard-splitter {
+  flex-shrink: 0;
+  width: 6px;
+  background: var(--border);
+  cursor: col-resize;
+  position: relative;
+  transition: background 0.15s;
+  z-index: 10;
+}
+
+.dashboard-splitter:hover,
+.dashboard-splitter:active {
+  background: var(--accent-border);
+}
+
+.dashboard-splitter::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 32px;
+  border-radius: 2px;
+  background: var(--text-faint);
+  opacity: 0.5;
+}
+
+/* Right pane — topic panels */
+.dashboard-right {
+  flex: 0 0 55%;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 2rem;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.dashboard-right-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.clean-topics-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.clean-topics-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.clean-topics-btn:not(:disabled):hover {
+  background: var(--red-soft);
+  border-color: var(--red-border);
+  color: var(--red);
+}
+
+.clean-topics-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.clean-topics-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: clean-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes clean-spin {
+  to { transform: rotate(360deg); }
+}
+
+.clean-topics-error {
+  font-size: 0.75rem;
+  color: var(--red);
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+
+@media (max-width: 768px) {
+  .dashboard-split {
+    flex-direction: column;
+    height: auto;
+  }
+
+  .dashboard-left {
+    width: 100% !important;
+    min-width: unset !important;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1rem;
+  }
+
+  .dashboard-splitter {
+    display: none;
+  }
+
+  .dashboard-right {
+    padding-top: 1rem;
+  }
+}
+
+/* ─── Loading / error states ─────────────────────────────────────────────── */
+.loading,
+.error {
+  text-align: center;
+  padding: 1.5rem;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin: 1.5rem 0;
+}
+
+.error {
+  color: var(--red);
+  border-color: var(--red-border);
+  background: var(--red-soft);
+}
+
+/* ─── Data sections ──────────────────────────────────────────────────────── */
+.data-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.5rem 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.data-section h2 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* ─── Topic role colour coding ───────────────────────────────────────────── */
+/* input-only  → green left border  */
+.topic-role--input  { border-top: 3px solid var(--green); }
+/* output-only → blue left border (matches the existing outbound accent) */
+.topic-role--output { border-top: 3px solid var(--accent); }
+/* both        → amber left border (signals the dual role) */
+.topic-role--both   { border-top: 3px solid var(--amber); }
+
+/* Role badge shown in the section <h2> */
+.topic-role-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.topic-role-badge--input {
+  background: var(--green-soft);
+  color: var(--green);
+  border: 1px solid var(--green-border);
+}
+
+.topic-role-badge--output {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+}
+
+.topic-role-badge--both {
+  background: var(--amber-soft);
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
+}
+
+/* Keep the old outbound-section class working for any other potential callers */
+.outbound-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.5rem 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+  border-top: 3px solid var(--accent);
+}
+
+.outbound-section h2 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* ─── Data count + toolbar ───────────────────────────────────────────────── */
+.data-count {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.outbound-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.outbound-toolbar .data-count {
+  margin-bottom: 0;
+}
+
+.filtered-count {
+  font-weight: 400;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+
+/* ─── Toggle switch ──────────────────────────────────────────────────────── */
+.toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background-color: #d1d5db;
+  border-radius: 18px;
+  transition: background-color 0.2s;
+  cursor: pointer;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  left: 3px;
+  top: 3px;
+  background-color: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+}
+
+.toggle-switch input:focus-visible + .toggle-slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ─── Event list ─────────────────────────────────────────────────────────── */
+.data-list {
+  max-height: 480px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.data-list > p {
+  color: var(--text-faint);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 1.5rem 0;
+  margin: 0;
+}
+
+/* ─── Generic event card ─────────────────────────────────────────────────── */
+.data-item {
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.data-item:last-child {
+  margin-bottom: 0;
+}
+
+.event-field {
+  margin-bottom: 3px;
+  word-break: break-word;
+}
+
+.event-field:last-child {
+  margin-bottom: 0;
+}
+
+.event-field strong {
+  color: var(--text);
+  margin-right: 6px;
+  min-width: 100px;
+  display: inline-block;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+/* ─── Decision result card — generic rule-engine output ──────────────────── */
+.decision-result-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.decision-result-card:last-child {
+  margin-bottom: 0;
+}
+
+/* ─── Entity event card — generic inbound entity events ─────────────────── */
+.entity-event-card {
+  border-left-color: var(--accent);
+  background: var(--surface);
+}
+
+/* ─── Entity chips — small context/signal tags on entity cards ───────────── */
+.entity-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.entity-chip-neutral { background: #f8fafc; color: #64748b; border: 1px solid #cbd5e1; }
+
+/* ─── Send Events Panel ──────────────────────────────────────────────────── */
+.send-events-section {
+  background: var(--surface);
+  border-top: 3px solid #7c3aed;
+}
+
+.send-events-section h2 {
+  border-bottom-color: var(--border-soft);
+}
+
+.section-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.section-toggle-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+/* ─── Scenario grid ──────────────────────────────────────────────────────── */
+.scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.scenario-card {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.scenario-card:hover {
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.scenario-label {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.scenario-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  flex: 1;
+  line-height: 1.5;
+}
+
+.scenario-btn {
+  margin-top: 4px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--surface);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+  align-self: flex-start;
+}
+
+.scenario-btn:hover {
+  opacity: 0.88;
+}
+
+.scenario-btn:active {
+  transform: translateY(1px);
+}
+
+.scenario-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.scenario-result {
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+/* ─── Scenario selected-card badge ──────────────────────────────────────── */
+.scenario-card-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.scenario-selected-badge {
+  display: inline-block;
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  padding: 1px 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ─── Scenario split layout ──────────────────────────────────────────────── */
+.scenario-split {
+  width: 100%;
+}
+
+/* When an editor is open, switch to a stacked flex column */
+.scenario-split--active {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Top pane: scenario grid, scrollable */
+.scenario-split-top {
+  flex-shrink: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.scenario-split--active .scenario-split-top {
+  /* height is set inline in px */
+  overflow-y: auto;
+}
+
+/* Draggable splitter bar — horizontal */
+.scenario-splitter {
+  flex-shrink: 0;
+  height: 6px;
+  width: 100%;
+  background: var(--border);
+  cursor: row-resize;
+  position: relative;
+  transition: background 0.15s;
+  border-radius: 3px;
+  margin: 2px 0;
+}
+
+.scenario-splitter:hover,
+.scenario-splitter:active {
+  background: var(--accent-border);
+}
+
+.scenario-splitter::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  height: 2px;
+  width: 28px;
+  border-radius: 2px;
+  background: var(--text-faint);
+  opacity: 0.5;
+}
+
+/* Bottom pane: editor panel, takes remaining height */
+.scenario-split-bottom {
+  flex: 1;
+  min-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* ─── Scenario inline editor panel ──────────────────────────────────────── */
+.scenario-editor-panel {
+  margin-top: 14px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-alt);
+  overflow: hidden;
+}
+
+/* When inside the split layout the outer margin is handled by the flex gap */
+.scenario-editor-panel--split {
+  margin-top: 0;
+}
+
+.scenario-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px 9px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.scenario-editor-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.scenario-editor-hint {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.78rem;
+}
+
+.scenario-editor-reset-btn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.scenario-editor-reset-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+
+.scenario-editor-reset-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.scenario-editor-field {
+  padding: 12px 14px 0;
+}
+
+.scenario-editor-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.scenario-editor-textarea {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  max-height: 380px;
+  padding: 10px 12px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+  box-sizing: border-box;
+  overflow-y: auto;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.scenario-editor-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.scenario-editor-textarea.scenario-editor-textarea-error {
+  border-color: #b91c1c;
+  box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.12);
+}
+
+.scenario-editor-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.scenario-editor-error-msg {
+  margin-top: 5px;
+  font-size: 0.75rem;
+  color: #b91c1c;
+  font-weight: 500;
+}
+
+.scenario-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 10px 14px;
+}
+
+.scenario-run-btn {
+  flex-shrink: 0;
+}
+
+/* Save scenario button */
+.scenario-save-btn {
+  flex-shrink: 0;
+  background: var(--surface);
+  color: var(--accent);
+  border: 1px solid var(--accent-border) !important;
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+
+.scenario-save-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-sm);
+}
+
+.scenario-save-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.scenario-save-btn--saved {
+  background: var(--green-soft) !important;
+  color: var(--green) !important;
+  border-color: var(--green-border) !important;
+}
+
+/* ── Delete button & inline confirm ──────────────────────────────────────── */
+.scenario-editor-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.scenario-delete-btn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.scenario-delete-btn:hover:not(:disabled) {
+  background: #fecaca;
+}
+
+.scenario-delete-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.scenario-delete-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.scenario-delete-confirm-msg {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--red);
+  white-space: nowrap;
+}
+
+.scenario-delete-confirm-yes {
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--surface);
+  background: var(--red);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.12s;
+}
+
+.scenario-delete-confirm-yes:hover { opacity: 0.88; }
+
+.scenario-delete-confirm-no {
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s;
+}
+
+.scenario-delete-confirm-no:hover { background: var(--surface-alt); }
+
+/* ── CRUD error banner ────────────────────────────────────────────────────── */
+.scenario-crud-error {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  margin-top: 8px;
+  margin-bottom: 2px;
+}
+
+/* ── Toolbar (description + New Scenario button) ─────────────────────────── */
+.send-events-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 1rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.scenario-add-btn {
+  flex-shrink: 0;
+  padding: 5px 13px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+
+.scenario-add-btn:hover {
+  background: #dbeafe;
+  box-shadow: var(--shadow-sm);
+}
+
+.scenario-add-btn:active {
+  transform: translateY(1px);
+}
+
+/* ── New scenario inline form ─────────────────────────────────────────────── */
+.scenario-new-form {
+  background: var(--surface-alt);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-top: 10px;
+}
+
+.scenario-new-form-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.scenario-new-form-fields {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.scenario-new-form-field {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.scenario-new-id-preview {
+  font-size: 0.7rem;
+  font-weight: 400;
+  font-family: 'SF Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  color: var(--text-faint);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.scenario-new-input {
+  padding: 7px 10px;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.scenario-new-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.scenario-new-input.scenario-new-input-error {
+  border-color: var(--red);
+}
+
+.scenario-new-form-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.scenario-new-cancel-btn {
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.scenario-new-cancel-btn:hover { background: var(--surface-alt); }
+
+.scenario-new-save-btn {
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--surface);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.scenario-new-save-btn:hover:not(:disabled) { opacity: 0.88; }
+.scenario-new-save-btn:active:not(:disabled) { transform: translateY(1px); }
+.scenario-new-save-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.scenario-select-hint {
+  margin-top: 12px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+.App-footer {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 0.875rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.App-footer p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-faint);
+}
+
+
+/* ─── Agent Management Panel ─────────────────────────────────────────────── */
+.agent-mgmt-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.5rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.agent-mgmt-panel-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  margin-right: 0.25rem;
+}
+
+.agent-mgmt-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.agent-mgmt-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 16px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+
+.agent-mgmt-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.agent-mgmt-btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.agent-mgmt-btn-primary {
+  background: var(--accent);
+  color: var(--surface);
+  border-color: var(--accent);
+}
+
+.agent-mgmt-btn-primary:not(:disabled):hover {
+  opacity: 0.88;
+}
+
+.agent-mgmt-btn-danger {
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: var(--red-border);
+}
+
+.agent-mgmt-btn-danger:not(:disabled):hover {
+  background: #fecaca;
+}
+
+.agent-mgmt-btn-ghost {
+  background: var(--surface);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.agent-mgmt-btn-ghost:not(:disabled):hover {
+  background: var(--surface-alt);
+  border-color: var(--accent-border);
+}
+
+.agent-mgmt-error {
+  font-size: 0.8rem;
+  color: var(--red);
+  margin-top: 0.25rem;
+  width: 100%;
+}
+
+/* ─── Confirm Dialog ──────────────────────────────────────────────────────── */
+.agent-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.agent-confirm-dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem 2rem;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: var(--shadow-md);
+}
+
+.agent-confirm-message {
+  font-size: 0.9rem;
+  color: var(--text);
+  line-height: 1.6;
+  margin: 0 0 1.25rem;
+}
+
+.agent-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+
+/* ─── Agent Scenarios Panel ──────────────────────────────────────────────── */
+.agent-scenarios-panel {
+  margin-top: 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.25rem 1.25rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.agent-scenarios-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.625rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.agent-scenarios-panel-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.agent-scenarios-panel-hint {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.agent-scenarios-panel-hint::before {
+  content: '·';
+  margin-right: 0.5rem;
+  color: var(--border);
+}
+
+.agent-scenarios-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+/* ── Individual agent scenario card ─────────────────────────────────────── */
+.agent-scenario-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.agent-scenario-card:hover {
+  border-color: var(--accent-border);
+  box-shadow: 0 2px 8px rgba(37,99,235,0.07), 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.agent-scenario-card--running {
+  border-color: var(--green-border);
+  background: var(--green-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--green-border) 60%, transparent);
+}
+
+/* ── Card header ─────────────────────────────────────────────────────────── */
+.agent-scenario-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.agent-scenario-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-scenario-job-badge {
+  font-size: 0.67rem;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  color: var(--green);
+  background: var(--surface);
+  border: 1px solid var(--green-border);
+  border-radius: 5px;
+  padding: 2px 7px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0;
+}
+
+.agent-scenario-id {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  font-family: 'SF Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  margin-bottom: 2px;
+  letter-spacing: -0.01em;
+}
+
+.agent-scenario-error {
+  font-size: 0.73rem;
+  color: var(--red);
+  line-height: 1.4;
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  margin-top: 6px;
+}
+
+/* ── Agent count badge ───────────────────────────────────────────────────── */
+.agent-scenario-count-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+  border-radius: 5px;
+  padding: 1px 7px;
+  white-space: nowrap;
+  margin-left: 6px;
+  letter-spacing: 0;
+  vertical-align: middle;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+
+/* ── Per-agent list (multi-agent use-cases) ──────────────────────────────── */
+.agent-scenario-agent-list {
+  margin: 10px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-alt);
+}
+
+.agent-scenario-agent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  transition: background 0.1s;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.agent-scenario-agent-row:last-child {
+  border-bottom: none;
+}
+
+.agent-scenario-agent-row:hover {
+  background: #f1f5fb;
+}
+
+.agent-scenario-agent-name {
+  font-size: 0.8125rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  font-weight: 500;
+}
+
+/* ── Row-level inline button group ──────────────────────────────────────── */
+.agent-scenario-agent-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Actions row (groups deploy/edit/delete + add-agent buttons) ─────────── */
+.agent-scenario-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  align-items: center;
+}
+
+/* ── Add Agent button ────────────────────────────────────────────────────── */
+.agent-scenario-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.agent-scenario-add-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+/* ── Deploy / Run button ──────────────────────────────────────────────────── */
+.agent-scenario-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 13px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s, box-shadow 0.15s;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.agent-scenario-run-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  box-shadow: 0 2px 6px rgba(37,99,235,0.25);
+}
+
+.agent-scenario-run-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.agent-scenario-run-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.agent-scenario-run-btn--running {
+  background: var(--green);
+  border-color: var(--green);
+  opacity: 1;
+}
+
+.agent-scenario-run-btn--busy {
+  animation: agent-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes agent-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+/* Failed-state card modifier */
+.agent-scenario-card--failed {
+  border-color: var(--red-border);
+  background: var(--red-soft);
+}
+
+/* ── Edit button ─────────────────────────────────────────────────────────── */
+.agent-scenario-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.agent-scenario-edit-btn:hover {
+  background: #dbeafe;
+  box-shadow: var(--shadow-sm);
+}
+
+.agent-scenario-edit-btn:active {
+  transform: translateY(1px);
+}
+
+/* Small variant of the edit button used inside per-agent rows */
+.agent-scenario-edit-btn--small {
+  padding: 3px 8px;
+  font-size: 0.72rem;
+}
+
+/* ── Delete button ───────────────────────────────────────────────────────── */
+.agent-scenario-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.agent-scenario-delete-btn:hover {
+  background: #fecaca;
+  box-shadow: var(--shadow-sm);
+}
+
+.agent-scenario-delete-btn:active {
+  transform: translateY(1px);
+}
+
+.agent-scenario-delete-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Small variant used inside per-agent rows */
+.agent-scenario-delete-btn--small {
+  padding: 3px 7px;
+  font-size: 0.72rem;
+}
+
+/* Buttons inside the actions row don't need extra top margin */
+.agent-scenario-actions .agent-scenario-run-btn,
+.agent-scenario-actions .agent-scenario-edit-btn,
+.agent-scenario-actions .agent-scenario-delete-btn {
+  margin-top: 0;
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .App-header {
+    padding: 0.75rem 1rem;
+    min-height: unset;
+  }
+
+  .App-main {
+    padding: 1rem;
+  }
+
+  .data-section,
+  .outbound-section {
+    padding: 1rem;
+  }
+
+  .scenario-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-scenarios-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-scenarios-panel {
+    padding: 0.875rem 1rem 1rem;
+  }
+}
+
+/* ─── Generate Sample Event button (in section h2 row) ──────────────────── */
+.generate-sample-btn {
+  margin-left: auto;
+  padding: 5px 13px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--purple);
+  background: var(--purple-soft);
+  border: 1px solid #ddd6fe;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  flex-shrink: 0;
+}
+
+.generate-sample-btn:hover {
+  background: #ede9fe;
+  border-color: #c4b5fd;
+}
+
+.generate-sample-btn:active {
+  transform: translateY(1px);
+}
+
+/* ─── Sample Event Modal ─────────────────────────────────────────────────── */
+.sample-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 1rem;
+}
+
+.sample-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-width: 600px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sample-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sample-modal-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sample-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.sample-modal-close:hover {
+  background: var(--surface-alt);
+  border-color: var(--border);
+}
+
+.sample-modal-body {
+  padding: 1.25rem 1.5rem;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sample-modal-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 1rem 0;
+}
+
+.sample-modal-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.sample-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sample-modal-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sample-modal-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.sample-modal-select {
+  padding: 7px 10px;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2357606a' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+.sample-modal-select:focus {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 1px;
+  border-color: var(--accent-border);
+}
+
+.sample-modal-editor {
+  width: 100%;
+  min-height: 180px;
+  max-height: 420px;
+  resize: vertical;
+  padding: 10px 12px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.sample-modal-editor:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  background: var(--surface);
+}
+
+.sample-modal-editor.sample-modal-editor-error {
+  border-color: var(--red-border);
+  background: #fff8f8;
+}
+
+.sample-modal-field-error {
+  font-size: 0.78rem;
+  color: var(--red);
+  line-height: 1.4;
+}
+
+.sample-modal-regen-btn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+
+.sample-modal-regen-btn:hover {
+  background: var(--surface-alt);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.sample-modal-regen-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sample-modal-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.sample-modal-banner-ok {
+  background: var(--green-soft);
+  border: 1px solid var(--green-border);
+  color: var(--green);
+}
+
+.sample-modal-banner-error {
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+  color: var(--red);
+  flex-wrap: wrap;
+}
+
+.sample-modal-retry-btn {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  color: var(--red);
+  background: transparent;
+  border: 1px solid var(--red-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+
+.sample-modal-retry-btn:hover {
+  background: #fecaca;
+}
+
+.sample-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.875rem 1.5rem;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sample-modal-btn {
+  padding: 7px 18px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.sample-modal-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sample-modal-btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.sample-modal-btn-primary {
+  background: var(--purple);
+  color: var(--surface);
+  border-color: var(--purple);
+}
+
+.sample-modal-btn-primary:not(:disabled):hover {
+  opacity: 0.88;
+}
+
+.sample-modal-btn-ghost {
+  background: var(--surface);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.sample-modal-btn-ghost:not(:disabled):hover {
+  background: var(--surface-alt);
+  border-color: var(--accent-border);
+}
+
+@media (max-width: 640px) {
+  .sample-modal {
+    max-height: 95vh;
+  }
+
+  .sample-modal-header,
+  .sample-modal-body,
+  .sample-modal-footer {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .generate-sample-btn {
+    font-size: 0.72rem;
+    padding: 4px 10px;
+  }
+}
+
+/* ─── Processing error card ──────────────────────────────────────────────── */
+.processing-error-card {
+  border-left: 3px solid var(--red);
+}
+
+.processing-error-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+
+.processing-error-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+  border-radius: 10px;
+}
+
+.processing-error-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.processing-error-entity {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+.processing-error-origin {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  background: var(--surface-alt);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.processing-error-reason {
+  font-size: 0.82rem;
+  color: var(--red);
+  line-height: 1.5;
+  padding: 5px 8px;
+  background: var(--red-soft);
+  border: 1px solid var(--red-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 5px;
+  word-break: break-word;
+}
+
+.processing-error-original {
+  margin-top: 2px;
+}
+
+.processing-error-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+
+.processing-error-toggle:hover {
+  color: var(--accent);
+}
+
+.processing-error-json {
+  margin: 5px 0 0;
+  padding: 8px 10px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.processing-error-timestamp {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  margin-top: 5px;
+  text-align: right;
+}
+
+/* ─── Approved Transaction card ──────────────────────────────────────────── */
+.approved-txn-card {
+  border-left: 3px solid var(--green);
+}
+
+.approved-txn-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+  flex-wrap: wrap;
+}
+
+.approved-txn-id {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.approved-txn-account {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+.approved-txn-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--green);
+  background: var(--green-soft);
+  border: 1px solid var(--green-border);
+  border-radius: 10px;
+}
+
+.approved-txn-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.approved-txn-sep {
+  color: var(--text-faint);
+}
+
+.approved-txn-risk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.approved-txn-risk-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 70px;
+}
+
+.approved-txn-risk-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.approved-txn-risk-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.approved-txn-risk-value {
+  font-size: 0.78rem;
+  font-weight: 700;
+  min-width: 28px;
+  text-align: right;
+}
+
+.approved-txn-rules {
+  margin-top: 4px;
+}
+
+.approved-txn-section-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.approved-txn-rule-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.approved-txn-rule-id {
+  font-weight: 700;
+  flex-shrink: 0;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.approved-txn-rule-name {
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
+.approved-txn-timestamp {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  margin-top: 6px;
+  text-align: right;
+}
+
+
+
+/* ─── Kafka Event Notification System ───────────────────────────────────────
+   Domain-agnostic toast notifications for any arriving Kafka event.
+   The notification shape is generic: type, label, timestamp, message.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Fixed overlay that stacks toasts at the bottom-right */
+.kafka-notification-container {
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.25rem;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column-reverse;  /* newest on top within the stack */
+  gap: 0.5rem;
+  pointer-events: none;            /* let clicks pass through the gap */
+  max-width: 340px;
+  width: calc(100vw - 2.5rem);
+}
+
+/* Individual toast */
+.kafka-notification {
+  pointer-events: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px 8px;
+  font-size: 0.83rem;
+  line-height: 1.5;
+  color: var(--text);
+  position: relative;
+  overflow: hidden;
+
+  /* Entry: start translated + transparent, animate to natural position */
+  opacity: 0;
+  transform: translateX(32px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.kafka-notification--visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.kafka-notification--leaving {
+  opacity: 0;
+  transform: translateX(32px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+/* Toast header row: label + time + close button */
+.kafka-notification__header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.kafka-notification__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kafka-notification__time {
+  font-size: 0.68rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.kafka-notification__close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-left: auto;
+  transition: background 0.1s, color 0.1s;
+}
+
+.kafka-notification__close:hover {
+  background: var(--surface-alt);
+  color: var(--text-muted);
+}
+
+/* Message body */
+.kafka-notification__message {
+  font-size: 0.82rem;
+  color: var(--text);
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+/* Auto-dismiss progress bar — shrinks from 100% to 0% over autoDismissMs */
+.kafka-notification__progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  animation: kafka-progress linear forwards;
+}
+
+@keyframes kafka-progress {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+@media (max-width: 480px) {
+  .kafka-notification-container {
+    bottom: 0.75rem;
+    right: 0.75rem;
+    left: 0.75rem;
+    width: auto;
+    max-width: none;
+  }
+}
+
+/* ─── Scenario editor tabs ───────────────────────────────────────────────── */
+.scenario-editor-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.scenario-editor-tab {
+  padding: 7px 16px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: color 0.12s, border-color 0.12s;
+  margin-bottom: -1px; /* overlap the container border */
+}
+
+.scenario-editor-tab:hover {
+  color: var(--accent);
+}
+
+.scenario-editor-tab--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ─── Timeline tab body ──────────────────────────────────────────────────── */
+.scenario-editor-timeline-tab {
+  padding: 16px 14px 10px;
+}
+
+/* ─── ScenarioTimeline ───────────────────────────────────────────────────── */
+.timeline-container {
+  width: 100%;
+  user-select: none;
+}
+
+.timeline-empty {
+  padding: 24px 0;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* Legend row */
+.timeline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 8px;
+}
+
+.timeline-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.timeline-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.timeline-legend-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* SVG wrapper — relative so the tooltip can be absolutely positioned */
+.timeline-svg-wrap {
+  width: 100%;
+  min-height: 80px;
+}
+
+.timeline-duration-label {
+  font-size: 0.68rem;
+  font-weight: 500;
+  fill: var(--text-muted);
+  user-select: none;
+}
+
+/* ─── Tooltip ────────────────────────────────────────────────────────────── */
+.timeline-tooltip {
+  /* position and coords are set inline (fixed) by the component */
+  z-index: 9999;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px;
+  min-width: 200px;
+  max-width: 300px;
+  pointer-events: none;
+}
+
+.timeline-tooltip-type {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.timeline-tooltip-topic {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  font-family: 'SF Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  margin-bottom: 8px;
+}
+
+.timeline-tooltip-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.timeline-tooltip-table tr + tr td {
+  padding-top: 3px;
+}
+
+.timeline-tooltip-key {
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+  padding-right: 10px;
+  vertical-align: top;
+  min-width: 90px;
+}
+
+.timeline-tooltip-val {
+  color: var(--text);
+  word-break: break-all;
+  font-family: 'SF Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+}
+
+/* ─── Timeline active-step pulse animation ───────────────────────────────── */
+
+/* The bullet itself pulses in opacity to signal "processing" */
+.timeline-circle--active {
+  animation: timeline-bullet-pulse 0.75s ease-in-out infinite;
+}
+
+/* A concentric ring that scales outward and fades — uses transform so it
+   works across all browsers (SVG r attribute is not animatable via CSS). */
+.timeline-pulse-ring {
+  animation: timeline-ring-expand 0.9s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes timeline-bullet-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+@keyframes timeline-ring-expand {
+  0%   { transform: scale(1);    opacity: 0.7; }
+  100% { transform: scale(2.4);  opacity: 0;   }
+}

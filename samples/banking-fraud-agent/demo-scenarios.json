@@ -1,0 +1,506 @@
+[
+  {
+    "id": "account-creation",
+    "label": "Account creation from event",
+    "description": "Send an Account Event to trigger the creation of an Account entity.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "110",
+          "accountType": "CHECKING",
+          "balance": 10000,
+          "currency": "DOLLAR",
+          "description": "Account creation event",
+          "overdraftLimit": 15000,
+          "owner": "John Smith",
+          "ownerCountry": "USA",
+          "status": "ACTIVE",
+          "timestamp": "2026-08-23T20:29:16Z",
+          "type": "OPENING"
+        }
+      }
+    ]
+  },
+  {
+    "id": "non-fraudulent-transaction",
+    "label": "Example of non fraudulent transaction",
+    "description": "Example of non fraudulent transaction. No fraud alert should be issued.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "111",
+          "accountType": "CHECKING",
+          "balance": 10000,
+          "currency": "DOLLAR",
+          "description": "Account creation event",
+          "overdraftLimit": 15000,
+          "owner": "John Smith",
+          "ownerCountry": "USA",
+          "status": "ACTIVE",
+          "timestamp": "2026-08-23T20:29:16Z",
+          "type": "OPENING"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "111",
+          "amount": 345,
+          "channel": "POS",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Costco",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-24T20:42:01Z",
+          "transactionId": "1",
+          "type": "DEBIT"
+        }
+      }
+    ]
+  },
+  {
+    "id": "transaction-on-suspended-account",
+    "label": "Transaction on suspended account",
+    "description": "Create an account in SUSPENDED state and send a transaction.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "112",
+          "accountType": "CHECKING",
+          "balance": 10000,
+          "currency": "DOLLAR",
+          "description": "Account creation event",
+          "overdraftLimit": 15000,
+          "owner": "Naya Mattaf",
+          "ownerCountry": "USA",
+          "status": "SUSPENDED",
+          "timestamp": "2026-08-23T20:29:16Z",
+          "type": "OPENING"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "112",
+          "amount": 11000,
+          "channel": "POS",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Amazon",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-22T20:42:01Z",
+          "transactionId": "1",
+          "type": "DEBIT"
+        }
+      }
+    ]
+  },
+  {
+    "id": "high-velocity-transactions",
+    "label": "High velocity online small transactions",
+    "description": "Pattern of several subsequent small transactions.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "113",
+          "accountType": "CHECKING",
+          "balance": 10000,
+          "currency": "DOLLAR",
+          "description": "Account creation event",
+          "overdraftLimit": 15000,
+          "owner": "Lisa Wright",
+          "ownerCountry": "USA",
+          "status": "ACTIVE",
+          "timestamp": "2026-08-20T20:29:16Z",
+          "type": "OPENING"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "113",
+          "amount": 5,
+          "channel": "MOBILE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "CDiscount",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-22T20:10:01Z",
+          "transactionId": "10001",
+          "type": "DEBIT"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "113",
+          "amount": 3,
+          "channel": "MOBILE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "CDiscount",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-22T20:11:01Z",
+          "transactionId": "10002",
+          "type": "DEBIT"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "113",
+          "amount": 1,
+          "channel": "MOBILE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Amazon",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-22T20:12:01Z",
+          "transactionId": "10003",
+          "type": "DEBIT"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "113",
+          "amount": 1,
+          "channel": "MOBILE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "CDiscount",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-22T20:13:01Z",
+          "transactionId": "10004",
+          "type": "DEBIT"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "113",
+          "amount": 8,
+          "channel": "MOBILE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Amazon",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-22T20:22:01Z",
+          "transactionId": "10010",
+          "type": "DEBIT"
+        }
+      }
+    ]
+  },
+  {
+    "id": "suspicious-merchant",
+    "label": "High value transaction with a suspicious merchant",
+    "description": "Detect a potentially fraudulent transaction with a suspicious merchant. Transaction is high value and with a flagged merchant.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "114",
+          "balance": 1500,
+          "timestamp": "2026-08-20T20:42:01Z",
+          "currency": "DOLLAR",
+          "overdraftLimit": 20000,
+          "owner": "Melissa Young",
+          "ownerCountry": "USA",
+          "status": "ACTIVE",
+          "type": "OPENING"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "114",
+          "amount": 1433.78,
+          "channel": "ONLINE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "XGameX",
+          "merchantCategory": "GAME",
+          "timestamp": "2026-08-22T20:22:01Z",
+          "transactionId": "10010",
+          "type": "DEBIT"
+        }
+      }
+    ]
+  },
+  {
+    "id": "compromised-account",
+    "label": "Transaction on compromised account",
+    "description": "Detect a potentially fraudulent transaction on a potentially compromised account.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "115",
+          "balance": 1500,
+          "timestamp": "2026-08-20T20:42:01Z",
+          "currency": "DOLLAR",
+          "overdraftLimit": 20000,
+          "owner": "Michael Denis",
+          "ownerCountry": "USA",
+          "status": "ACTIVE",
+          "type": "OPENING"
+        }
+      },
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "115",
+          "description": "Logging incident event",
+          "timestamp": "2026-08-22T19:29:16Z",
+          "type": "LOGGING_INCIDENT"
+        }
+      },
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "115",
+          "description": "Logging incident event",
+          "timestamp": "2026-08-22T19:45:16Z",
+          "type": "LOGGING_INCIDENT"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "115",
+          "amount": 699.78,
+          "channel": "POS",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Amazon",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-22T20:22:01Z",
+          "transactionId": "100108",
+          "type": "DEBIT"
+        }
+      }
+    ]
+  },
+  {
+    "id": "cross-border",
+    "label": "High value transaction in foreign country",
+    "description": "Detect a potentially fraudulent high value transaction in a foreign country.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "116",
+          "balance": 1500,
+          "timestamp": "2026-08-20T20:42:01Z",
+          "currency": "DOLLAR",
+          "overdraftLimit": 20000,
+          "owner": "Rica Lewis",
+          "ownerCountry": "USA",
+          "status": "ACTIVE",
+          "type": "OPENING"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "116",
+          "amount": 12699.78,
+          "channel": "POS",
+          "country": "FRANCE",
+          "currency": "EURO",
+          "merchant": "Hermes",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-22T20:22:01Z",
+          "transactionId": "100109",
+          "type": "DEBIT"
+        }
+      }
+    ]
+  },
+  {
+    "id": "new-account",
+    "label": "High value transaction on newly created account",
+    "description": "Detect a potentially fraudulent high value transaction on a newly created account.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "117",
+          "balance": 1500,
+          "timestamp": "2026-08-21T20:42:01Z",
+          "currency": "DOLLAR",
+          "overdraftLimit": 20000,
+          "owner": "Lionel Carry",
+          "ownerCountry": "USA",
+          "status": "ACTIVE",
+          "type": "OPENING"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "117",
+          "amount": 11000,
+          "channel": "ONLINE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Luxury Cars limited",
+          "merchantCategory": "OTHER",
+          "timestamp": "2026-08-22T10:22:01Z",
+          "transactionId": "100109",
+          "type": "DEBIT"
+        }
+      }
+    ]
+  },
+  {
+    "id": "high-value-gambling-transaction",
+    "label": "High value gambling transaction",
+    "description": "Potentially fraudulent high value transaction in gambling activity.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "118",
+          "balance": 1500,
+          "timestamp": "2026-08-21T20:42:01Z",
+          "currency": "DOLLAR",
+          "overdraftLimit": 20000,
+          "owner": "Tom Select",
+          "ownerCountry": "USA",
+          "status": "ACTIVE",
+          "type": "OPENING"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "118",
+          "amount": 11000,
+          "channel": "MOBILE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "XGameX",
+          "merchantCategory": "GAMBLING",
+          "timestamp": "2026-08-22T10:22:01Z",
+          "transactionId": "100110",
+          "type": "DEBIT"
+        }
+      }
+    ]
+  },
+  {
+    "id": "over-average-gaming-transaction",
+    "label": "Over average gaming transaction",
+    "description": "Gaming transaction twice as much as last month similar transactions.",
+    "events": [
+      {
+        "type": "AccountEvent",
+        "topic": "agent-account-events",
+        "payload": {
+          "accountNumber": "119",
+          "balance": 1500,
+          "timestamp": "2026-01-01T10:42:00Z",
+          "currency": "DOLLAR",
+          "overdraftLimit": 20000,
+          "owner": "Matt Myers",
+          "ownerCountry": "USA",
+          "status": "ACTIVE",
+          "type": "OPENING"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "119",
+          "amount": 210,
+          "channel": "ONLINE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Steam Inc",
+          "merchantCategory": "GAME",
+          "timestamp": "2026-08-05T20:10:01Z",
+          "transactionId": "100021",
+          "type": "DEBIT"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "119",
+          "amount": 410,
+          "channel": "ONLINE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Steam Inc",
+          "merchantCategory": "GAME",
+          "timestamp": "2026-08-07T23:12:01Z",
+          "transactionId": "100022",
+          "type": "DEBIT"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "119",
+          "amount": 305,
+          "channel": "ONLINE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Gamestop Online Inc",
+          "merchantCategory": "GAME",
+          "timestamp": "2026-08-08T21:43:01Z",
+          "transactionId": "100023",
+          "type": "DEBIT"
+        }
+      },
+      {
+        "type": "Transaction",
+        "topic": "agent-transactions",
+        "payload": {
+          "accountNumber": "119",
+          "amount": 745,
+          "channel": "ONLINE",
+          "country": "USA",
+          "currency": "DOLLAR",
+          "merchant": "Fifa Online",
+          "merchantCategory": "GAME",
+          "timestamp": "2026-08-22T20:22:01Z",
+          "transactionId": "10010",
+          "type": "DEBIT"
+        }
+      }
+    ]
+  }
+]

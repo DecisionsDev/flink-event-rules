@@ -1,0 +1,183 @@
+{
+  "agents": [
+    {
+      "agentId": "aircraft-agent",
+      "name": "Aircraft Agent",
+      "entityType": "Aircraft",
+      "entityKeyExtractor": "$.aircraftId",
+      "chainingEnabled": true,
+      "subscriptions": [
+        {
+          "eventType": "AircraftInitializationEvent",
+          "topic": "agent-aircraft-init-events",
+          "operation": "InitializeAircraft"
+        },
+        {
+          "eventType": "AircraftEvent",
+          "topic": "agent-aircraft-events",
+          "operation": "ProcessAircraftEvent",
+          "horizon": {
+            "type": "time",
+            "timeLimit": "2h",
+            "description": "Keep aircraft events for the last 2 hours"
+          }
+        }
+      ],
+      "ruleset": {
+        "path": "samples/airtraffic-agent/AirTrafficControlService_1.2.1.jar",
+        "archiveControlTopic": "agent-atc-archive-control",
+        "operations": [
+          {
+            "operation": "InitializeAircraft",
+            "entityField": "aircraft",
+            "currentEventField": "aircraftInitializationEvent"
+          },
+          {
+            "operation": "ProcessAircraftEvent",
+            "entityField": "aircraft",
+            "currentEventField": "aircraftEvent",
+            "history": [
+              {
+                "eventType": "AircraftEvent",
+                "field": "pastAircraftEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "trackedAircraftEvents",
+                "eventType": "TrackedAircraftEvent"
+              },
+              {
+                "field": "alerts",
+                "eventType": "Alert"
+              }
+            ]
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "eventType": "TrackedAircraftEvent",
+          "topic": "agent-tracked-aircraft-events",
+          "description": "Aircraft position and status updates forwarded to the relevant airport agent"
+        },
+        {
+          "eventType": "Alert",
+          "topic": "agent-atc-alerts",
+          "description": "Air Traffic Control alerts detected for an aircraft"
+        },
+        {
+          "eventType": "agent-error",
+          "topic": "agent-atc-errors",
+          "description": "Processing errors for investigation"
+        }
+      ],
+      "stateConfig": {
+        "ttl": "4h",
+        "backend": "rocksdb",
+        "changeLogTopic": "agent-aircraft-entity-changelog"
+      },
+      "parallelism": 1
+    },
+    {
+      "agentId": "airport-agent",
+      "name": "Airport Agent",
+      "entityType": "Airport",
+      "entityKeyExtractor": "$.airport",
+      "chainingEnabled": true,
+      "subscriptions": [
+        {
+          "eventType": "AirportInitializationEvent",
+          "topic": "agent-airport-init-events",
+          "operation": "InitializeAirport"
+        },
+        {
+          "eventType": "AirportEvent",
+          "topic": "agent-airport-events",
+          "operation": "ProcessAirportEvent"
+        },
+        {
+          "eventType": "TrackedAircraftEvent",
+          "topic": "agent-tracked-aircraft-events",
+          "operation": "ProcessTrackedAircraftEvent",
+          "horizon": {
+            "type": "time",
+            "timeLimit": "1h",
+            "description": "Keep tracked aircraft events for the last 1 hour"
+          }
+        }
+      ],
+      "ruleset": {
+        "path": "samples/airtraffic-agent/AirTrafficControlService_1.2.1.jar",
+        "archiveControlTopic": "agent-atc-archive-control",
+        "operations": [
+          {
+            "operation": "InitializeAirport",
+            "entityField": "airport",
+            "currentEventField": "airportInitializationEvent"
+          },
+          {
+            "operation": "ProcessAirportEvent",
+            "entityField": "airport",
+            "currentEventField": "airportEvent",
+            "history": [
+              {
+                "eventType": "AirportEvent",
+                "field": "pastAirportEvents"
+              },
+              {
+                "eventType": "TrackedAircraftEvent",
+                "field": "pastTrackedAircraftEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "alerts",
+                "eventType": "Alert"
+              }
+            ]
+          },
+          {
+            "operation": "ProcessTrackedAircraftEvent",
+            "entityField": "airport",
+            "currentEventField": "trackedAircraftEvent",
+            "history": [
+              {
+                "eventType": "AirportEvent",
+                "field": "pastAirportEvents"
+              },
+              {
+                "eventType": "TrackedAircraftEvent",
+                "field": "pastTrackedAircraftEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "alerts",
+                "eventType": "Alert"
+              }
+            ]
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "eventType": "Alert",
+          "topic": "agent-atc-alerts",
+          "description": "Air Traffic Control alerts detected for an airport or an aircraft"
+        },
+        {
+          "eventType": "agent-error",
+          "topic": "agent-atc-errors",
+          "description": "Processing errors for investigation"
+        }
+      ],
+      "stateConfig": {
+        "ttl": "24h",
+        "backend": "rocksdb",
+        "changeLogTopic": "agent-airport-entity-changelog"
+      },
+      "parallelism": 1
+    }
+  ]
+}

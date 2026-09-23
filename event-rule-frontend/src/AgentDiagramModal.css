@@ -1,0 +1,622 @@
+/*
+ *
+ *   Copyright IBM Corp. 2026
+ *
+ *   Licensed under the Apache License, Version 2.0 (the "License");
+ *   you may not use this file except in compliance with the License.
+ *   You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *   Unless required by applicable law or agreed to in writing, software
+ *   distributed under the License is distributed on an "AS IS" BASIS,
+ *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *   See the License for the specific language governing permissions and
+ *   limitations under the License.
+ *
+ */
+
+/* ─── Agent Diagram Modal ─────────────────────────────────────────────────── */
+
+.agent-diagram-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  padding: 0.75rem;
+}
+
+.agent-diagram-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-width: 96vw;
+  height: 96vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+.agent-diagram-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.agent-diagram-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.agent-diagram-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.agent-diagram-close:hover {
+  background: var(--surface-alt);
+  border-color: var(--border);
+}
+
+/* ── Body / scrollable diagram area ─────────────────────────────────────── */
+.agent-diagram-body {
+  flex: 1;
+  overflow: auto;
+  background: var(--surface-alt);
+  /* Centering shell: the canvas sits in the middle of the body */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Canvas expands to fill body so centering always works, even when content
+   is smaller than the viewport. When the scaled content overflows, the body's
+   own scrollbars kick in. */
+.agent-diagram-canvas {
+  min-width: 100%;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  box-sizing: border-box;
+}
+
+.agent-diagram-scroll {
+  display: inline-block; /* shrink-wrap the SVG */
+  transform-origin: center center;
+  will-change: transform;
+}
+
+.agent-diagram-empty {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 2rem 0;
+  margin: 0;
+}
+
+/* ── Zoom toolbar ────────────────────────────────────────────────────────── */
+.agent-diagram-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  margin-left: auto; /* push to the right so title stays left-aligned */
+}
+
+.adz-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  flex-shrink: 0;
+}
+
+.adz-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.adz-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.adz-pct {
+  min-width: 44px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.12s, color 0.12s;
+}
+
+.adz-pct:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ── Legend ──────────────────────────────────────────────────────────────── */
+.agent-diagram-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.5rem 1.25rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.adl-hint {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  font-style: italic;
+  white-space: nowrap;
+}
+
+.adl-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 10px;
+  border: 1px solid;
+}
+
+.adl-item::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1.5px solid;
+  flex-shrink: 0;
+}
+
+.adl-inbound {
+  color: #4338ca;
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+.adl-inbound::before {
+  background: #eef2ff;
+  border-color: #4338ca;
+}
+
+.adl-agent {
+  color: #2563eb;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.adl-agent::before {
+  background: #eff6ff;
+  border-color: #2563eb;
+}
+
+.adl-re {
+  color: #0369a1;
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+}
+.adl-re::before {
+  background: #e0f2fe;
+  border-color: #0369a1;
+}
+
+.adl-entity {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+.adl-entity::before {
+  background: #dbeafe;
+  border-color: #1d4ed8;
+}
+
+.adl-outbound {
+  color: #0284c7;
+  background: #f0f9ff;
+  border-color: #7dd3fc;
+}
+.adl-outbound::before {
+  background: #f0f9ff;
+  border-color: #0284c7;
+}
+
+/* ── Diagram body layout when the entity panel is open ───────────────────── */
+.agent-diagram-body {
+  position: relative; /* anchor for absolute-positioned panel */
+}
+
+.agent-diagram-canvas--with-panel {
+  /* Shrink the scroll area so the panel sits alongside it without overlap */
+  padding-right: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ─── Entity State Panel ──────────────────────────────────────────────────── */
+
+.esp-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  max-width: 42vw;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 10;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.06);
+}
+
+/* ── Panel header ─────────────────────────────────────────────────────────── */
+.esp-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+}
+
+.esp-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.esp-type-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  border-radius: 10px;
+  padding: 1px 7px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* Agent badge variant — uses teal/sky colour instead of blue */
+.esp-type-badge--agent {
+  color: #0369a1;
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+}
+
+/* Muted sub-label next to the badge (e.g. agentId) */
+.esp-sub-label {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.esp-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, border-color 0.12s;
+}
+.esp-close:hover {
+  background: var(--surface-alt);
+  border-color: var(--border);
+}
+
+/* ── Status states ────────────────────────────────────────────────────────── */
+.esp-loading, .esp-error, .esp-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  text-align: center;
+  gap: 0.5rem;
+}
+
+.esp-loading {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.esp-error {
+  font-size: 0.82rem;
+  color: var(--red);
+}
+
+.esp-empty-icon {
+  font-size: 1.75rem;
+  color: var(--text-faint);
+  line-height: 1;
+}
+
+.esp-empty-text {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.esp-empty-hint {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  max-width: 22ch;
+}
+
+/* Detail column — must use overflow:hidden (not auto) so that the
+   esp-section--fill / esp-json--fill flex chain can size correctly.
+   Scrolling is handled by the individual content blocks inside. */
+.esp-detail {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Sections ─────────────────────────────────────────────────────────────── */
+.esp-section {
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* Section that expands to fill remaining vertical space */
+.esp-section--fill {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-bottom: none;
+}
+
+.esp-section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+  flex-shrink: 0;
+}
+
+/* ── Agent detail view rows ───────────────────────────────────────────────── */
+
+/* Per-subscription row */
+.esp-agent-row {
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.esp-agent-row:last-child { border-bottom: none; }
+
+/* Top line: event type name (left) + count badge (right) */
+.esp-agent-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Event type label */
+.esp-agent-event-type {
+  font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+  font-size: 0.7rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Count pill badge */
+.esp-agent-count {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 0 6px;
+  line-height: 1.6;
+  min-width: 24px;
+  text-align: center;
+}
+
+/* Horizon config line (below count row) */
+.esp-agent-horizon {
+  margin-top: 2px;
+  font-size: 0.68rem;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.esp-horizon-icon {
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+/* Inline empty/no-data message */
+.esp-no-data {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 0.25rem 0;
+}
+
+/* ── Entity detail view ───────────────────────────────────────────────────── */
+
+/* Section that holds the entity instance picker chips */
+.esp-entity-picker-section {
+  flex-shrink: 0;
+}
+
+/* Scrollable chip row */
+.esp-entity-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+  max-height: 5.5rem;
+  overflow-y: auto;
+}
+
+/* Individual entity ID chip */
+.esp-entity-chip {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+  font-size: 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.1s, border-color 0.1s;
+}
+.esp-entity-chip:hover {
+  background: #e8f0fe;
+  border-color: #93c5fd;
+}
+.esp-entity-chip--active {
+  background: #dbeafe;
+  border-color: #3b82f6;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+/* Centered empty state when no payload is recorded yet */
+.esp-entity-no-payload {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+/* ── JSON payload block ───────────────────────────────────────────────────── */
+.esp-json {
+  margin: 0;
+  padding: 0.5rem;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+  font-size: 0.65rem;
+  line-height: 1.55;
+  color: var(--text);
+  overflow: auto;
+  max-height: 300px;
+  white-space: pre;
+  word-break: normal;
+}
+
+/* JSON block that fills all available height (inside esp-section--fill) */
+.esp-json--fill {
+  max-height: none;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ── Changelog badge ─────────────────────────────────────────────────────── */
+.esp-changelog-badge {
+  display: inline-block;
+  margin-bottom: 0.4rem;
+  padding: 0.15rem 0.5rem;
+  background: #d4edda;
+  border: 1px solid #a8d5b5;
+  border-radius: var(--radius-sm);
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #1a6630;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}

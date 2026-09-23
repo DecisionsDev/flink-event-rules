@@ -1,0 +1,24 @@
+{
+  "id": "ft-account-opening",
+  "label": "Functional Test: Account Opening",
+  "description": "Creates an ACTIVE account. No fraud alert expected.",
+  "events": [
+    {
+      "type": "AccountEvent",
+      "topic": "agent-account-events",
+      "payload": {
+        "accountNumber": "FT-ACCT-001",
+        "accountType": "CHECKING",
+        "balance": 10000,
+        "currency": "DOLLAR",
+        "description": "Functional test account opening",
+        "overdraftLimit": 15000,
+        "owner": "Functional Test User",
+        "ownerCountry": "USA",
+        "status": "ACTIVE",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "type": "OPENING"
+      }
+    }
+  ]
+}

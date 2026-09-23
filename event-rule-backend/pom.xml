@@ -1,0 +1,628 @@
+<!--
+   Copyright IBM Corp. 2026
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ibm.di.event</groupId>
+        <artifactId>event-rule-parent</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>event-rule-backend</artifactId>
+    <packaging>jar</packaging>
+
+    <name>Event Rule Backend</name>
+    <description>Flink-based backend for event processing</description>
+
+    <properties>
+        <flink.version>2.2.0</flink.version>
+        <log4j.version>2.24.3</log4j.version>
+        <target.java.version>21</target.java.version>
+        <!--
+            jackson.version, foundation.version, execution.api.version, and
+            engine.de.api.version are managed in the parent pom.xml
+            <dependencyManagement> block and must not be redefined here.
+            Update the versions there when the Decision Designer instance changes.
+        -->
+    </properties>
+
+    <profiles>
+        <!-- Development profile that includes provided dependencies in classpath -->
+        <profile>
+            <id>dev</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <dependencies>
+                <!-- Override Flink dependencies to compile scope for IDE debugging -->
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-core</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>compile</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-streaming-java</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>compile</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-clients</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>compile</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-connector-kafka</artifactId>
+                    <version>4.0.0-2.0</version>
+                    <scope>compile</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-connector-base</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>compile</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+
+        <!-- Functional profile — runs BFF and Flink integration tests that require a
+             live Docker Compose stack (Kafka + Flink + BFF).
+             Activate with:  mvn verify -pl event-rule-backend -Pfunctional
+             Requirements: ./run.sh up  (stack must already be running) -->
+        <profile>
+            <id>functional</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <version>3.2.5</version>
+                        <configuration>
+                            <includes>
+                                <include>**/functional/**/*Test.java</include>
+                                <include>**/functional/**/*Tests.java</include>
+                            </includes>
+                            <systemPropertyVariables>
+                                <log.file>${project.build.directory}/test-logs/functional-test.log</log.file>
+                                <FUNCTIONAL_TESTS_ENABLED>true</FUNCTIONAL_TESTS_ENABLED>
+                            </systemPropertyVariables>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>functional-integration-test</id>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- E2E profile — runs the Banking Fraud Agent end-to-end test.
+             Requires the Docker Compose stack and the deployed Event Rule application.
+             Activate with:  mvn verify -pl event-rule-backend -Pe2e  (settings.xml not needed)
+             Or:             mvn failsafe:integration-test -pl event-rule-backend -Pe2e -->
+        <profile>
+            <id>e2e</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <version>3.2.5</version>
+                        <executions>
+                            <execution>
+                                <id>e2e-integration-test</id>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+    </profiles>
+
+    <repositories>
+        <repository>
+            <id>apache.snapshots</id>
+            <name>Apache Development Snapshot Repository</name>
+            <url>https://repository.apache.org/content/repositories/snapshots/</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <!-- Apache Flink dependencies - changed to compile scope for standalone execution -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-core</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-streaming-java</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-clients</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
+        <!-- Kafka connector must be bundled with the job because the Flink base image does not ship it -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-kafka</artifactId>
+            <version>4.0.0-2.0</version>
+        </dependency>
+
+        <!-- Connector Base required by the Kafka connector API used by the application -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-base</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
+        <!-- Jayway JsonPath for entity-key extraction (replaces hand-rolled 2-level dot-walker) -->
+        <dependency>
+            <groupId>com.jayway.jsonpath</groupId>
+            <artifactId>json-path</artifactId>
+            <version>2.9.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.ibm.decision</groupId>
+            <artifactId>foundation</artifactId>
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- IBM Decision Execution API for Rule Engine -->
+        <dependency>
+            <groupId>com.ibm.decision.execution</groupId>
+            <artifactId>execution-api</artifactId>
+        </dependency>
+
+        <!-- IBM Decision Engine API (groupId confirmed from /ads/index.json) -->
+        <dependency>
+            <groupId>com.ibm.decision</groupId>
+            <artifactId>engine-de-api</artifactId>
+        </dependency>
+
+        <!-- Logging framework -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.13</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j2-impl</artifactId>
+            <version>${log4j.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>${log4j.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>${log4j.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- JUnit 5 for testing -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>5.10.1</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <version>5.10.1</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+            <version>5.10.1</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Mockito for mocking the DI DecisionRunner in unit tests -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>5.10.0</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <version>5.10.0</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Surefire: unit tests only — excludes functional and E2E tests that require live infra -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <!-- Redirect the Log4j2 RollingFileAppender to target/ during tests
+                         so ${sys:log.file} never creates a stray file in the project root -->
+                    <systemPropertyVariables>
+                        <log.file>${project.build.directory}/test-logs/flink-test.log</log.file>
+                    </systemPropertyVariables>
+                    <!-- Exclude functional tests (require Docker/Kafka/Flink/BFF)
+                         and the banking-fraud E2E test (requires full deployed stack). -->
+                    <excludes>
+                        <exclude>**/functional/**</exclude>
+                        <exclude>**/BankingFraudAgentE2ETest.java</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+
+            <!-- Failsafe: runs E2E tests — only active under the 'e2e' profile -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <includes>
+                        <include>**/BankingFraudAgentE2ETest.java</include>
+                    </includes>
+                    <systemPropertyVariables>
+                        <log.file>${project.build.directory}/test-logs/e2e-test.log</log.file>
+                    </systemPropertyVariables>
+                </configuration>
+                <!-- executions are only activated by the 'e2e' profile below -->
+            </plugin>
+
+            <!-- JaCoCo: instrument tests, generate HTML/XML report, enforce thresholds -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <executions>
+                    <!-- 1. Attach the JaCoCo Java agent before unit tests run -->
+                    <execution>
+                        <id>jacoco-prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <!-- 2. Generate HTML + XML report after unit tests -->
+                    <execution>
+                        <id>jacoco-report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <!-- 3. Fail the build when coverage drops below the thresholds -->
+                    <execution>
+                        <id>jacoco-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <!--
+                                            60% instruction coverage across the bundle.
+                                            Flink DAG wiring, Kafka connector code, the
+                                            CLI entry points, and the HTTP server are all
+                                            excluded below, so this threshold reflects
+                                            only the meaningful, unit-testable logic.
+                                        -->
+                                        <limit>
+                                            <counter>INSTRUCTION</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.65</minimum>
+                                        </limit>
+                                        <!--
+                                            60% branch coverage. Several branches live
+                                            inside Flink operator methods that cannot be
+                                            exercised without a full Flink harness.
+                                        -->
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.60</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                            <excludes>
+                                <!--
+                                    AgentBasedDataStreamJob — Flink DAG construction
+                                    (main(), wireAgent(), buildTopicStream(), etc.).
+                                    Requires a live StreamExecutionEnvironment and
+                                    Kafka brokers; exercised by functional/E2E tests only.
+                                -->
+                                <exclude>com/ibm/di/event/agent/AgentBasedDataStreamJob.class</exclude>
+                                <exclude>com/ibm/di/event/agent/AgentBasedDataStreamJob$*.class</exclude>
+
+                                <!--
+                                    SampleInputGenerator — thin CLI wrapper that
+                                    delegates to RuleEngineRunner.  main() and
+                                    generateSampleInputJson() require a real archive JAR;
+                                    not unit-testable without ODM runtime on the classpath.
+                                -->
+                                <exclude>com/ibm/di/event/rule/SampleInputGenerator.class</exclude>
+
+                                <!--
+                                    KafkaCommandPublisher — requires a live Kafka broker.
+                                    publish() blocks on Future.get(); not mockable at the
+                                    class level without the injected-producer constructor,
+                                    which is exercised by DeploymentApiServerTest instead.
+                                -->
+                                <exclude>com/ibm/di/event/api/KafkaCommandPublisher.class</exclude>
+
+                                <!--
+                                    DeploymentApiServer — binds to a real TCP port and
+                                    delegates to KafkaCommandPublisher.  Business logic is
+                                    tested via DeploymentApiServerTest; the HTTP server
+                                    lifecycle itself (start/stop, thread pool) is infra code.
+                                -->
+                                <exclude>com/ibm/di/event/api/DeploymentApiServer.class</exclude>
+                                <exclude>com/ibm/di/event/api/DeploymentApiServer$*.class</exclude>
+
+                                <!--
+                                    StatefulAgentProcessor — Flink KeyedBroadcastProcessFunction.
+                                    The full open() / processElement() path activates Flink state
+                                    backends that are not available in unit tests.  Business logic
+                                    is tested via StatefulAgentProcessorTest's test accessors.
+                                -->
+                                <exclude>com/ibm/di/event/agent/StatefulAgentProcessor.class</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Java Compiler -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- Use release instead of source/target for better JDK 21 compatibility -->
+                    <release>${target.java.version}</release>
+                    <compilerArgs>
+                        <arg>-Xlint:deprecation</arg>
+                        <arg>-Xlint:unchecked</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+
+            <!-- Maven Shade Plugin for creating fat jar -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <excludes>
+                                    <exclude>org.apache.flink:flink-shaded-force-shading</exclude>
+                                    <exclude>com.google.code.findbugs:jsr305</exclude>
+                                    <!-- These API JARs are already contained, byte-for-byte, in foundation. -->
+                                    <exclude>com.ibm.decision:engine-de-api</exclude>
+                                    <exclude>com.ibm.decision:annotations</exclude>
+                                </excludes>
+                            </artifactSet>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>META-INF/MANIFEST.MF</exclude>
+                                        <exclude>META-INF/DEPENDENCIES</exclude>
+                                        <exclude>META-INF/LICENSE</exclude>
+                                        <exclude>META-INF/LICENSE.txt</exclude>
+                                        <exclude>META-INF/NOTICE</exclude>
+                                        <exclude>META-INF/NOTICE.txt</exclude>
+                                        <exclude>module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                        <exclude>META-INF/FastDoubleParser-LICENSE</exclude>
+                                        <exclude>META-INF/FastDoubleParser-NOTICE</exclude>
+                                        <exclude>META-INF/thirdparty-LICENSE</exclude>
+                                        <!-- Exclude example/test decision service providers that conflict with actual rulesets -->
+                                        <exclude>myModel/**</exclude>
+                                        <exclude>META-INF/decisions/myModelName-*.json</exclude>
+                                        <!-- Ruleset providers are loaded from the separately deployed ruleset JAR. -->
+                                        <exclude>META-INF/services/com.ibm.decision.run.DecisionServiceProvider</exclude>
+                                    </excludes>
+                                </filter>
+                                <!-- foundation is itself an uber JAR. Prefer the separately resolved versions already used by Flink. -->
+                                <filter>
+                                    <artifact>com.ibm.decision:foundation</artifact>
+                                    <excludes>
+                                        <exclude>org/apache/commons/math3/**</exclude>
+                                        <exclude>assets/org/apache/commons/math3/**</exclude>
+                                        <exclude>org/apache/commons/lang3/**</exclude>
+                                        <exclude>org/apache/commons/compress/**</exclude>
+                                        <exclude>org/apache/commons/io/**</exclude>
+                                        <exclude>com/fasterxml/jackson/annotation/**</exclude>
+                                        <exclude>com/fasterxml/jackson/core/**</exclude>
+                                        <exclude>com/fasterxml/jackson/databind/**</exclude>
+                                        <exclude>com/fasterxml/jackson/datatype/jsr310/**</exclude>
+                                        <exclude>org/apache/logging/log4j/**</exclude>
+                                        <exclude>META-INF/versions/9/org/apache/logging/log4j/**</exclude>
+                                        <exclude>Log4j-charsets.properties</exclude>
+                                        <exclude>META-INF/maven/org.apache.commons/commons-math3/**</exclude>
+                                        <exclude>META-INF/maven/org.apache.commons/commons-lang3/**</exclude>
+                                        <exclude>META-INF/maven/org.apache.commons/commons-compress/**</exclude>
+                                        <exclude>META-INF/maven/commons-io/commons-io/**</exclude>
+                                        <exclude>META-INF/maven/com.fasterxml.jackson.core/**</exclude>
+                                        <exclude>META-INF/maven/com.fasterxml.jackson.datatype/jackson-datatype-jsr310/**</exclude>
+                                        <exclude>META-INF/maven/org.apache.logging.log4j/log4j-api/**</exclude>
+                                        <exclude>META-INF/versions/9/org/yaml/snakeyaml/internal/**</exclude>
+                                        <exclude>META-INF/FastDoubleParser-LICENSE</exclude>
+                                        <exclude>META-INF/FastDoubleParser-NOTICE</exclude>
+                                        <exclude>META-INF/thirdparty-LICENSE</exclude>
+                                        <!-- Exclude stale engine runtime version class; decisionJar-3.12.2 provides the correct 3.12.2 version -->
+                                        <exclude>com/ibm/rules/engine/runtime/impl/EngineRuntimeVersionImpl.class</exclude>
+                                        <exclude>com/ibm/rules/engine/runtime/impl/EngineRuntimeVersion.class</exclude>
+                                        <exclude>com/ibm/rules/engine/osgi/impl/EngineRuntimeVersionServiceImpl.class</exclude>
+                                        <exclude>com/ibm/rules/engine/load/EngineRuntimeVersionReader.class</exclude>
+                                        <exclude>com/ibm/rules/engine/osgi/EngineRuntimeVersionService.class</exclude>
+                                    </excludes>
+                                </filter>
+                                <!-- execution-api brings an uber JAR containing older Commons Lang/Text/Math copies. -->
+                                <filter>
+                                    <artifact>com.ibm.decision:ml-integration-runtime</artifact>
+                                    <excludes>
+                                        <exclude>org/apache/commons/math3/**</exclude>
+                                        <exclude>assets/org/apache/commons/math3/**</exclude>
+                                        <exclude>org/apache/commons/lang3/**</exclude>
+                                        <exclude>org/apache/commons/text/**</exclude>
+                                    </excludes>
+                                </filter>
+                                <!-- Keep one copy of identical metadata bundled in both Flink shaded artifacts. -->
+                                <filter>
+                                    <artifact>org.apache.flink:flink-shaded-zookeeper-3</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/io.netty.versions.properties</exclude>
+                                        <exclude>META-INF/native-image/io.netty/**</exclude>
+                                        <exclude>META-INF/proguard/**</exclude>
+                                    </excludes>
+                                </filter>
+                                <filter>
+                                    <artifact>com.ibm.aid.engine:decisionJar</artifact>
+                                    <excludes>
+                                        <exclude>myModel/**</exclude>
+                                        <exclude>META-INF/decisions/myModelName-*.json</exclude>
+                                        <exclude>META-INF/services/com.ibm.decision.run.DecisionServiceProvider</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <!-- Merge SPI descriptors; the ruleset provider descriptor above remains intentionally external. -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.ibm.di.event.agent.AgentBasedDataStreamJob</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+
+        <pluginManagement>
+            <plugins>
+                <!-- Eclipse m2e lifecycle mapping -->
+                <plugin>
+                    <groupId>org.eclipse.m2e</groupId>
+                    <artifactId>lifecycle-mapping</artifactId>
+                    <version>1.0.0</version>
+                    <configuration>
+                        <lifecycleMappingMetadata>
+                            <pluginExecutions>
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>org.apache.maven.plugins</groupId>
+                                        <artifactId>maven-shade-plugin</artifactId>
+                                        <versionRange>[3.1.1,)</versionRange>
+                                        <goals>
+                                            <goal>shade</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action>
+                                        <ignore/>
+                                    </action>
+                                </pluginExecution>
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>org.apache.maven.plugins</groupId>
+                                        <artifactId>maven-compiler-plugin</artifactId>
+                                        <versionRange>[3.1,)</versionRange>
+                                        <goals>
+                                            <goal>testCompile</goal>
+                                            <goal>compile</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action>
+                                        <ignore/>
+                                    </action>
+                                </pluginExecution>
+                            </pluginExecutions>
+                        </lifecycleMappingMetadata>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>
+

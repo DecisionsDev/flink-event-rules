@@ -1,0 +1,39 @@
+{
+  "id": "ft-taking-off-chaining",
+  "label": "Functional Test: Taking-off triggers TrackedAircraftEvent (agent chaining)",
+  "description": "Aircraft ascends near its origin airport → TAKING_OFF status detected → TrackedAircraftEvent emitted and chained to Airport Agent. Validates end-to-end agent chaining with entity-key re-keying.",
+  "chain_path": "AircraftEvent → Aircraft Agent → TrackedAircraftEvent (in-process) → Airport Agent",
+  "events": [
+    {
+      "type": "AircraftEvent",
+      "topic": "agent-aircraft-events",
+      "payload": {
+        "timestamp": "2026-09-09T16:05:00Z",
+        "aircraftId": "FT-AC-001",
+        "description": "FT taxiing at origin",
+        "airportCode": "CDG",
+        "position": { "latitude": 49.0097, "longitude": 2.5478, "elevation": 119 },
+        "groundSpeed": 40,
+        "type": "TAXIING"
+      }
+    },
+    {
+      "type": "AircraftEvent",
+      "topic": "agent-aircraft-events",
+      "payload": {
+        "timestamp": "2026-09-09T16:16:00Z",
+        "aircraftId": "FT-AC-001",
+        "description": "FT taking off (ascending near CDG)",
+        "airportCode": "CDG",
+        "position": { "latitude": 49.0097, "longitude": 2.5479, "elevation": 230 },
+        "groundSpeed": 350,
+        "type": "IN_FLIGHT"
+      }
+    }
+  ],
+  "expected_output": {
+    "topic": "agent-tracked-aircraft-events",
+    "contains_field": "aircraftId",
+    "contains_value": "FT-AC-001"
+  }
+}

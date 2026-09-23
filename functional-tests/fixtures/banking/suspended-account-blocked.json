@@ -1,0 +1,43 @@
+{
+  "id": "ft-suspended-account-blocked",
+  "label": "Functional Test: Transaction on Suspended Account",
+  "description": "Account opened with SUSPENDED status, then a transaction is attempted. RULE-006 fires immediately (score=100, BLOCKED), short-circuiting all other rules.",
+  "rules_triggered": ["RULE-006"],
+  "expected_decision": "BLOCKED",
+  "expected_min_risk_score": 100,
+  "events": [
+    {
+      "type": "AccountEvent",
+      "topic": "agent-account-events",
+      "payload": {
+        "accountNumber": "FT-ACCT-SUSP-001",
+        "accountType": "CHECKING",
+        "balance": 10000,
+        "currency": "DOLLAR",
+        "description": "Functional test — suspended account",
+        "overdraftLimit": 15000,
+        "owner": "Suspended Test User",
+        "ownerCountry": "USA",
+        "status": "SUSPENDED",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "type": "OPENING"
+      }
+    },
+    {
+      "type": "Transaction",
+      "topic": "agent-transactions",
+      "payload": {
+        "accountNumber": "FT-ACCT-SUSP-001",
+        "amount": 100,
+        "channel": "POS",
+        "country": "USA",
+        "currency": "DOLLAR",
+        "merchant": "Test Merchant",
+        "merchantCategory": "OTHER",
+        "timestamp": "2026-06-01T10:00:00Z",
+        "transactionId": "FT-TX-SUSP-001",
+        "type": "DEBIT"
+      }
+    }
+  ]
+}

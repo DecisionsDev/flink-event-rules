@@ -1,0 +1,43 @@
+{
+  "id": "ft-large-cross-border-transaction",
+  "label": "Functional Test: Large Cross-Border Transaction",
+  "description": "Account opened in USA, then a $50,000 cross-border transaction from GBR. Triggers RULE-001 (large amount, +30) and RULE-002a (cross-border, +15). Expected decision: PENDING_REVIEW (score=45).",
+  "rules_triggered": ["RULE-001", "RULE-002a"],
+  "expected_decision": "PENDING_REVIEW",
+  "expected_min_risk_score": 45,
+  "events": [
+    {
+      "type": "AccountEvent",
+      "topic": "agent-account-events",
+      "payload": {
+        "accountNumber": "FT-ACCT-LARGE-001",
+        "accountType": "CHECKING",
+        "balance": 10000,
+        "currency": "DOLLAR",
+        "description": "Functional test — large transaction account",
+        "overdraftLimit": 15000,
+        "owner": "Functional Test User",
+        "ownerCountry": "USA",
+        "status": "ACTIVE",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "type": "OPENING"
+      }
+    },
+    {
+      "type": "Transaction",
+      "topic": "agent-transactions",
+      "payload": {
+        "accountNumber": "FT-ACCT-LARGE-001",
+        "amount": 50000,
+        "channel": "ONLINE",
+        "country": "GBR",
+        "currency": "DOLLAR",
+        "merchant": "International Transfer Service",
+        "merchantCategory": "OTHER",
+        "timestamp": "2026-06-01T10:00:00Z",
+        "transactionId": "FT-TX-LARGE-001",
+        "type": "DEBIT"
+      }
+    }
+  ]
+}

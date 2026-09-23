@@ -1,0 +1,58 @@
+# Metals (Scala)
+.metals/
+.bloop/
+.bsp/
+metals.sbt
+
+# IDE
+.vscode/
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+.factorypath
+.bob/
+
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+build/
+dist/
+
+functional-tests/reports/
+
+# Environment
+.env.local
+backup
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Samples — runtime job state (written by the UI, not committed)
+samples/*/.job-state.json
+
+
+# Log files generated when ${sys:log.file} is unset (e.g. during local Maven builds/tests)
+# Log4j2 resolves the literal string "${sys:log.file}" when the system property is not set,
+# creating a file with that name in the working directory.
+\${sys:log.file}
+\${sys:log.file}.*
+*.log
+*.log.*

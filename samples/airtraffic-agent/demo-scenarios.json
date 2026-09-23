@@ -1,0 +1,839 @@
+[
+    {
+        "id": "airport-creation",
+        "label": "Airport creation from event",
+        "description": "Send an Airport Initialization Event to trigger the creation of an Airport entity.",
+        "events": [
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:00:00Z",
+                    "airport": "CDG",
+                    "airportName": "Paris Roissy Charles De Gaulle",
+                    "country": "France",
+                    "location": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    }
+                }
+            }
+        ]
+    },
+    {
+        "id": "aircraft-creation",
+        "label": "Aircraft creation from event",
+        "description": "Send an Aircraft Initialization Event to trigger the creation of an Aircraft entity.",
+        "events": [
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T15:00:00Z",
+                    "aircraftId": "XZF-435-TW",
+                    "flightNumber": "AF082",
+                    "originAirport": "CDG",
+                    "destinationAirport": "NCE",
+                    "position": {
+                        "latitude": 43.5514,
+                        "longitude": 7.0128,
+                        "elevation": 1000
+                    },
+                    "groundSpeed": 544.0
+                }
+            }
+        ]
+    },
+    {
+        "id": "several-aircraft-creation",
+        "label": "Multiple Aircraft creation from events",
+        "description": "Send Aircraft Initialization Events to trigger the creation of several Aircraft entities.",
+        "events": [
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T15:00:00Z",
+                    "aircraftId": "XZF-435-TW",
+                    "flightNumber": "AF082",
+                    "originAirport": "CDG",
+                    "destinationAirport": "NCE",
+                    "position": {
+                        "latitude": 43.5514,
+                        "longitude": 7.0128,
+                        "elevation": 1000
+                    },
+                    "groundSpeed": 544.0
+                }
+            },
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:00:00Z",
+                    "aircraftId": "CQF-567-ZA",
+                    "flightNumber": "DL435",
+                    "originAirport": "JFK",
+                    "destinationAirport": "NCE",
+                    "position": {
+                        "latitude": 47.2181,
+                        "longitude": 1.5528,
+                        "elevation": 9800
+                    },
+                    "groundSpeed": 876.0
+                }
+            },
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:02:00Z",
+                    "aircraftId": "KLO-983-ZE",
+                    "flightNumber": "AA1024",
+                    "originAirport": "ATL",
+                    "destinationAirport": "CDG",
+                    "position": {
+                        "latitude": 51.5074,
+                        "longitude": 0.1278,
+                        "elevation": 12300
+                    },
+                    "groundSpeed": 956.0
+                }
+            },
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:03:00Z",
+                    "aircraftId": "UGH-122-BV",
+                    "flightNumber": "EY455",
+                    "originAirport": "MAD",
+                    "destinationAirport": "NCE",
+                    "position": {
+                        "latitude": 41.3851,
+                        "longitude": 2.1734,
+                        "elevation": 8988
+                    },
+                    "groundSpeed": 857.0
+                }
+            }
+
+        ]
+    },
+    {
+        "id": "several-airport-creation",
+        "label": "Multiple Airport creation from events",
+        "description": "Send Airport Initialization Events to trigger the creation of an several Airport entity.",
+        "events": [
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:00:00Z",
+                    "airport": "CDG",
+                    "airportName": "Paris Roissy Charles De Gaulle",
+                    "country": "France",
+                    "location": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    }
+                }
+            },
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:01:00Z",
+                    "airport": "NCE",
+                    "airportName": "Nice Côte d'Azur International Airport",
+                    "country": "France",
+                    "location": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2159,
+                        "elevation": 4
+                    }
+                }
+            },
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:02:00Z",
+                    "airport": "JFK",
+                    "airportName": "John F. Kennedy International Airport",
+                    "country": "United States",
+                    "location": {
+                        "latitude": 40.6413,
+                        "longitude": -73.7781,
+                        "elevation": 13
+                    }
+                }
+            },
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:03:00Z",
+                    "airport": "ATL",
+                    "airportName": "Hartsfield-Jackson Atlanta International Airport",
+                    "country": "United States",
+                    "location": {
+                        "latitude": 33.6407,
+                        "longitude": -84.4277,
+                        "elevation": 313
+                    }
+                }
+            }
+        ]
+    },
+    {
+        "id": "update-aircraft-status1",
+        "label": "Detect ascending flights",
+        "description": "Positive variation of altitude set ASCENDING state to the aircraft",
+        "events": [
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:00:00Z",
+                    "airport": "CDG",
+                    "airportName": "Paris Roissy Charles De Gaulle",
+                    "country": "France",
+                    "location": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    }, 
+                    "runways": [
+                        {
+                            "id": "CDG#1",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "CDG#2",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:01:00Z",
+                    "airport": "NCE",
+                    "airportName": "Nice Côte d'Azur International Airport",
+                    "country": "France",
+                    "location": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2159,
+                        "elevation": 4
+                    },
+                    "runways": [
+                        {
+                            "id": "NCE#1",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "NCE#2",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },            
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T15:00:00Z",
+                    "aircraftId": "XZF-435-TW",
+                    "flightNumber": "AF082",
+                    "originAirport": "CDG",
+                    "destinationAirport": "NCE",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    },
+                    "groundSpeed": 344.0
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:05:00Z",
+                    "aircraftId": "XZF-435-TW",
+                    "description": "Ascending...",
+                    "position": {
+                        "latitude": 45.750000,
+                        "longitude": 4.850000,
+                        "elevation": 230
+                    },
+                    "groundSpeed": 344,
+                    "type": "INFLIGHT"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:06:00Z",
+                    "aircraftId": "XZF-435-TW",
+                    "description": "Same altitude...",
+                    "position": {
+                        "latitude": 45.750000,
+                        "longitude": 4.860000,
+                        "elevation": 230
+                    },
+                    "groundSpeed": 350.0,
+                    "type": "INFLIGHT"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:56:00Z",
+                    "aircraftId": "XZF-435-TW",
+                    "description": "Ascending...",
+                    "position": {
+                        "latitude": 45.750000,
+                        "longitude": 4.870000,
+                        "elevation": 300
+                    },
+                    "groundSpeed": 350.0,
+                    "type": "INFLIGHT"
+                }
+            }
+        ]
+    },
+    {
+        "id": "update-aircraft-status2",
+        "label": "Detect take-off",
+        "description": "Ascending flight at origin airport is a take-off situation",
+        "events": [
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:00:00Z",
+                    "airport": "CDG",
+                    "airportName": "Paris Roissy Charles De Gaulle",
+                    "country": "France",
+                    "location": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    }, 
+                    "runways": [
+                        {
+                            "id": "CDG#1",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "CDG#2",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:01:00Z",
+                    "airport": "NCE",
+                    "airportName": "Nice Côte d'Azur International Airport",
+                    "country": "France",
+                    "location": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2159,
+                        "elevation": 4
+                    },
+                    "runways": [
+                        {
+                            "id": "NCE#1",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "NCE#2",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },            
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T15:00:00Z",
+                    "aircraftId": "QAT-576-OP",
+                    "flightNumber": "AF099",
+                    "originAirport": "CDG",
+                    "destinationAirport": "NCE",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    },
+                    "groundSpeed": 0
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:05:00Z",
+                    "aircraftId": "QAT-576-OP",
+                    "description": "Taxing...",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    },
+                    "groundSpeed": 40,
+                    "type": "TAXIING"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:16:00Z",
+                    "aircraftId": "QAT-576-OP",
+                    "description": "Ascending... -> take off",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5479,
+                        "elevation": 230
+                    },
+                    "groundSpeed": 350.0,
+                    "type": "IN_FLIGHT"
+                }
+            }
+        ]
+    },
+    {
+        "id": "update-aircraft-status3",
+        "label": "Detect landing",
+        "description": "Descending flight at destination airport is a landing situation",
+        "events": [
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:00:00Z",
+                    "airport": "CDG",
+                    "airportName": "Paris Roissy Charles De Gaulle",
+                    "country": "France",
+                    "location": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    }, 
+                    "runways": [
+                        {
+                            "id": "CDG#1",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "CDG#2",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:01:00Z",
+                    "airport": "NCE",
+                    "airportName": "Nice Côte d'Azur International Airport",
+                    "country": "France",
+                    "location": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2159,
+                        "elevation": 4
+                    },
+                    "runways": [
+                        {
+                            "id": "NCE#1",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "NCE#2",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },            
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T15:00:00Z",
+                    "aircraftId": "AAS-212-FG",
+                    "flightNumber": "AF043",
+                    "originAirport": "CDG",
+                    "destinationAirport": "NCE",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    },
+                    "groundSpeed": 0
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:05:00Z",
+                    "aircraftId": "AAS-212-FG",
+                    "description": "Fying...",
+                    "position": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2162,
+                        "elevation": 334
+                    },
+                    "groundSpeed": 567,
+                    "type": "IN_FLIGHT"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:16:00Z",
+                    "aircraftId": "AAS-212-FG",
+                    "description": "Descending... -> landing",
+                    "position": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2160,
+                        "elevation": 176
+                    },
+                    "groundSpeed": 350.0,
+                    "type": "IN_FLIGHT"
+                }
+            }
+        ]
+    },    
+    {
+        "id": "update-aircraft-status4",
+        "label": "Detect touch & go",
+        "description": "Detecting a touch & go situation where the aircraft is landing and ascending just after.",
+        "events": [
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:00:00Z",
+                    "airport": "CDG",
+                    "airportName": "Paris Roissy Charles De Gaulle",
+                    "country": "France",
+                    "location": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    }, 
+                    "runways": [
+                        {
+                            "id": "CDG#1",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "CDG#2",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:01:00Z",
+                    "airport": "NCE",
+                    "airportName": "Nice Côte d'Azur International Airport",
+                    "country": "France",
+                    "location": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2159,
+                        "elevation": 4
+                    },
+                    "runways": [
+                        {
+                            "id": "NCE#1",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "NCE#2",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },            
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T15:00:00Z",
+                    "aircraftId": "OUP-198-ZA",
+                    "flightNumber": "AF010",
+                    "originAirport": "CDG",
+                    "destinationAirport": "NCE",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    },
+                    "groundSpeed": 0
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:05:00Z",
+                    "aircraftId": "OUP-198-ZA",
+                    "description": "Fying...",
+                    "position": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2162,
+                        "elevation": 100
+                    },
+                    "groundSpeed": 567,
+                    "type": "IN_FLIGHT"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:16:00Z",
+                    "aircraftId": "OUP-198-ZA",
+                    "description": "Descending... -> landing",
+                    "position": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2160,
+                        "elevation": 56
+                    },
+                    "groundSpeed": 350.0,
+                    "type": "IN_FLIGHT"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:17:00Z",
+                    "aircraftId": "OUP-198-ZA",
+                    "description": "Taxiing...",
+                    "position": {
+                        "latitude": 43.6584,
+                        "longitude": 7.21595,
+                        "elevation": 4
+                    },
+                    "groundSpeed": 189,
+                    "type": "TAXIING"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:18:00Z",
+                    "aircraftId": "OUP-198-ZA",
+                    "description": "Taking off again...",
+                    "position": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2158,
+                        "elevation": 78
+                    },
+                    "groundSpeed": 250,
+                    "type": "IN_FLIGHT"
+                }
+            }
+        ]
+    },
+{
+        "id": "update-aircraft-status5",
+        "label": "Detect simultaneous take-off",
+        "description": "Detecting a situation where 2 aircrafts are taking-off at the same time from two parallel runways.",
+        "events": [
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:00:00Z",
+                    "airport": "CDG",
+                    "airportName": "Paris Roissy Charles De Gaulle",
+                    "country": "France",
+                    "location": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    }, 
+                    "runways": [
+                        {
+                            "id": "CDG#1",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "CDG#2",
+                            "orientation": "North-South",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },
+            {
+                "type": "AirportInitializationEvent",
+                "topic": "agent-airport-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T14:01:00Z",
+                    "airport": "NCE",
+                    "airportName": "Nice Côte d'Azur International Airport",
+                    "country": "France",
+                    "location": {
+                        "latitude": 43.6584,
+                        "longitude": 7.2159,
+                        "elevation": 4
+                    },
+                    "runways": [
+                        {
+                            "id": "NCE#1",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        },
+                        {
+                            "id": "NCE#2",
+                            "orientation": "East-West",
+                            "status": "AVAILABLE"
+                        }
+                    ]
+                }
+            },            
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T15:00:00Z",
+                    "aircraftId": "MUG-756-WX",
+                    "flightNumber": "AF088",
+                    "originAirport": "CDG",
+                    "destinationAirport": "NCE",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    },
+                    "groundSpeed": 0
+                }
+            },
+            {
+                "type": "AircraftInitializationEvent",
+                "topic": "agent-aircraft-init-events",
+                "payload": {
+                    "timestamp": "2026-09-09T15:00:00Z",
+                    "aircraftId": "HKL-233-QA",
+                    "flightNumber": "AF089",
+                    "originAirport": "CDG",
+                    "destinationAirport": "JFK",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    },
+                    "groundSpeed": 0
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:05:00Z",
+                    "aircraftId": "MUG-756-WX",
+                    "description": "Taxing...",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    },
+                    "groundSpeed": 50,
+                    "type": "TAXIING"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:07:00Z",
+                    "aircraftId": "HKL-233-QA",
+                    "description": "Taxing...",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 119
+                    },
+                    "groundSpeed": 50,
+                    "type": "TAXIING"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:10:00Z",
+                    "aircraftId": "MUG-756-WX",
+                    "description": "Taking off...",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 200
+                    },
+                    "groundSpeed": 350.0,
+                    "type": "IN_FLIGHT"
+                }
+            },
+            {
+                "type": "AircraftEvent",
+                "topic": "agent-aircraft-events",
+                "payload": {
+                    "timestamp": "2026-09-09T16:11:00Z",
+                    "aircraftId": "HKL-233-QA",
+                    "description": "Taking off...",
+                    "position": {
+                        "latitude": 49.0097,
+                        "longitude": 2.5478,
+                        "elevation": 190
+                    },
+                    "groundSpeed": 340,
+                    "type": "IN_FLIGHT"
+                }
+            }            
+        ]
+    }        
+
+]

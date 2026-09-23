@@ -1,0 +1,694 @@
+/* ─── Wizard overlay & modal ─────────────────────────────────────────────────
+   All class names are prefixed with .wz- to avoid collisions with App.css.
+   Design tokens from App.css (:root) are reused throughout.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.wz-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 35, 40, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 500;
+  padding: 2rem 1rem 2rem;
+  overflow-y: auto;
+}
+
+.wz-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-width: 680px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ─── Header ─────────────────────────────────────────────────────────────── */
+.wz-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  gap: 1rem;
+}
+
+.wz-modal-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.wz-modal-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.wz-close-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+
+.wz-close-btn:hover {
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: var(--red-border);
+}
+
+/* ─── Step indicators ────────────────────────────────────────────────────── */
+.wz-steps {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  padding: 0.875rem 1.5rem;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.wz-step-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 80px;
+  position: relative;
+}
+
+.wz-step-indicator:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 11px;
+  left: 50%;
+  right: -50%;
+  height: 2px;
+  background: var(--border);
+  z-index: 0;
+}
+
+.wz-step-indicator.done:not(:last-child)::after {
+  background: var(--accent);
+}
+
+.wz-step-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.wz-step-indicator.active .wz-step-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.wz-step-indicator.done .wz-step-dot {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.wz-step-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-align: center;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.wz-step-indicator.active .wz-step-label,
+.wz-step-indicator.done .wz-step-label {
+  color: var(--accent);
+}
+
+/* ─── Modal body ─────────────────────────────────────────────────────────── */
+.wz-modal-body {
+  padding: 1.25rem 1.5rem;
+  overflow-y: auto;
+  max-height: calc(100vh - 280px);
+}
+
+.wz-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ─── Fields ─────────────────────────────────────────────────────────────── */
+.wz-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.wz-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wz-hint {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+.wz-hint-block {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.wz-input,
+.wz-select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.83rem;
+  color: var(--text);
+  background: var(--surface);
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.12s;
+  font-family: inherit;
+}
+
+.wz-input:focus,
+.wz-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.wz-mono {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.78rem;
+}
+
+.wz-input-sm {
+  max-width: 100px;
+}
+
+.wz-input-readonly {
+  background: var(--surface);
+  color: var(--text-muted, #57606a);
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.wz-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.wz-row .wz-field {
+  min-width: 140px;
+}
+
+/* ─── Cards (subscription / output rows) ────────────────────────────────── */
+.wz-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: var(--surface-alt);
+}
+
+.wz-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wz-card-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wz-remove-btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+
+.wz-remove-btn:hover {
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: var(--red-border);
+}
+
+.wz-section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ─── JSON preview ───────────────────────────────────────────────────────── */
+.wz-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.wz-preview-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.wz-json-preview {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 0;
+}
+
+/* ─── Note / tip text ────────────────────────────────────────────────────── */
+.wz-note {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.625rem 0.875rem;
+}
+
+.wz-note code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.76rem;
+  background: var(--border);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--text);
+}
+
+/* ─── Error ──────────────────────────────────────────────────────────────── */
+.wz-error {
+  margin: 0 1.5rem;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid var(--red-border);
+  border-radius: var(--radius-sm);
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+.wz-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border);
+  gap: 0.75rem;
+}
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+.wz-primary-btn {
+  padding: 8px 18px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: var(--surface);
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.wz-primary-btn:hover  { opacity: 0.88; }
+.wz-primary-btn:active { transform: translateY(1px); }
+
+.wz-ghost-btn {
+  padding: 7px 16px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.12s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.wz-ghost-btn:hover  { background: #dbeafe; box-shadow: var(--shadow-sm); }
+.wz-ghost-btn:active { transform: translateY(1px); }
+
+.wz-add-btn {
+  align-self: flex-start;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px dashed var(--accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.wz-add-btn:hover { background: #dbeafe; }
+
+.wz-add-btn-sm {
+  padding: 3px 10px;
+  font-size: 0.75rem;
+}
+
+/* ─── Section divider (used in Ruleset step) ──────────────────────────────── */
+.wz-section-divider {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ─── History binding row ─────────────────────────────────────────────────── */
+.wz-history-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+
+.wz-history-row .wz-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.wz-remove-btn-sm {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  font-size: 0.75rem;
+}
+
+/* ─── Muted inline note ───────────────────────────────────────────────────── */
+.wz-muted-note {
+  font-size: 0.8rem;
+  color: var(--text-faint, #8c959f);
+  margin: 0.25rem 0 0.5rem;
+}
+
+
+
+/* ─── Create descriptor button (on selector screen) ─────────────────────── */
+.create-descriptor-button {
+  padding: 9px 22px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  letter-spacing: 0.01em;
+}
+
+.create-descriptor-button:hover  { background: #dbeafe; box-shadow: var(--shadow-sm); }
+.create-descriptor-button:active { transform: translateY(1px); }
+
+/* ─── Step 6: Publish & Deploy ──────────────────────────────────────────── */
+.wz-deploy-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--surface-alt);
+}
+
+.wz-deploy-section-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.wz-deploy-danger-zone {
+  border-color: var(--red-border);
+  background: var(--red-soft);
+}
+
+.wz-deploy-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.wz-deploy-msg {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.wz-deploy-msg-ok  { color: var(--green); }
+.wz-deploy-msg-err { color: var(--red); }
+
+.wz-deploy-feedback {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.wz-deploy-feedback-ok   { background: var(--green-soft);  color: var(--green); border: 1px solid var(--green-border); }
+.wz-deploy-feedback-err  { background: var(--red-soft);    color: var(--red);   border: 1px solid var(--red-border); }
+.wz-deploy-feedback-warn { background: #fff8e1; color: #7c5c00; border: 1px solid #f0c060; font-weight: 500; }
+
+/* ─── Job status badge ───────────────────────────────────────────────────── */
+.wz-job-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+}
+.wz-job-badge-running,
+.wz-job-badge-restarting,
+.wz-job-badge-initializing { background: var(--green-soft);  color: var(--green); border-color: var(--green-border); }
+.wz-job-badge-created       { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-border); }
+.wz-job-badge-failed        { background: var(--red-soft);    color: var(--red);   border-color: var(--red-border); }
+.wz-job-badge-canceled,
+.wz-job-badge-cancelling    { background: var(--amber-soft);  color: var(--amber); border-color: var(--amber-border); }
+.wz-job-badge-not_started,
+.wz-job-badge-not_found     { background: var(--surface-alt); color: var(--text-faint); }
+
+.wz-job-id {
+  font-weight: 400;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.7rem;
+}
+
+/* ─── Danger button ──────────────────────────────────────────────────────── */
+.wz-danger-btn {
+  padding: 7px 16px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: var(--surface);
+  background: var(--red);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+.wz-danger-btn:hover   { opacity: 0.88; }
+.wz-danger-btn:active  { transform: translateY(1px); }
+.wz-danger-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ─── Busy-state pulse on buttons ────────────────────────────────────────── */
+.wz-btn-busy { animation: wz-pulse 1.2s ease-in-out infinite; }
+@keyframes wz-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+/* ─── File picker (Step 3 — Ruleset JAR) ────────────────────────────────── */
+.wz-file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+}
+
+.wz-file-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+  user-select: none;
+}
+.wz-file-btn:hover { background: #dbeafe; }
+
+.wz-file-name {
+  font-size: 0.8rem;
+  color: var(--text);
+  word-break: break-all;
+}
+.wz-muted {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* ─── Archive source selector (Step 3 — Ruleset) ─────────────────────────── */
+.wz-source-selector {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  align-self: flex-start;
+}
+
+.wz-source-btn {
+  flex: 1;
+  padding: 8px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+
+.wz-source-btn:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+.wz-source-btn:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.wz-source-btn-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ─── DI Runtime panel ──────────────────────────────────────────────────── */
+.wz-ads-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-alt);
+}
+
+.wz-ads-loading {
+  font-size: 0.8rem;
+  color: var(--text-faint);
+  margin: 0.25rem 0 0;
+}
+
+.wz-ads-empty {
+  font-size: 0.8rem;
+  color: var(--text-faint);
+  margin: 0.25rem 0 0;
+}
+
+.wz-ads-empty code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.76rem;
+  background: var(--border);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--text);
+}
+
+.wz-ads-error {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--red);
+  margin: 0.25rem 0 0;
+}
+
+/* ─── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .wz-overlay { padding: 0; align-items: flex-end; }
+  .wz-modal   { max-width: 100%; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+  .wz-modal-body { max-height: 60vh; }
+  .wz-steps { gap: 0; padding: 0.75rem 1rem; }
+  .wz-step-label { display: none; }
+}
+

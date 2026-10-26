@@ -18,6 +18,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import './UseCaseSelector.css';
+import { API_URL as API_URL_APP } from './config.js';
 import UseCaseSelector from './UseCaseSelector';
 import AgentWizard from './AgentWizard';
 import SendEventsPanel from './SendEventsPanel';
@@ -28,7 +29,9 @@ import { useEventStream } from './useEventStream';
 import NotificationContainer from './NotificationContainer';
 
 // Configuration constants
-const MAX_EVENTS_DISPLAY = 50;
+// MAX_EVENTS_DISPLAY is initialised from the BFF /api/config endpoint so it
+// stays in sync with MAX_EVENTS_PER_TOPIC on the server.  The hard-coded
+// fallback is used only before the first config fetch resolves.
 const POLL_INTERVAL_MS   = 2000;
 
 // ─── Normalise agent EventEnvelope shape ─────────────────────────────────────
@@ -56,7 +59,7 @@ function normaliseEvent(event) {
 // suppress events whose filterKey field equals filterValue.  A `filterLabel`
 // provides the toggle text shown to the user.
 //
-// Example in descriptor.json outboundTopics:
+// Example in the agents.json top-level outboundTopics:
 //   { "type": "promotion-offer", "filterKey": "decision", "filterValue": "NO_ACTION",
 //     "filterLabel": "NO_ACTION" }
 
@@ -75,7 +78,6 @@ function applyOutboundFilter(events, ot, show) {
 // Delete and Cancel (back to selector) operations, with confirmation dialogs
 // for destructive actions.
 
-const API_URL_APP = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 function ConfirmDialog({ message, confirmLabel, confirmDanger, onConfirm, onCancel }) {
   return (
@@ -157,7 +159,7 @@ function AgentManagementPanel({ agentId, useCaseId, onEdit, onNavigateBack, agen
       )}
       {confirm === 'cancel' && (
         <ConfirmDialog
-          message={`Cancel the running Flink job for agent "${agentId}" and return to the use case selection screen?`}
+          message={`Cancel the running Flink job for agent "${agentId}" and return to the event rule application selection screen?`}
           confirmLabel="Yes, cancel job"
           confirmDanger={true}
           onConfirm={handleCancelConfirmed}
@@ -205,7 +207,7 @@ function AgentManagementPanel({ agentId, useCaseId, onEdit, onNavigateBack, agen
             className="agent-mgmt-btn agent-mgmt-btn-ghost"
             onClick={() => setConfirm('cancel')}
             disabled={isBusy}
-            title="Cancel the Flink job and return to use case selection"
+            title="Cancel the Flink job and return to event rule application selection"
           >
             {cancelState === 'stopping' ? 'Undeploying…' : 'Undeploy Agent'}
           </button>
@@ -228,6 +230,7 @@ const NOTIFICATION_CONFIG = {
 };
 
 function App() {
+  const [maxEventsDisplay, setMaxEventsDisplay] = useState(50);
   const [selectedUseCase, setSelectedUseCase] = useState(null);
   const [showWizard, setShowWizard] = useState(false);
   const [editDescriptor, setEditDescriptor] = useState(null);
@@ -250,6 +253,14 @@ function App() {
   const [showChangelogs, setShowChangelogs] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // ── Fetch BFF config once on mount to align display limits (H-2) ────────────
+  useEffect(() => {
+    fetch(`${API_URL_APP}/api/config`)
+      .then(r => r.ok ? r.json() : null)
+      .then(cfg => { if (cfg?.maxEventsPerTopic) setMaxEventsDisplay(cfg.maxEventsPerTopic); })
+      .catch(() => { /* keep default */ });
+  }, []);
 
   // ── Live event stream (WebSocket push with HTTP-poll fallback) ───────────────
   const { eventsByType, setEventsByType, error: streamError } = useEventStream(selectedUseCase, API_URL_APP, {
@@ -277,6 +288,18 @@ function App() {
   const [leftWidth, setLeftWidth] = useState(null); // null = use CSS default (45%)
   const isDragging = useRef(false);
   const splitContainerRef = useRef(null);
+  const splitListenersRef = useRef({ move: null, up: null });
+
+  // Clean up any dangling drag listeners on unmount (M-4)
+  useEffect(() => {
+    return () => {
+      const { move, up } = splitListenersRef.current;
+      if (move) document.removeEventListener('mousemove', move);
+      if (up)   document.removeEventListener('mouseup',   up);
+      document.body.style.cursor    = '';
+      document.body.style.userSelect = '';
+    };
+  }, []);
 
   const onSplitterMouseDown = useCallback((e) => {
     e.preventDefault();
@@ -298,8 +321,10 @@ function App() {
       document.body.style.userSelect = '';
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      splitListenersRef.current = { move: null, up: null };
     };
 
+    splitListenersRef.current = { move: onMouseMove, up: onMouseUp };
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
   }, []);
@@ -339,6 +364,7 @@ function App() {
     setAgentsJson(null);
     setShowFiltered({});
     setShowChangelogs(false);
+    setError(null);
   };
 
   // handleCleanTopics — purges all Kafka topic messages for the selected use case
@@ -356,10 +382,12 @@ function App() {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.error || r.statusText);
       }
-      // Immediately clear the frontend event state to update UI synchronously
-      if (setEventsByType) {
-        setEventsByType({});
-      }
+      // Immediately clear the frontend event state to update UI synchronously.
+      // Call setEventsByType as a functional update to guarantee the cleared value
+      // is applied even if a WebSocket broadcast races in at the same moment — the
+      // BFF sends an empty snapshot immediately after reset-topics completes, so
+      // any concurrent broadcast will itself be empty and arrive shortly after.
+      setEventsByType({});
     } catch (err) {
       setCleanTopicsError(`Clean failed: ${err.message}`);
     } finally {
@@ -385,13 +413,11 @@ function App() {
       const isMulti = (agentsJson.agents || []).length > 1;
       setWizardTargetAgentId(isMulti ? agentsJson.agents[0].agentId : null);
       setWizardMode(isMulti ? 'patch' : 'replace');
-    } catch {
-      setEditDescriptor(null);
-      setWizardTargetAgentId(null);
-      setWizardMode('replace');
+      setWizardUseCaseId(id);
+      setShowWizard(true);
+    } catch (err) {
+      setError(`Failed to load agent for editing: ${err.message}`);
     }
-    setWizardUseCaseId(id);
-    setShowWizard(true);
   };
 
   // handleEditSpecificAgent — opens the wizard to edit a named agent within a use-case.
@@ -536,7 +562,7 @@ function App() {
               <path d="M19 26l-10-10 10-10 1.414 1.414L11.828 16l8.586 8.586L19 26z"/>
             </svg>
           </button>
-          <button className="di-header-action" title="Settings" aria-label="Settings">
+          <button className="di-header-action" title="Settings (coming soon)" aria-label="Settings (coming soon)" aria-disabled="true" onClick={e => e.preventDefault()} style={{ opacity: 0.45, cursor: 'not-allowed' }}>
             <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
               <path d="M29.41 14.16l-2.61-.43a11.13 11.13 0 00-.91-2.19l1.55-2.18a1 1 0 00-.14-1.3l-2.67-2.67a1 1 0 00-1.3-.14l-2.18 1.55a11.13 11.13 0 00-2.19-.91l-.43-2.61A1 1 0 0017.65 2h-3.3a1 1 0 00-.99.84l-.43 2.61a11.13 11.13 0 00-2.19.91L8.56 4.81a1 1 0 00-1.3.14L4.59 7.62a1 1 0 00-.14 1.3l1.55 2.18a11.13 11.13 0 00-.91 2.19l-2.61.43A1 1 0 001.5 14.72v3.3a1 1 0 00.84.99l2.61.43a11.13 11.13 0 00.91 2.19L4.31 23.81a1 1 0 00.14 1.3l2.67 2.67a1 1 0 001.3.14l2.18-1.55a11.13 11.13 0 002.19.91l.43 2.61a1 1 0 00.99.84h3.3a1 1 0 00.99-.84l.43-2.61a11.13 11.13 0 002.19-.91l2.18 1.55a1 1 0 001.3-.14l2.67-2.67a1 1 0 00.14-1.3l-1.55-2.18a11.13 11.13 0 00.91-2.19l2.61-.43a1 1 0 00.84-.99v-3.3a1 1 0 00-.84-.86zM16 21a5 5 0 115-5 5 5 0 01-5 5z"/>
             </svg>
@@ -558,7 +584,7 @@ function App() {
             {/* ── Left pane: Agent management + Send Events (scenarios) ── */}
             <div className="dashboard-left" style={leftWidth !== null ? { width: leftWidth, minWidth: SPLITTER_MIN_LEFT, flex: 'none' } : undefined}>
               <AgentManagementPanel
-                agentId={selectedUseCase}
+                agentId={descriptor?.name || selectedUseCase}
                 useCaseId={selectedUseCase}
                 onEdit={handleEditAgent}
                 onNavigateBack={handleChangeUseCase}
@@ -579,21 +605,17 @@ function App() {
               {/* Right-pane toolbar: changelog toggle + clean topics button */}
               <div className="dashboard-right-toolbar">
                 {(descriptor.outboundTopics || []).some(ot => ot.type === 'entity-changelog' || ot.type === 'agent-error') && (
-                  <label
-                    className="toggle-label"
-                    onClick={e => { e.preventDefault(); setShowChangelogs(v => !v); }}
-                  >
+                  <label className="toggle-label" htmlFor="toggle-changelogs">
                     <span className="toggle-switch">
                       <input
+                        id="toggle-changelogs"
                         type="checkbox"
                         checked={showChangelogs}
-                        onChange={() => {}}
-                        tabIndex={-1}
-                        aria-hidden="true"
+                        onChange={e => setShowChangelogs(e.target.checked)}
                       />
                       <span className="toggle-slider" />
                     </span>
-                    Show changelog & errors topics
+                    Show system topics
                   </label>
                 )}
                 <div className="clean-topics-control">
@@ -601,7 +623,7 @@ function App() {
                     className="clean-topics-btn"
                     onClick={handleCleanTopics}
                     disabled={cleaningTopics}
-                    title="Purge all Kafka topic messages for this use case and clear the event panels"
+                    title="Purge all Kafka topic messages for this event rule application and clear the event panels"
                   >
                     {cleaningTopics ? (
                       <>
@@ -648,7 +670,6 @@ function App() {
                     {(descriptor.topics || []).map((topic) => {
                       const role   = topicRole(topic.name);
                       const events = eventsByType[topic.name] || [];
-                      const displayEvents = events.slice(-MAX_EVENTS_DISPLAY).reverse();
 
                       // For shared topics also apply the outbound filter if one is declared
                       const ot = role === 'both'
@@ -658,7 +679,7 @@ function App() {
                       const { visible: visibleEvents, hidden: hiddenCount } =
                         ot ? applyOutboundFilter(events, ot, show) : { visible: events, hidden: 0 };
                       const hasFilter = !!(ot?.filterKey && ot?.filterValue);
-                      const displayFiltered = visibleEvents.slice(-MAX_EVENTS_DISPLAY).reverse();
+                      const displayFiltered = visibleEvents.slice(-maxEventsDisplay).reverse();
 
                       return (
                         <section key={topic.name} className={`data-section topic-role--${role}`}>
@@ -680,12 +701,14 @@ function App() {
                                   <span className="filtered-count"> · {hiddenCount} {ot.filterLabel || ot.filterValue} hidden</span>
                                 )}
                               </span>
-                              <label
-                                className="toggle-label"
-                                onClick={e => { e.preventDefault(); setShowFiltered(prev => ({ ...prev, [topic.name]: !prev[topic.name] })); }}
-                              >
+                              <label className="toggle-label" htmlFor={`toggle-filter-${topic.name}`}>
                                 <span className="toggle-switch">
-                                  <input type="checkbox" checked={show} onChange={() => {}} tabIndex={-1} aria-hidden="true" />
+                                  <input
+                                    id={`toggle-filter-${topic.name}`}
+                                    type="checkbox"
+                                    checked={show}
+                                    onChange={e => setShowFiltered(prev => ({ ...prev, [topic.name]: e.target.checked }))}
+                                  />
                                   <span className="toggle-slider" />
                                 </span>
                                 Show {ot.filterLabel || ot.filterValue}
@@ -715,7 +738,7 @@ function App() {
                         const show = showFiltered[ot.name] || false;
                         const { visible: visibleEvents, hidden: hiddenCount } =
                           applyOutboundFilter(allEvents, ot, show);
-                        const displayEvents = visibleEvents.slice(-MAX_EVENTS_DISPLAY).reverse();
+                        const displayEvents = visibleEvents.slice(-maxEventsDisplay).reverse();
                         const hasFilter     = !!(ot.filterKey && ot.filterValue);
 
                         return (
@@ -736,16 +759,18 @@ function App() {
                                     <span className="filtered-count"> · {hiddenCount} {ot.filterLabel || ot.filterValue} hidden</span>
                                   )}
                                 </span>
-                                <label
-                                  className="toggle-label"
-                                  onClick={e => { e.preventDefault(); setShowFiltered(prev => ({ ...prev, [ot.name]: !prev[ot.name] })); }}
-                                >
-                                  <span className="toggle-switch">
-                                    <input type="checkbox" checked={show} onChange={() => {}} tabIndex={-1} aria-hidden="true" />
-                                    <span className="toggle-slider" />
-                                  </span>
-                                  Show {ot.filterLabel || ot.filterValue}
-                                </label>
+                                <label className="toggle-label" htmlFor={`toggle-filter-${ot.name}`}>
+                                   <span className="toggle-switch">
+                                     <input
+                                       id={`toggle-filter-${ot.name}`}
+                                       type="checkbox"
+                                       checked={show}
+                                       onChange={e => setShowFiltered(prev => ({ ...prev, [ot.name]: e.target.checked }))}
+                                     />
+                                     <span className="toggle-slider" />
+                                   </span>
+                                   Show {ot.filterLabel || ot.filterValue}
+                                 </label>
                               </div>
                             )}
 

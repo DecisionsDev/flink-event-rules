@@ -25,8 +25,8 @@ jobmanager.rpc.port: 6123
 jobmanager.memory.process.size: 1600m
 
 # TaskManager Configuration
-taskmanager.memory.process.size: 1728m
-taskmanager.numberOfTaskSlots: 2
+taskmanager.memory.process.size: 2048m
+taskmanager.numberOfTaskSlots: 8
 
 # Parallelism
 parallelism.default: 1

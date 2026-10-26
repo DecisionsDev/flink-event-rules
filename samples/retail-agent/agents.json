@@ -1,0 +1,186 @@
+{
+  "name": "Retail — Promotion Agent",
+  "flinkJobName": "Retail Promotion Agent",
+  "description": "Event Rules Application for Real-Time Promotion decisioning. Evaluate customer loyalty, purchases and browse history to manage customer status and send promotions in real time.",
+  "consumerGroupId": "event-rule-bff-retail-agent",
+  "topics": [
+    {
+      "name": "agent-purchases",
+      "type": "Purchase",
+      "label": "Purchases"
+    },
+    {
+      "name": "agent-customer-events",
+      "type": "CustomerEvent",
+      "label": "Customer Events"
+    },
+    {
+      "name": "agent-browse-events",
+      "type": "BrowseEvent",
+      "label": "Browse Events",
+      "idleness": "30s"
+    }
+  ],
+  "outboundTopics": [
+    {
+      "name": "agent-promotions",
+      "type": "Promotion",
+      "label": "Generated Promotions"
+    },
+    {
+      "name": "agent-retail-errors",
+      "type": "agent-error",
+      "label": "Agent Errors"
+    },
+    {
+      "name": "agent-customer-entity-changelog",
+      "type": "entity-changelog",
+      "label": "Customer Entity Changelog"
+    }
+  ],
+  "agents": [
+    {
+      "agentId": "retail-promotion-agent",
+      "name": "Retail Promotion Agent",
+      "entityType": "Customer",
+      "entityKeyExtractor": "$.customerId",
+      "chainingEnabled": true,
+      "subscriptions": [
+        {
+          "eventType": "Purchase",
+          "topic": "agent-purchases",
+          "operation": "ProcessPurchaseEvent",
+          "horizon": {
+            "type": "hybrid",
+            "countLimit": 1000,
+            "timeLimit": "7m",
+            "description": "Keep last 1000 purchase events or 7 months of history per customer"
+          }
+        },
+        {
+          "eventType": "CustomerEvent",
+          "topic": "agent-customer-events",
+          "operation": "ProcessCustomerEvent",
+          "horizon": {
+            "type": "hybrid",
+            "countLimit": 100,
+            "timeLimit": "12m",
+            "description": "Keep last 100 customer events or 12 months of history per customer"
+          }
+        },
+        {
+          "eventType": "BrowseEvent",
+          "topic": "agent-browse-events",
+          "operation": "",
+          "horizon": {
+            "type": "time",
+            "timeLimit": "15d",
+            "description": "Keep last 15 days of browse history per customer"
+          }
+        },
+        {
+          "eventType": "Schedule",
+          "operation": "ProcessScheduleEvent"
+        }
+      ],
+      "ruleset": {
+        "path": "samples/retail-agent/RetailDecisionService_1.2.0.jar",
+        "archiveControlTopic": "agent-retail-archive-control",
+        "operations": [
+          {
+            "operation": "ProcessPurchaseEvent",
+            "entityField": "theCustomer",
+            "outboundEntityField": "customer",
+            "currentEventField": "thePurchase",
+            "history": [
+              {
+                "eventType": "Purchase",
+                "field": "thePastPurchases"
+              },
+              {
+                "eventType": "BrowseEvent",
+                "field": "thePastBrowseEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "promotions",
+                "eventType": "Promotion"
+              }
+            ],
+            "scheduleRequestsField": "schedules"
+          },
+          {
+            "operation": "ProcessCustomerEvent",
+            "entityField": "customer",
+            "currentEventField": "customerEvent",
+            "history": [
+              {
+                "eventType": "Purchase",
+                "field": "pastPurchases"
+              },
+              {
+                "eventType": "BrowseEvent",
+                "field": "pastBrowseEvents"
+              },
+              {
+                "eventType": "CustomerEvent",
+                "field": "pastCustomerEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "promotions",
+                "eventType": "Promotion"
+              }
+            ],
+            "scheduleRequestsField": "schedules"
+          },
+          {
+            "operation": "ProcessScheduleEvent",
+            "entityField": "customer",
+            "currentEventField": "schedule",
+            "history": [
+              {
+                "eventType": "Purchase",
+                "field": "pastPurchases"
+              },
+              {
+                "eventType": "BrowseEvent",
+                "field": "pastBrowseEvents"
+              },
+              {
+                "eventType": "CustomerEvent",
+                "field": "pastCustomerEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "promotions",
+                "eventType": "Promotion"
+              }
+            ],
+            "scheduleRequestsField": "schedules"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "eventType": "Promotion",
+          "topic": "agent-promotions",
+          "description": "Real-time promotions for the customer"
+        },
+        {
+          "eventType": "agent-error",
+          "topic": "agent-retail-errors",
+          "description": "Processing errors and unparseable events"
+        }
+      ],
+      "stateConfig": {
+        "ttl": "7m",
+        "backend": "rocksdb",
+        "changeLogTopic": "agent-customer-entity-changelog"
+      }
+    }
+  ]
+}

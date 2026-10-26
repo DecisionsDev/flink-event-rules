@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *   <li>GET  /api/use-cases/:useCase/scenarios — read back the created scenario</li>
  *   <li>PUT  /api/use-cases/:useCase/scenarios/:id — update the scenario</li>
  *   <li>DELETE /api/use-cases/:useCase/scenarios/:id — delete the scenario</li>
- *   <li>DELETE /api/agents/:id — clean up the agent (stub descriptor removed)</li>
+ *   <li>DELETE /api/agents/:id — clean up the agent (agents.json removed)</li>
  * </ol>
  *
  * <p>Tests are <b>skipped</b> unless {@code FUNCTIONAL_TESTS_ENABLED=true} is set.
@@ -448,17 +448,16 @@ class BffAgentLifecycleFunctionalTest {
             assertTrue(removed.isArray() && removed.size() > 0,
                 "removed list must be non-empty: " + res.body());
 
-            // Verify at least the agents.json or descriptor.json was listed
+            // Verify agents.json was listed
             boolean foundDescriptor = false;
             for (JsonNode f : removed) {
-                String name = f.asText();
-                if ("agents.json".equals(name) || "descriptor.json".equals(name)) {
+                if ("agents.json".equals(f.asText())) {
                     foundDescriptor = true;
                     break;
                 }
             }
             assertTrue(foundDescriptor,
-                "Expected agents.json or descriptor.json in removed list: " + res.body());
+                "Expected agents.json in removed list: " + res.body());
         }
 
         /**

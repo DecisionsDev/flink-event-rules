@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.Serial;
 import java.io.Serializable;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -161,7 +162,7 @@ public class EventEnvelope implements Serializable {
     @Override
     public String toString() {
         return "EventEnvelope{eventType='" + eventType + "', sourceTopic='" + sourceTopic
-            + "', entityId='" + entityId + "', timestamp=" + timestamp + "}";
+            + "', entityId='" + entityId + "', timestamp=" + timestamp + " | " + Instant.ofEpochMilli(timestamp).toString() + " }";
     }
 }
 

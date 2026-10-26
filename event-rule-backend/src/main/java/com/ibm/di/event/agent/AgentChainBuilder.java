@@ -118,21 +118,22 @@ public class AgentChainBuilder {
             // If this agent has opted out of chaining it never accepts a chained inbound stream.
             if (!downstream.isChainingEnabled()) continue;
 
-            // ── warn if downstream has a blank entityKeyExtractor (opt-in single-partition mode)
-            // A null entityKeyExtractor is now rejected by validate() before the job starts;
-            // the blank case is the explicit opt-in and still deserves a chain-level notice.
-            if (downstream.getEntityKeyExtractor() != null
-                    && downstream.getEntityKeyExtractor().isBlank()) {
-                LOG.warn("[AgentChainBuilder] Agent '{}' has chainingEnabled=true and "
-                    + "entityKeyExtractor=\"\" (blank opt-in). All events normalised through "
-                    + "any chain edge pointing to this agent will key to 'unknown', "
-                    + "concentrating processing on a single Flink partition (hot-key). "
-                    + "Consider setting a non-blank entityKeyExtractor.",
-                    downstream.getAgentId());
-            }
-
             for (EventSubscription sub : downstream.getSubscriptions()) {
                 String subscribedType = sub.getEventType();
+                // Effective extractor: subscription-level, else agent-level.
+                String keyExtractor = downstream.entityKeyExtractorFor(sub);
+
+                // ── warn if the effective extractor is blank (opt-in single-partition mode)
+                // A null extractor is rejected by validate() before the job starts;
+                // the blank case is the explicit opt-in and still deserves a chain-level notice.
+                if (keyExtractor != null && keyExtractor.isBlank()) {
+                    LOG.warn("[AgentChainBuilder] Agent '{}' has chainingEnabled=true and "
+                        + "entityKeyExtractor=\"\" (blank opt-in) for subscription '{}'. "
+                        + "Events normalised through any chain edge for it will key to "
+                        + "'unknown', concentrating processing on a single Flink partition "
+                        + "(hot-key). Consider setting a non-blank entityKeyExtractor.",
+                        downstream.getAgentId(), subscribedType);
+                }
 
                 for (AgentDescriptor upstream : orderedAgents) {
                     if (upstream.getAgentId().equals(downstream.getAgentId())) continue; // self
@@ -149,7 +150,7 @@ public class AgentChainBuilder {
                             .add(new EdgeSpec(
                                 upstream.getAgentId(),
                                 subscribedType,
-                                downstream.getEntityKeyExtractor(),  // for entity-key re-extraction
+                                keyExtractor,                        // for entity-key re-extraction
                                 sub.getTopic()));                     // for sourceTopic correction
 
                         edgesFrom
@@ -160,7 +161,7 @@ public class AgentChainBuilder {
                         LOG.info("[AgentChainBuilder] Chain edge: {} → {} (eventType={} "
                             + "downstreamTopic={} downstreamKeyExtractor={})",
                             upstream.getAgentId(), downstream.getAgentId(), subscribedType,
-                            sub.getTopic(), downstream.getEntityKeyExtractor());
+                            sub.getTopic(), keyExtractor);
 
                         // ── warn on cross-ruleset chain edges ────────────
                         // Different ruleset paths typically signal different use cases.

@@ -35,7 +35,7 @@
  *   2. handleEditAgent URL — the fetch must use the use-case folder name.
  */
 
-import { descriptorToForm, buildDescriptor as _buildDescriptor } from './AgentWizard';
+import { descriptorToForm, buildDescriptor as _buildDescriptor, slugify, resolveUseCaseId, validateStep as _validateStep } from './AgentWizard';
 
 // buildDescriptor now returns { descriptor, useCaseId }.
 // Tests were written against the old API that returned the descriptor object directly.
@@ -259,9 +259,9 @@ describe('descriptorToForm — banking-fraud descriptor', () => {
 
   test('maps three outputs', () => {
     expect(form.outputs).toHaveLength(3);
-    expect(form.outputs[0]).toEqual({ eventType: 'fraud-alert', topic: 'agent-fraud-alerts', description: 'Fraud' });
-    expect(form.outputs[1]).toEqual({ eventType: 'approved-transaction', topic: 'agent-approved-transactions', description: 'Approved' });
-    expect(form.outputs[2]).toEqual({ eventType: 'agent-error', topic: 'agent-banking-errors', description: 'Errors' });
+    expect(form.outputs[0]).toEqual(expect.objectContaining({ eventType: 'fraud-alert', topic: 'agent-fraud-alerts', description: 'Fraud' }));
+    expect(form.outputs[1]).toEqual(expect.objectContaining({ eventType: 'approved-transaction', topic: 'agent-approved-transactions', description: 'Approved' }));
+    expect(form.outputs[2]).toEqual(expect.objectContaining({ eventType: 'agent-error', topic: 'agent-banking-errors', description: 'Errors' }));
   });
 
   test('maps stateConfig', () => {
@@ -1126,6 +1126,59 @@ describe('buildDescriptor — useCaseId field', () => {
   });
 });
 
+// ─── Use-case properties: name, flinkJobName, description, consumerGroupId ────
+
+describe('use-case properties — wizard form <-> agents.json', () => {
+  const baseForm = () => descriptorToForm(BANKING_DESCRIPTOR, null, 'banking');
+
+  test('descriptorToForm defaults the four properties to blank', () => {
+    const form = baseForm();
+    expect(form.useCaseName).toBe('');
+    expect(form.flinkJobName).toBe('');
+    expect(form.useCaseDescription).toBe('');
+    expect(form.consumerGroupId).toBe('');
+    expect(descriptorToForm(null).flinkJobName).toBe('');
+  });
+
+  test('descriptorToForm loads the top-level properties of agents.json', () => {
+    const form = descriptorToForm({
+      name: 'Banking Fraud', flinkJobName: 'Banking Job', description: 'Detects fraud',
+      consumerGroupId: 'grp-1', agents: BANKING_DESCRIPTOR.agents,
+    });
+    expect(form.useCaseName).toBe('Banking Fraud');
+    expect(form.flinkJobName).toBe('Banking Job');
+    expect(form.useCaseDescription).toBe('Detects fraud');
+    expect(form.consumerGroupId).toBe('grp-1');
+  });
+
+  test('buildDescriptor omits blank properties', () => {
+    const descriptor = buildDescriptor(baseForm());
+    expect(descriptor).not.toHaveProperty('name');
+    expect(descriptor).not.toHaveProperty('flinkJobName');
+    expect(descriptor).not.toHaveProperty('description');
+    expect(descriptor).not.toHaveProperty('consumerGroupId');
+  });
+
+  test('buildDescriptor emits trimmed properties before agents', () => {
+    const form = {
+      ...baseForm(),
+      useCaseName: ' Banking Fraud ', flinkJobName: ' Banking Job ',
+      useCaseDescription: ' Detects fraud ', consumerGroupId: ' grp-1 ',
+    };
+    const descriptor = buildDescriptor(form);
+    expect(descriptor).toMatchObject({
+      name: 'Banking Fraud', flinkJobName: 'Banking Job', description: 'Detects fraud', consumerGroupId: 'grp-1',
+    });
+    expect(Object.keys(descriptor).indexOf('agents')).toBeGreaterThan(Object.keys(descriptor).indexOf('consumerGroupId'));
+  });
+
+  test('round-trip keeps the properties', () => {
+    const source = { name: 'N', flinkJobName: 'J', description: 'D', consumerGroupId: 'G', agents: BANKING_DESCRIPTOR.agents };
+    const out = buildDescriptor(descriptorToForm(source, null, 'banking'));
+    expect(out).toMatchObject({ name: 'N', flinkJobName: 'J', description: 'D', consumerGroupId: 'G' });
+  });
+});
+
 // ─── descriptorToForm: multi-agent support (targetAgentId + useCaseId pre-fill) ──
 
 const TWO_AGENT_DESCRIPTOR = {
@@ -1218,65 +1271,79 @@ describe('descriptorToForm — multi-agent descriptor', () => {
   });
 });
 
-// ─── validateStep(0): useCaseId format validation ─────────────────────────────
+// ─── slugify / resolveUseCaseId: derived use-case folder key ──────────────────
 
-describe('validateStep(0) — useCaseId format validation', () => {
-  // Reproduce only the step-0 validation logic from AgentWizard.js
-  function validateStep0(form) {
-    if (!form.agentId.trim()) return 'Agent ID is required.';
-    const uid = (form.useCaseId || '').trim();
-    if (uid && !/^[a-zA-Z0-9_-]{1,64}$/.test(uid))
-      return 'Use-Case ID may only contain letters, numbers, hyphens, or underscores (max 64 chars).';
-    return null;
-  }
+describe('slugify', () => {
+  test('lowercases and hyphenates words', () => {
+    expect(slugify('Banking Fraud Detection')).toBe('banking-fraud-detection');
+  });
 
-  const base = { agentId: 'my-agent', useCaseId: '' };
+  test('strips accents, punctuation and surrounding separators', () => {
+    expect(slugify('  Café — Réservation (v2)! ')).toBe('cafe-reservation-v2');
+  });
+
+  test('returns empty string for blank or symbol-only input', () => {
+    expect(slugify('')).toBe('');
+    expect(slugify(undefined)).toBe('');
+    expect(slugify('***')).toBe('');
+  });
+
+  test('is capped at 64 characters without a trailing hyphen', () => {
+    const slug = slugify(`${'a'.repeat(63)} bbb`);
+    expect(slug.length).toBeLessThanOrEqual(64);
+    expect(slug.endsWith('-')).toBe(false);
+  });
+});
+
+describe('resolveUseCaseId', () => {
+  const base = { useCaseId: '', useCaseName: '', agentId: 'my-agent' };
+
+  test('an existing useCaseId always wins (renaming does not move the folder)', () => {
+    expect(resolveUseCaseId({ ...base, useCaseId: 'existing', useCaseName: 'New Name' })).toBe('existing');
+  });
+
+  test('otherwise a slug of the use-case name', () => {
+    expect(resolveUseCaseId({ ...base, useCaseName: 'Fraud Detection' })).toBe('fraud-detection');
+  });
+
+  test('otherwise the agentId', () => {
+    expect(resolveUseCaseId(base)).toBe('my-agent');
+    expect(resolveUseCaseId({ ...base, useCaseName: '***' })).toBe('my-agent');
+  });
+
+  test('buildDescriptor returns the resolved id', () => {
+    const form = { ...descriptorToForm(BANKING_DESCRIPTOR), useCaseName: 'My Bank' };
+    expect(_buildDescriptor(form).useCaseId).toBe('my-bank');
+  });
+});
+
+// ─── validateStep(0): derived use-case folder key ─────────────────────────────
+
+describe('validateStep(0) — agentId / derived folder key', () => {
+  const base = { agentId: 'my-agent', useCaseId: '', useCaseName: '', entityKeyExtractor: '$.id' };
 
   test('blank agentId fails with required message', () => {
-    expect(validateStep0({ ...base, agentId: '' })).toBe('Agent ID is required.');
+    expect(_validateStep(0, { ...base, agentId: '' })).toBe('Agent ID is required.');
   });
 
-  test('blank useCaseId passes (defaults to agentId)', () => {
-    expect(validateStep0({ ...base, useCaseId: '' })).toBeNull();
+  test('valid agentId passes', () => {
+    expect(_validateStep(0, base)).toBeNull();
   });
 
-  test('valid useCaseId with hyphens passes', () => {
-    expect(validateStep0({ ...base, useCaseId: 'shared-flink-job' })).toBeNull();
+  test('agentId with spaces fails when it would name the folder', () => {
+    expect(_validateStep(0, { ...base, agentId: 'my agent' })).toMatch(/Agent ID may only contain/);
   });
 
-  test('valid useCaseId with underscores passes', () => {
-    expect(validateStep0({ ...base, useCaseId: 'shared_job_1' })).toBeNull();
+  test('agentId longer than 64 chars fails when it would name the folder', () => {
+    expect(_validateStep(0, { ...base, agentId: 'a'.repeat(65) })).toMatch(/Agent ID may only contain/);
   });
 
-  test('valid useCaseId with mixed alphanumeric passes', () => {
-    expect(validateStep0({ ...base, useCaseId: 'Job123' })).toBeNull();
+  test('a use-case name provides the folder, so the agentId pattern is not enforced there', () => {
+    expect(_validateStep(0, { ...base, agentId: 'my agent', useCaseName: 'Fraud Detection' })).toBeNull();
   });
 
-  test('useCaseId with spaces fails validation', () => {
-    expect(validateStep0({ ...base, useCaseId: 'shared job' })).toMatch(/Use-Case ID/);
-  });
-
-  test('useCaseId with dots fails validation', () => {
-    expect(validateStep0({ ...base, useCaseId: 'shared.job' })).toMatch(/Use-Case ID/);
-  });
-
-  test('useCaseId with slashes fails validation', () => {
-    expect(validateStep0({ ...base, useCaseId: 'shared/job' })).toMatch(/Use-Case ID/);
-  });
-
-  test('useCaseId exceeding 64 chars fails validation', () => {
-    const long = 'a'.repeat(65);
-    expect(validateStep0({ ...base, useCaseId: long })).toMatch(/Use-Case ID/);
-  });
-
-  test('useCaseId of exactly 64 chars passes', () => {
-    const max = 'a'.repeat(64);
-    expect(validateStep0({ ...base, useCaseId: max })).toBeNull();
-  });
-
-  test('whitespace-only useCaseId is treated as blank (passes)', () => {
-    // trim() reduces it to empty — treated as "not provided"
-    expect(validateStep0({ ...base, useCaseId: '   ' })).toBeNull();
+  test('an existing use-case folder is accepted regardless of agentId', () => {
+    expect(_validateStep(0, { ...base, agentId: 'my agent', useCaseId: 'existing' })).toBeNull();
   });
 });
 
@@ -2021,5 +2088,219 @@ describe('handleDeleteSpecificAgent — wizard close behaviour on success vs fai
 
     expect(onClose).not.toHaveBeenCalled();
     expect(onBumpToken).not.toHaveBeenCalled();
+  });
+});
+
+// ─── validateStep (HIGH-4) ────────────────────────────────────────────────────
+// Verifies that step-3 output validation correctly reflects whether any
+// subscription has an active operation — covering the fix that added the
+// explicit `!== null && !== undefined && !== ''` guard.
+
+import { validateStep } from './AgentWizard';
+
+// Minimal form factory so each test can override only what it needs
+function makeForm(overrides = {}) {
+  return {
+    agentId: 'test-agent',
+    useCaseId: '',
+    entityKeyExtractor: '$.id',
+    ruleset: { path: 'ruleset.jar', outputField: '', archiveControlTopic: '', operations: [] },
+    subscriptions: [
+      {
+        _key: 'k1',
+        eventType: 'OrderCreated',
+        topic: 'orders',
+        operation: 'process',
+        horizonType: 'hybrid', horizonValue: 10,
+        horizonCountLimit: 100, horizonTimeLimit: '24h', horizonDescription: '',
+      },
+    ],
+    outputs: [
+      { _key: 'o1', eventType: 'OrderProcessed', topic: 'output-topic', description: '' },
+    ],
+    stateConfig: { ttl: '30d', backend: 'rocksdb' },
+    ...overrides,
+  };
+}
+
+describe('validateStep — step 3 output validation (HIGH-4)', () => {
+  test('returns null when subscription has an operation AND a valid output exists', () => {
+    const form = makeForm();
+    expect(validateStep(3, form)).toBeNull();
+  });
+
+  test('returns error when subscription has an operation but outputs list is empty', () => {
+    const form = makeForm({ outputs: [] });
+    expect(validateStep(3, form)).toMatch(/at least one output/i);
+  });
+
+  test('returns error when outputs exist but all have blank eventType or topic', () => {
+    const form = makeForm({
+      outputs: [{ _key: 'o1', eventType: '', topic: '', description: '' }],
+    });
+    expect(validateStep(3, form)).toMatch(/at least one output/i);
+  });
+
+  test('returns null when all subscriptions have operation="" (history-only context) — no output required', () => {
+    // operation '' means "subscribe for context only" — no rule is fired so
+    // outputs are not needed; returning to step 2 and clearing operations should
+    // release the output requirement.
+    const form = makeForm({
+      subscriptions: [
+        { _key: 'k1', eventType: 'OrderCreated', topic: 'orders', operation: '',
+          horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '24h', horizonDescription: '' },
+      ],
+      outputs: [],
+    });
+    expect(validateStep(3, form)).toBeNull();
+  });
+
+  test('returns null when operation is null — no output required', () => {
+    const form = makeForm({
+      subscriptions: [
+        { _key: 'k1', eventType: 'OrderCreated', topic: 'orders', operation: null,
+          horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '24h', horizonDescription: '' },
+      ],
+      outputs: [],
+    });
+    expect(validateStep(3, form)).toBeNull();
+  });
+
+  test('returns null when operation is undefined — no output required', () => {
+    const form = makeForm({
+      subscriptions: [
+        { _key: 'k1', eventType: 'OrderCreated', topic: 'orders', operation: undefined,
+          horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '24h', horizonDescription: '' },
+      ],
+      outputs: [],
+    });
+    expect(validateStep(3, form)).toBeNull();
+  });
+
+  test('returns null when all subscriptions have blank eventType (inactive rows)', () => {
+    // Rows with no eventType are completely ignored by validation
+    const form = makeForm({
+      subscriptions: [
+        { _key: 'k1', eventType: '', topic: '', operation: 'process',
+          horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '24h', horizonDescription: '' },
+      ],
+      outputs: [],
+    });
+    expect(validateStep(3, form)).toBeNull();
+  });
+
+  test('mixed: one history-only + one active operation → output required', () => {
+    const form = makeForm({
+      subscriptions: [
+        { _key: 'k1', eventType: 'CtxEvent', topic: 'ctx', operation: '',
+          horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '24h', horizonDescription: '' },
+        { _key: 'k2', eventType: 'OrderCreated', topic: 'orders', operation: 'process',
+          horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '24h', horizonDescription: '' },
+      ],
+      outputs: [],
+    });
+    expect(validateStep(3, form)).toMatch(/at least one output/i);
+  });
+});
+
+describe('validateStep — step 2 subscription validation', () => {
+  test('returns error when operation is null for a named subscription', () => {
+    const form = makeForm({
+      subscriptions: [
+        { _key: 'k1', eventType: 'OrderCreated', topic: 'orders', operation: null,
+          horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '24h', horizonDescription: '' },
+      ],
+    });
+    expect(validateStep(2, form)).toMatch(/missing an operation/i);
+  });
+
+  test('returns error when operation is undefined for a named subscription', () => {
+    const form = makeForm({
+      subscriptions: [
+        { _key: 'k1', eventType: 'OrderCreated', topic: 'orders', operation: undefined,
+          horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '24h', horizonDescription: '' },
+      ],
+    });
+    expect(validateStep(2, form)).toMatch(/missing an operation/i);
+  });
+
+  test('returns null when operation is "" (history-only) for a named subscription', () => {
+    const form = makeForm({
+      subscriptions: [
+        { _key: 'k1', eventType: 'OrderCreated', topic: 'orders', operation: '',
+          horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '24h', horizonDescription: '' },
+      ],
+    });
+    expect(validateStep(2, form)).toBeNull();
+  });
+
+  test('returns error for invalid time limit format', () => {
+    const form = makeForm({
+      subscriptions: [
+        { _key: 'k1', eventType: 'OrderCreated', topic: 'orders', operation: 'process',
+          horizonType: 'time', horizonValue: 10, horizonCountLimit: 100,
+          horizonTimeLimit: '2 hours', horizonDescription: '' },
+      ],
+    });
+    expect(validateStep(2, form)).toMatch(/time limit/i);
+  });
+
+  test('returns null for valid time limit "24h"', () => {
+    const form = makeForm();  // default already has horizonTimeLimit: '24h'
+    expect(validateStep(2, form)).toBeNull();
+  });
+});
+
+describe('subscription-level entityKeyExtractor', () => {
+  const sub = (over = {}) => ({
+    _key: 'k', eventType: 'txn', topic: 'txn-topic', operation: 'op',
+    horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+    horizonTimeLimit: '24h', horizonDescription: '', ...over,
+  });
+
+  test('descriptorToForm loads the per-subscription override and defaults to blank', () => {
+    const form = descriptorToForm({ agents: [{
+      agentId: 'a', entityKeyExtractor: '$.id',
+      subscriptions: [
+        { eventType: 'txn', topic: 't1', operation: 'op', entityKeyExtractor: '$.payload.id' },
+        { eventType: 'upd', topic: 't2', operation: 'op' },
+      ],
+    }] });
+    expect(form.subscriptions[0].entityKeyExtractor).toBe('$.payload.id');
+    expect(form.subscriptions[1].entityKeyExtractor).toBe('');
+  });
+
+  test('buildDescriptor emits the override only when set, trimmed', () => {
+    const form = descriptorToForm(null);
+    form.agentId = 'a';
+    form.ruleset.path = '/tmp/x.jar';
+    form.subscriptions = [
+      sub({ entityKeyExtractor: '  $.payload.id ' }),
+      sub({ eventType: 'upd', entityKeyExtractor: '' }),
+    ];
+    const subs = buildDescriptor(form).agents[0].subscriptions;
+    expect(subs[0].entityKeyExtractor).toBe('$.payload.id');
+    expect(subs[1]).not.toHaveProperty('entityKeyExtractor');
+  });
+
+  test('validateStep(2) rejects a complex subscription-level extractor', () => {
+    const form = descriptorToForm(null);
+    form.subscriptions = [sub({ entityKeyExtractor: '$.items[0].id' })];
+    expect(_validateStep(2, form)).toMatch(/entity key extractor looks complex/i);
+  });
+
+  test('validateStep(2) accepts a simple subscription-level extractor', () => {
+    const form = descriptorToForm(null);
+    form.subscriptions = [sub({ entityKeyExtractor: '$.payload.id' })];
+    expect(_validateStep(2, form)).toBeNull();
   });
 });

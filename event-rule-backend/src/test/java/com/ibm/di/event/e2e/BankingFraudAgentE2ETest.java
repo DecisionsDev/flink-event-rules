@@ -97,7 +97,7 @@ class BankingFraudAgentE2ETest {
     private static final long   OUTPUT_WAIT_TIMEOUT_MS =
         Long.parseLong(prop("E2E_OUTPUT_WAIT_TIMEOUT_MS", "60000"));
 
-    // ── Kafka topic names (must match agents.json / descriptor.json) ───────────
+    // ── Kafka topic names (must match agents.json) ───────────
 
     private static final String TOPIC_ACCOUNT_EVENTS = "agent-account-events";
     private static final String TOPIC_TRANSACTIONS   = "agent-transactions";

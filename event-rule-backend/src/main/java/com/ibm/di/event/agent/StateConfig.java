@@ -39,7 +39,7 @@ public class StateConfig implements Serializable {
 
     /**
      * State time-to-live. Supports the same format as {@link HorizonConfig#getTimeLimit()}:
-     * {@code "30d"}, {@code "24h"}, {@code "60m"}, {@code "90s"}.
+     * {@code "1m"}, {@code "30d"}, {@code "24h"}, {@code "60mn"}, {@code "90s"}.
      * When {@code null} or blank, no TTL is configured.
      */
     private String ttl;

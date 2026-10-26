@@ -17,7 +17,7 @@
 #
 # resolve-di-dependencies.sh
 #
-# Configures a locally installed IBM Automation Decision Services (ADS)
+# Configures a locally installed IBM Decision Intelligence (DI)
 # Decision Designer instance as a Maven repository and resolves the four
 # classpath items required by the Execution Java API:
 #
@@ -216,7 +216,7 @@ AUTH_HEADER="ZenApiKey ${DI_ZEN_API_KEY_B64}"
 info "Auth header computed: ZenApiKey ${DI_ZEN_API_KEY_B64:0:16}…"
 
 # ── Step 4: Verify authentication and index reachability ──────────────────────
-# The ADS Maven repository at /ads/static/maven-releases does not expose a
+# The DI Maven repository at /ads/static/maven-releases does not expose a
 # directory listing (returns 404 on the root).  We verify auth by probing
 # /ads/index.json (which we will also parse in Step 5).
 section "Step 4: Verifying authentication and index reachability"

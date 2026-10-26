@@ -34,6 +34,14 @@ function NotificationToast({ notification, onDismiss, autoDismissMs = 5000 }) {
   const [leaving, setLeaving] = useState(false);
   const timerRef = useRef(null);
 
+  // Keep a stable ref to onDismiss and notification.id so the auto-dismiss
+  // timer always calls the latest callback without adding them to the effect
+  // dependency array (which would reset the timer on every render).
+  const onDismissRef      = useRef(onDismiss);
+  const notificationIdRef = useRef(notification.id);
+  useEffect(() => { onDismissRef.current      = onDismiss;       }, [onDismiss]);
+  useEffect(() => { notificationIdRef.current = notification.id; }, [notification.id]);
+
   // Entry animation: mount → schedule a microtask to flip `visible` so the
   // CSS transition can play from the hidden state.
   useEffect(() => {
@@ -41,18 +49,18 @@ function NotificationToast({ notification, onDismiss, autoDismissMs = 5000 }) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // Auto-dismiss after autoDismissMs
+  // Auto-dismiss after autoDismissMs.  Uses refs so the timer always invokes
+  // the current onDismiss without needing to be reset on every render.
   useEffect(() => {
     timerRef.current = setTimeout(() => handleDismiss(), autoDismissMs);
     return () => clearTimeout(timerRef.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoDismissMs]);
 
   function handleDismiss() {
     clearTimeout(timerRef.current);
     setLeaving(true);
     // Wait for exit transition before removing from DOM
-    setTimeout(() => onDismiss(notification.id), 280);
+    setTimeout(() => onDismissRef.current(notificationIdRef.current), 280);
   }
 
   const timestamp = notification.timestamp

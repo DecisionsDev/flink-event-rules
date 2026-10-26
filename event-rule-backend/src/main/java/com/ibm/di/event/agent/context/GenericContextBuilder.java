@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ibm.di.event.agent.AgentDescriptor;
 import com.ibm.di.event.agent.AgentState;
+import com.ibm.di.event.agent.AgentState.FlatHistoryEntry;
 import com.ibm.di.event.agent.EventSubscription;
 import com.ibm.di.event.agent.EventEnvelope;
 import com.ibm.di.event.agent.RulesetConfig;
@@ -81,10 +82,23 @@ public class GenericContextBuilder implements ContextBuilder {
      */
     static ObjectNode buildInner(AgentState state, EventEnvelope event, ObjectMapper mapper,
                                  OperationConfig opConfig) {
-        String entityAlias       = opConfig != null && opConfig.getEntityField() != null
-            ? opConfig.getEntityField() : "entity";
-        String currentEventAlias = opConfig != null && opConfig.getCurrentEventField() != null
-            ? opConfig.getCurrentEventField() : "currentEvent";
+        String entityField0      = opConfig != null ? opConfig.getEntityField() : null;
+        // Blank (empty-string) entityField is a deliberate opt-out: the operation does not need
+        // entity state injected into the context (e.g. spread-mode operations where the event
+        // payload carries every required context fragment directly).
+        // A *null* entityField (no opConfig, or entityField unset) falls back to the default
+        // "entity" alias — preserving the historical behaviour for operations that do not
+        // configure an explicit entityField.
+        boolean entityFieldExplicitlyBlank = entityField0 != null && entityField0.isBlank();
+        boolean injectEntity     = !entityFieldExplicitlyBlank;
+        String entityAlias       = (entityField0 != null && !entityField0.isBlank())
+            ? entityField0 : "entity";
+        String currentEventField = opConfig != null ? opConfig.getCurrentEventField() : null;
+        // Spread mode: empty/blank currentEventField means every field of the event payload is
+        // merged directly into the root context object rather than being nested under a single key.
+        boolean spreadMode       = currentEventField != null && currentEventField.isBlank();
+        String currentEventAlias = (!spreadMode && currentEventField != null)
+            ? currentEventField : "currentEvent";
         List<HistoryFieldMapping> historyMappings = opConfig != null ? opConfig.getHistory() : null;
         ObjectNode ctx = mapper.createObjectNode();
 
@@ -94,17 +108,42 @@ public class GenericContextBuilder implements ContextBuilder {
         // processingTime = wall-clock time when the Decision Service executes (may differ from now)
         ctx.put("processingTime", Instant.ofEpochMilli(System.currentTimeMillis()).toString());
 
-        // ── Entity (nullable correlated object) ──────────────────────────────
-        JsonNode entityNode = state.getEntityData();
-        if (entityNode != null) {
-            ctx.set(entityAlias, entityNode);
-        } else {
-            ctx.putNull(entityAlias);
+        // ── Spread mode: merge payload fields into root (before entity) ───────
+        // When currentEventField is blank the entire payload is flattened into the root context.
+        // Entity data is written after the spread so the persisted entity value takes
+        // precedence when both the payload and the entity share the same field name.
+        if (spreadMode) {
+            JsonNode payload = event.getPayload();
+            if (payload != null && payload.isObject()) {
+                payload.fields().forEachRemaining(e -> ctx.set(e.getKey(), e.getValue()));
+                LOG.debug("Spread mode: merged {} payload field(s) into root context",
+                    payload.size());
+            }
         }
 
-        // ── Current event (event that triggered processing) ──────────────────
-        ctx.set(currentEventAlias, event.getPayload() != null
-            ? event.getPayload() : mapper.createObjectNode());
+        // ── Entity (nullable correlated object) ──────────────────────────────
+        // Written after spread so persisted entity state takes precedence over any
+        // same-named field that was just spread in from the current event payload.
+        // Skipped entirely when entityField is blank (injectEntity=false): those operations
+        // rely solely on the spread payload and must not have entity state injected.
+        JsonNode entityNode = state.getEntityData();
+        if (injectEntity) {
+            if (entityNode != null) {
+                ctx.set(entityAlias, entityNode);
+            } else if (!spreadMode) {
+                // In non-spread mode always emit the entity alias (null is valid).
+                ctx.putNull(entityAlias);
+            }
+            // In spread mode a null entity means the spread already populated the alias
+            // from the payload (e.g. a minimal customerContext stub).  We do not overwrite
+            // with null in that case.
+        }
+
+        // ── Current event (non-spread mode only) ─────────────────────────────
+        if (!spreadMode) {
+            ctx.set(currentEventAlias, event.getPayload() != null
+                ? event.getPayload() : mapper.createObjectNode());
+        }
 
         // ── History (flat, timestamp-sorted list) ────────────────────────────
         // The current event is NOT included; it is always accessed via currentEvent.
@@ -126,11 +165,17 @@ public class GenericContextBuilder implements ContextBuilder {
                         filtered.add(entry.payload());
                     }
                 }
-                ctx.set(targetField, filtered);                
+                ctx.set(targetField, filtered);
             }
         }
-
         return ctx;
+    }
+
+    private static String historyAsString(List<FlatHistoryEntry> history) {
+        if (history == null || history.isEmpty()) {
+            return "[]";
+        }
+        return history.toString();
     }
 
     /**

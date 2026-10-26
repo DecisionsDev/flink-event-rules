@@ -46,19 +46,8 @@ pass()  { echo -e "${GREEN}✓ PASS${NC}: $1"; PASS=$((PASS+1)); }
 fail()  { echo -e "${RED}✗ FAIL${NC}: $1"; FAIL=$((FAIL+1)); }
 skip()  { echo -e "${YELLOW}⚠ SKIP${NC}: $1"; SKIP=$((SKIP+1)); }
 
-# ─── Test 1: descriptor.json files exist ──────────────────────────────────────
-echo "Test 1: descriptor.json files exist"
-for uc in banking-fraud-agent; do
-  if [ -f "samples/${uc}/descriptor.json" ]; then
-    pass "samples/${uc}/descriptor.json exists"
-  else
-    fail "samples/${uc}/descriptor.json not found"
-  fi
-done
-echo ""
-
-# ─── Test 2: agents.json files exist ──────────────────────────────────────────
-echo "Test 2: agents.json files exist"
+# ─── Test 1: agents.json files exist ──────────────────────────────────────────
+echo "Test 1: agents.json files exist"
 for uc in banking-fraud-agent; do
   if [ -f "samples/${uc}/agents.json" ]; then
     pass "samples/${uc}/agents.json exists"
@@ -68,8 +57,8 @@ for uc in banking-fraud-agent; do
 done
 echo ""
 
-# ─── Test 3: deploy script exists ─────────────────────────────────────────────
-echo "Test 3: deploy script exists"
+# ─── Test 2: deploy script exists ─────────────────────────────────────────────
+echo "Test 2: deploy script exists"
 for uc in banking-fraud-agent; do
   if [ -f "samples/${uc}/scripts/deploy.sh" ]; then
     pass "samples/${uc}/scripts/deploy.sh exists"
@@ -79,15 +68,10 @@ for uc in banking-fraud-agent; do
 done
 echo ""
 
-# ─── Test 4: JSON syntax validation ───────────────────────────────────────────
-echo "Test 4: JSON syntax validation"
+# ─── Test 3: JSON syntax validation ───────────────────────────────────────────
+echo "Test 3: JSON syntax validation"
 if command -v jq &> /dev/null; then
   for uc in banking-fraud-agent; do
-    if jq empty "samples/${uc}/descriptor.json" 2>/dev/null; then
-      pass "samples/${uc}/descriptor.json is valid JSON"
-    else
-      fail "samples/${uc}/descriptor.json is invalid JSON"
-    fi
     if [ -f "samples/${uc}/agents.json" ]; then
       if jq empty "samples/${uc}/agents.json" 2>/dev/null; then
         pass "samples/${uc}/agents.json is valid JSON"
@@ -101,10 +85,10 @@ else
 fi
 echo ""
 
-# ─── Test 5: Required descriptor fields ───────────────────────────────────────
-echo "Test 5: Required descriptor fields"
+# ─── Test 4: Required top-level agents.json fields ────────────────────────────
+echo "Test 4: Required top-level agents.json fields"
 for uc in banking-fraud-agent; do
-  desc="samples/${uc}/descriptor.json"
+  desc="samples/${uc}/agents.json"
   [ -f "$desc" ] || continue
   content=$(cat "$desc")
   grep -q '"name"'           <<< "$content" && pass "${uc}: has 'name'"           || fail "${uc}: missing 'name'"
@@ -114,16 +98,16 @@ for uc in banking-fraud-agent; do
 done
 echo ""
 
-# ─── Test 6: flinkJobName values match expected Flink job names ───────────────
+# ─── Test 5: flinkJobName values match expected Flink job names ───────────────
 # These values must match the FLINK_JOB_NAME passed by the deploy script and
 # used by the BFF tile-visibility probe to identify the running job.
-echo "Test 6: flinkJobName values"
+echo "Test 5: flinkJobName values"
 if command -v jq &> /dev/null; then
   # Pairs: "use-case:expected-job-name" (avoids bash 3 associative-array limitation)
   for pair in "banking-fraud-agent:Banking Fraud Detection Agent"; do
     uc="${pair%%:*}"
     expected="${pair#*:}"
-    desc="samples/${uc}/descriptor.json"
+    desc="samples/${uc}/agents.json"
     [ -f "$desc" ] || continue
     actual=$(jq -r '.flinkJobName // empty' "$desc" 2>/dev/null)
     if [ "$actual" = "$expected" ]; then
@@ -137,10 +121,10 @@ else
 fi
 echo ""
 
-# ─── Test 7: Maven build ───────────────────────────────────────────────────────
+# ─── Test 6: Maven build ───────────────────────────────────────────────────────
 # Uses 'compile' (not 'clean compile') so that a pre-existing FAT JAR checked by
 # Test 8 is not deleted by the clean phase.
-echo "Test 7: Maven build"
+echo "Test 6: Maven build"
 cd event-rule-backend
 if mvn compile -q 2>/dev/null; then
   pass "Maven build successful"
@@ -150,8 +134,8 @@ fi
 cd "$PROJECT_ROOT"
 echo ""
 
-# ─── Test 8: FAT JAR exists ────────────────────────────────────────────────────
-echo "Test 8: FAT JAR exists"
+# ─── Test 7: FAT JAR exists ────────────────────────────────────────────────────
+echo "Test 7: FAT JAR exists"
 JAR="event-rule-backend/target/event-rule-backend-1.0-SNAPSHOT.jar"
 if [ -f "$JAR" ]; then
   JAR_SIZE=$(stat -f%z "$JAR" 2>/dev/null || stat -c%s "$JAR" 2>/dev/null || echo 0)
@@ -161,8 +145,8 @@ else
 fi
 echo ""
 
-# ─── Test 9: Environment variable configuration ────────────────────────────────
-echo "Test 9: Environment variable configuration"
+# ─── Test 8: Environment variable configuration ────────────────────────────────
+echo "Test 8: Environment variable configuration"
 export AGENT_DESCRIPTOR_PATH="samples/banking-fraud-agent/agents.json"
 [ "$AGENT_DESCRIPTOR_PATH" = "samples/banking-fraud-agent/agents.json" ] \
   && pass "AGENT_DESCRIPTOR_PATH can be set" \

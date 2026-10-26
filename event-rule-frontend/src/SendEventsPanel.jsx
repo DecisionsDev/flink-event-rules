@@ -18,6 +18,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import SampleEventModal from './SampleEventModal';
 import ScenarioTimeline from './ScenarioTimeline';
+import { API_URL } from './config.js';
 
 /**
  * SendEventsPanel — lets the demo operator inject pre-built scenarios into
@@ -38,7 +39,6 @@ import ScenarioTimeline from './ScenarioTimeline';
  *   by the descriptor passed in as a prop — no `agent-` prefix check needed.
  */
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 /**
  * Build the serialisable payload object for a scenario so it can be shown
@@ -240,11 +240,11 @@ function SendEventsPanel({ useCase, descriptor }) {
   // rule-engine-backed use case should support sample generation).
   const hasSampleGeneration = !!(descriptor?.topics?.length);
 
+  // Rebuild topicsByType whenever descriptor changes (object reference or content).
+  // This is intentionally separated from the scenarios fetch so that descriptor
+  // reference churn (e.g. parent re-renders) does not trigger an extra network
+  // request for scenarios (M-5).
   useEffect(() => {
-    if (!useCase) return;
-
-    // Build topicsByType from the descriptor prop when available, and always
-    // fetch the scenarios list.
     const topicMap = {};
     if (descriptor?.topics) {
       for (const t of descriptor.topics) {
@@ -252,16 +252,27 @@ function SendEventsPanel({ useCase, descriptor }) {
       }
     }
     setTopicsByType(topicMap);
+  }, [descriptor]);
 
+  // Fetch scenarios only when the use-case changes, not on every descriptor update.
+  useEffect(() => {
+    if (!useCase) return;
     fetch(`${API_URL}/api/use-cases/${useCase}/scenarios`)
       .then(r => r.ok ? r.json() : [])
       .catch(() => [])
       .then(scenarioData => setScenarios(scenarioData));
-  }, [useCase, descriptor]);
+  }, [useCase]);
 
   // Clean up any pending animation timers when the component unmounts.
   useEffect(() => () => {
     stepTimersRef.current.forEach(id => clearTimeout(id));
+  }, []);
+
+  /** Cancel any pending step-animation timers and clear the active step. */
+  const clearStepAnimation = useCallback(() => {
+    stepTimersRef.current.forEach(id => clearTimeout(id));
+    stepTimersRef.current = [];
+    setActiveStep(null);
   }, []);
 
   // Render nothing if neither scenarios nor the sample button are available
@@ -274,15 +285,8 @@ function SendEventsPanel({ useCase, descriptor }) {
   const topicFor = (eventType) =>
     topicsByType[eventType]
     || topicsByType[eventType.replace(/-/g, '')]
-    || topicsByType[eventType.replace(/-([a-z])/g, (_, c) => c.toUpperCase())]
+    || topicsByType[eventType.replace(/-([a-z])/g, (_match, c) => c.toUpperCase())]
     || eventType;
-
-  /** Cancel any pending step-animation timers and clear the active step. */
-  const clearStepAnimation = useCallback(() => {
-    stepTimersRef.current.forEach(id => clearTimeout(id));
-    stepTimersRef.current = [];
-    setActiveStep(null);
-  }, []);
 
   // ── Select a scenario card → populate the editor ─────────────────────────
   const handleSelectScenario = (scenario) => {
@@ -714,7 +718,7 @@ function SendEventsPanel({ useCase, descriptor }) {
                         timelineEvents = scenarioToOrderedEvents(parsed, topicFor).map(({ schemaType, topic, payload }) => {
                           return { schemaType, topic, payload };
                         });
-                      } catch (_) { /* leave empty on parse error */ }
+                      } catch { /* leave empty on parse error */ }
                       return (
                         <div className="scenario-editor-timeline-tab">
                           <ScenarioTimeline events={timelineEvents} activeStep={activeStep} />

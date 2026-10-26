@@ -1,0 +1,393 @@
+[
+  {
+    "id": "open-flight-and-checkin-open",
+    "label": "1. Check-In Open Event 48h before flight",
+    "description": "Open the flight and receive a Check-In Open event 48h before departure",
+    "events": [
+      {
+        "type": "FlightEvent",
+        "topic": "agent-flight-events",
+        "payload": {
+          "timestamp": "2026-10-01T20:29:16Z",
+          "flightNumber": "EY082",
+          "type": "FLIGHTOPEN",
+          "flight": {
+            "flightNumber": "EY082",
+            "aircraftId": "AF-343-TY",
+            "aircraftType": "A380",
+            "date": "2026-10-15T20:29:16Z",
+            "expectedDate": "2026-10-15T20:29:16Z",
+            "origin": "CDG",
+            "destination": "LHR",
+            "duration": "PT1H",
+            "passengers": [
+              {
+                "passengerId": "JS",
+                "name": "John Smith",
+                "birthdate": "1980-10-19T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Gold",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "LW",
+                "name": "Lisa Williams",
+                "birthdate": "1977-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "type": "FlightEvent",
+        "topic": "agent-flight-events",
+        "payload": {
+          "timestamp": "2026-10-13T20:30:00Z",
+          "flightNumber": "EY082",
+          "type": "FLIGHTINFO",
+          "flight": {
+            "flightNumber": "EY082",
+            "aircraftId": "AF-343-TZ"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "multiple_flight_delay",
+    "label": "2. Multiple Flight Delays",
+    "description": "Receive multiple flight delayed events in a short period of time",
+    "events": [
+      {
+        "type": "FlightEvent",
+        "topic": "agent-flight-events",
+        "payload": {
+          "timestamp": "2026-10-01T20:29:16Z",
+          "flightNumber": "AF077",
+          "type": "FLIGHTOPEN",
+          "flight": {
+            "flightNumber": "AF077",
+            "aircraftId": "AF-343-TY",
+            "aircraftType": "A380",
+            "date": "2026-10-15T20:29:16Z",
+            "expectedDate": "2026-10-15T20:29:16Z",
+            "origin": "CDG",
+            "destination": "LHR",
+            "duration": "PT1H",
+            "passengers": [
+              {
+                "passengerId": "JS",
+                "name": "John Smith",
+                "birthdate": "1980-10-19T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Gold",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "LW",
+                "name": "Lisa Williams",
+                "birthdate": "1977-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "type": "FlightEvent",
+        "topic": "agent-flight-events",
+        "payload": {
+          "timestamp": "2026-10-15T13:30:00Z",
+          "flightNumber": "AF077",
+          "type": "FLIGHTDELAYED",
+          "flight" : {
+            "flightNumber": "AF077",
+            "expectedDate": "2026-10-15T21:29:16Z"
+          } 
+        }
+      },
+      {
+        "type": "FlightEvent",
+        "topic": "agent-flight-events",
+        "payload": {
+          "timestamp": "2026-10-15T13:40:00Z",
+          "flightNumber": "AF077",
+          "type": "FLIGHTDELAYED",
+          "flight" : {
+            "flightNumber": "AF077",
+            "expectedDate": "2026-10-15T22:29:16Z"
+          } 
+        }
+      },
+      {
+        "type": "FlightEvent",
+        "topic": "agent-flight-events",
+        "payload": {
+          "timestamp": "2026-10-15T13:50:00Z",
+          "flightNumber": "AF077",
+          "type": "FLIGHTDELAYED",
+          "flight" : {
+            "flightNumber": "AF077",
+            "expectedDate": "2026-10-15T23:29:16Z"
+          } 
+        }
+      }
+
+    ]
+  },
+  {
+    "id": "passenger-checkin",
+    "label": "3. Passenger Check-In",
+    "description": "Process Passenger checking event. Send a flight notification if check-in occurs more than 48h before flight.",
+    "events": [
+      {
+        "type": "FlightEvent",
+        "topic": "agent-flight-events",
+        "payload": {
+          "timestamp": "2026-10-01T20:29:16Z",
+          "flightNumber": "AF099",
+          "type": "FLIGHTOPEN",
+          "flight": {
+            "flightNumber": "AF099",
+            "aircraftId": "AF-343-TY",
+            "aircraftType": "A380",
+            "date": "2026-10-15T20:29:16Z",
+            "expectedDate": "2026-10-15T20:29:16Z",
+            "origin": "SFO",
+            "destination": "AMS",
+            "duration": "PT9H",
+            "cateringInformation": {
+              "economyTotalMealCount": 10,
+              "businessTotalMealCount": 10,
+              "firstTotalMealCount": 10
+            },
+            "passengers": [
+              {
+                "passengerId": "JS",
+                "name": "John Smith",
+                "birthdate": "1980-10-19T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Gold",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "LW",
+                "name": "Lisa Williams",
+                "birthdate": "1977-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "type": "PassengerEvent",
+        "topic": "agent-passenger-events",
+        "payload": {
+          "timestamp": "2026-10-10T13:30:00Z",
+          "flightNumber": "AF099",
+          "passengerId": "JS",
+          "type": "CHECKIN"
+        }
+      },
+      {
+        "type": "PassengerEvent",
+        "topic": "agent-passenger-events",
+        "payload": {
+          "timestamp": "2026-10-14T13:30:00Z",
+          "flightNumber": "AF099",
+          "passengerId": "LW",
+          "type": "CHECKIN"
+        }
+      }
+    ]
+  },
+  {
+    "id": "meal-shortage-situation",
+    "label": "4. Meal Shortage Situation",
+    "description": "Detect meal shortage situations. This situation occurs when number of checked-in passenger exceeds the number of available meals.",
+    "events": [
+      {
+        "type": "FlightEvent",
+        "topic": "agent-flight-events",
+        "payload": {
+          "timestamp": "2026-10-01T20:29:16Z",
+          "flightNumber": "AF021",
+          "type": "FLIGHTOPEN",
+          "flight": {
+            "flightNumber": "AF021",
+            "aircraftId": "AF-343-TY",
+            "aircraftType": "A380",
+            "date": "2026-10-15T20:29:16Z",
+            "expectedDate": "2026-10-15T20:29:16Z",
+            "origin": "CDG",
+            "destination": "SIN",
+            "duration": "PT13H",
+            "checkinCounter" : {
+              "businessCheckinCounter" : 0,
+              "economyCheckinCounter" : 5,
+              "firstCheckinCounter" : 0
+            },
+            "passengers": [
+              {
+                "passengerId": "JS",
+                "name": "John Smith",
+                "birthdate": "1980-10-19T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Gold",
+                "check-inStatus": "CheckedIn",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "LW",
+                "name": "Lisa Williams",
+                "birthdate": "1977-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "CheckedIn",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "BG",
+                "name": "Bruno Good",
+                "birthdate": "1972-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "CheckedIn",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "JH",
+                "name": "Jack Henry",
+                "birthdate": "1973-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "CheckedIn",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "PW",
+                "name": "Paul Watson",
+                "birthdate": "1979-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "CheckedIn",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "KP",
+                "name": "Kathy Perry",
+                "birthdate": "1975-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "JW",
+                "name": "Jules Wayne",
+                "birthdate": "1977-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "RG",
+                "name": "Robert Guy",
+                "birthdate": "1965-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "BC",
+                "name": "Billy Cash",
+                "birthdate": "1971-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              },
+              {
+                "passengerId": "CR",
+                "name": "Carlos Rodriguez",
+                "birthdate": "1982-07-23T20:29:16Z",
+                "citizenship": "USA",
+                "residenceCountry": "USA",
+                "loyaltyStatus": "Silver",
+                "check-inStatus": "Pending",
+                "travelClass": "Economy"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "type": "CateringEvent",
+        "topic": "agent-catering-events",
+        "payload": {
+          "timestamp": "2026-10-13T13:30:00Z",
+          "flightNumber": "AF021",
+          "cateringInformation": {
+            "economyTotalMealCount": 5,
+            "businessTotalMealCount": 5,
+            "firstTotalMealCount": 5
+          }
+        }
+      },
+      {
+        "type": "PassengerEvent",
+        "topic": "agent-passenger-events",
+        "payload": {
+          "timestamp": "2026-10-14T08:30:00Z",
+          "flightNumber": "AF021",
+          "passengerId": "CR",
+          "type": "CHECKIN"
+        }
+      },
+      {
+        "type": "CateringEvent",
+        "topic": "agent-catering-events",
+        "payload": {
+          "timestamp": "2026-10-14T10:30:00Z",
+          "flightNumber": "AF021",
+          "cateringInformation": {
+            "economyTotalMealCount": 10,
+            "businessTotalMealCount": 10,
+            "firstTotalMealCount": 10
+          }
+        }
+      }
+    ]
+  }  
+]

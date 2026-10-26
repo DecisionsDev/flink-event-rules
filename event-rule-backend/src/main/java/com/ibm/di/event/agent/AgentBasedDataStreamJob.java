@@ -47,7 +47,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Flink DataStream job that builds a processing DAG from an {@link AgentDescriptor} JSON file.
@@ -81,6 +83,9 @@ public class AgentBasedDataStreamJob {
 
     private static final Logger LOG = LoggerFactory.getLogger(AgentBasedDataStreamJob.class);
 
+    /** Source idleness used when a topic in {@code agents.json} does not set {@code idleness}. */
+    static final long DEFAULT_IDLENESS_MS = 60_000L;
+
     private static final String DEFAULT_BOOTSTRAP_SERVERS = "localhost:9092";
     private static final String DEFAULT_DESCRIPTOR_PATH   = "samples/agent/agents.json";
     private static final String DEFAULT_JOB_NAME          = "Agent-Based Event Processor";
@@ -104,8 +109,16 @@ public class AgentBasedDataStreamJob {
         // reliable injection mechanism from the REST API.
         String jobName          = envOr("FLINK_JOB_NAME",
             args.length > 2 ? args[2] : DEFAULT_JOB_NAME);
-        long   checkpointMs     = longEnvOr("CHECKPOINT_INTERVAL_MS", 60_000L);
-        long   outOfOrderMs     = longEnvOr("WATERMARK_OUT_OF_ORDER_MS", 5_000L);
+        long   checkpointMs          = longEnvOr("CHECKPOINT_INTERVAL_MS", 60_000L);
+        long   checkpointTimeoutMs   = longEnvOr("CHECKPOINT_TIMEOUT_MS", 300_000L);
+        // Initial delay before the FIRST checkpoint fires.
+        // Default: 5 × interval (300 s) — long enough for RocksDB native-library extraction
+        // AND IBM DI runner pre-warm across all agent operations on a cold JVM.
+        // This is set via the Java API (CheckpointConfig.setInitialDelay) so it works even
+        // when the cluster-side key (execution.checkpointing.initial-delay) is not supported
+        // by the runtime image (e.g. Confluent Platform Flink 2.1.x silently ignores it).
+        long   checkpointInitialDelayMs = longEnvOr("CHECKPOINT_INITIAL_DELAY_MS", 5L * checkpointMs);
+        long   outOfOrderMs          = longEnvOr("WATERMARK_OUT_OF_ORDER_MS", 5_000L);
         // CHAINING_ENABLED=false disables in-process agent chaining for every agent.
         // When unset or set to "true", per-agent chainingEnabled fields are respected.
         // Parsed strictly as a boolean: only the literal "false" disables chaining.
@@ -114,6 +127,8 @@ public class AgentBasedDataStreamJob {
         LOG.info("  Bootstrap servers  : {}", bootstrapServers);
         LOG.info("  Descriptor path    : {}", descriptorPath);
         LOG.info("  Checkpoint interval: {} ms", checkpointMs);
+        LOG.info("  Checkpoint initial delay: {} ms", checkpointInitialDelayMs);
+        LOG.info("  Checkpoint timeout : {} ms", checkpointTimeoutMs);
         LOG.info("  Watermark OOO bound: {} ms", outOfOrderMs);
         LOG.info("  Chaining enabled   : {}", globalChainingEnabled);
 
@@ -128,6 +143,10 @@ public class AgentBasedDataStreamJob {
         }
         validateUniqueAgentIds(agents);
         validateUniqueOperatorUids(agents);
+
+        // Per-topic source idleness from the top-level "topics" section of the agents file
+        Map<String, Long> topicIdlenessMs = loadTopicIdleness(descriptorPath);
+        LOG.info("  Source idleness    : {} (default {} ms)", topicIdlenessMs, DEFAULT_IDLENESS_MS);
 
         // Job-level parallelism: descriptor field takes priority over env var
         int jobParallelism = fileDescriptor.parallelism();
@@ -158,7 +177,20 @@ public class AgentBasedDataStreamJob {
             StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(jobParallelism);
         env.enableCheckpointing(checkpointMs);
-        env.getCheckpointConfig().setCheckpointTimeout(180_000);
+        env.getCheckpointConfig().setCheckpointTimeout(checkpointTimeoutMs);
+        env.getCheckpointConfig().setCheckpointingConsistencyMode(
+            org.apache.flink.core.execution.CheckpointingMode.AT_LEAST_ONCE);
+
+        // Delay the first checkpoint via the Configuration API.
+        // CheckpointConfig has no setInitialDelay() method; the only way to set this
+        // programmatically is through env.configure(), which applies the cluster-level
+        // "execution.checkpointing.initial-delay" key on all supported runtimes.
+        org.apache.flink.configuration.Configuration checkpointDelayConfig =
+            new org.apache.flink.configuration.Configuration();
+        checkpointDelayConfig.setString(
+            "execution.checkpointing.initial-delay",
+            checkpointInitialDelayMs + " ms");
+        env.configure(checkpointDelayConfig);
 
         // ── Wire each agent into its own DAG sub-graph ────────────────────────
         // When CHAINING_ENABLED=false the chain builder is bypassed entirely — no
@@ -177,7 +209,8 @@ public class AgentBasedDataStreamJob {
                     agentId, chainedTypes);
             }
             DataStream<EventEnvelope> processed =
-                wireAgent(env, agent, bootstrapServers, outOfOrderMs, chainedIn, chainedTypes);
+                wireAgent(env, agent, bootstrapServers, outOfOrderMs, chainedIn, chainedTypes,
+                    topicIdlenessMs);
             // Register this agent's output so downstream agents wired later can receive it.
             // When chaining is globally disabled chainedInputs is the empty no-op sentinel
             // and registerOutput is a no-op too, so there is no overhead.
@@ -215,6 +248,9 @@ public class AgentBasedDataStreamJob {
      *                          for standalone agents
      * @param chainedEventTypes set of event types already delivered via chain; Kafka sources for
      *                          those types are suppressed to prevent duplicate processing
+     * @param topicIdlenessMs   topic name → source idleness (ms), from {@code agents.json};
+     *                          topics not present (or a {@code null} map) use
+     *                          {@link #DEFAULT_IDLENESS_MS}
      * @return the {@link DataStream} of processed {@link EventEnvelope}s emitted by this agent's
      *         {@link StatefulAgentProcessor}, or {@code null} when the agent was skipped
      */
@@ -223,7 +259,8 @@ public class AgentBasedDataStreamJob {
                                                String bootstrapServers,
                                                long outOfOrderMs,
                                                DataStream<EventEnvelope> chainedInbound,
-                                               java.util.Set<String> chainedEventTypes) {
+                                               java.util.Set<String> chainedEventTypes,
+                                               Map<String, Long> topicIdlenessMs) {
 
         validate(agent);
 
@@ -242,6 +279,12 @@ public class AgentBasedDataStreamJob {
 
         if (agent.getSubscriptions() != null) {
             for (EventSubscription sub : agent.getSubscriptions()) {
+                // The Schedule event is synthesised by the processor itself: no Kafka source.
+                if (sub.isScheduleSubscription()) {
+                    LOG.info("[{}] Schedule subscription — events are generated by timers, "
+                        + "no Kafka source wired", agentId);
+                    continue;
+                }
                 if (sub.getTopic() == null || sub.getTopic().isBlank()) {
                     LOG.warn("[{}] Subscription {} has no topic — skipping",
                         agentId, sub.getEventType());
@@ -254,9 +297,13 @@ public class AgentBasedDataStreamJob {
                         agentId, sub.getTopic(), sub.getEventType());
                     continue;
                 }
+                long idlenessMs = topicIdlenessMs != null
+                    ? topicIdlenessMs.getOrDefault(sub.getTopic(), DEFAULT_IDLENESS_MS)
+                    : DEFAULT_IDLENESS_MS;
                 DataStream<EventEnvelope> topicStream =
                     buildTopicStream(env, sub.getTopic(), sub.getEventType(),
-                        consumerGrp, bootstrapServers, outOfOrderMs, agent);
+                        consumerGrp, bootstrapServers, outOfOrderMs, idlenessMs, agent,
+                        agent.entityKeyExtractorFor(sub));
                 subscriptionStreams.add(topicStream);
                 LOG.info("[{}] Wired Kafka source: topic={} eventType={}",
                     agentId, sub.getTopic(), sub.getEventType());
@@ -386,15 +433,15 @@ public class AgentBasedDataStreamJob {
 
     /**
      * Convenience overload for callers that do not need chained-event-type suppression
-     * (e.g. tests, non-chaining code paths).  Delegates to the full 6-arg form with
-     * an empty {@code chainedEventTypes} set.
+     * or per-topic idleness (e.g. tests, non-chaining code paths).  Delegates to the full
+     * form with an empty {@code chainedEventTypes} set and default idleness.
      */
     static DataStream<EventEnvelope> wireAgent(StreamExecutionEnvironment env,
                                                AgentDescriptor agent,
                                                String bootstrapServers,
                                                long outOfOrderMs,
                                                DataStream<EventEnvelope> chainedInbound) {
-        return wireAgent(env, agent, bootstrapServers, outOfOrderMs, chainedInbound, null);
+        return wireAgent(env, agent, bootstrapServers, outOfOrderMs, chainedInbound, null, null);
     }
 
     // ── Kafka source builders ─────────────────────────────────────────────────
@@ -433,15 +480,38 @@ public class AgentBasedDataStreamJob {
             .setValueOnlyDeserializer(new ArchiveControlCmdDeserializer())
             .build();
 
+        // The control stream carries no event time. It must be permanently idle: the keyed
+        // operator's watermark is the minimum over both inputs, so a source that never emits
+        // a watermark (noWatermarks()) would freeze it at Long.MIN_VALUE and no event-time
+        // schedule timer would ever fire.
         return env.fromSource(source,
-                WatermarkStrategy.noWatermarks(),
+                WatermarkStrategy.<ArchiveControlCmd>forGenerator(ctx -> new AlwaysIdleWatermarks<>()),
                 "ArchiveControl[" + topic + "]")
             .setParallelism(1); // broadcast source must be parallelism 1
+    }
+
+    /** Watermark generator that declares its source idle at every periodic emission. */
+    static final class AlwaysIdleWatermarks<T>
+            implements org.apache.flink.api.common.eventtime.WatermarkGenerator<T> {
+        @Override
+        public void onEvent(T event, long eventTimestamp,
+                            org.apache.flink.api.common.eventtime.WatermarkOutput output) {
+            // no event time
+        }
+
+        @Override
+        public void onPeriodicEmit(org.apache.flink.api.common.eventtime.WatermarkOutput output) {
+            output.markIdle();
+        }
     }
 
     /**
      * Builds an event-time Kafka source stream for {@code topic}, wrapping each raw
      * {@link JsonNode} into an {@link EventEnvelope} with entity ID extracted.
+     *
+     * <p>A source partition that stays silent for {@code idlenessMs} is marked idle so it does
+     * not hold back the watermark; this is what lets event-time schedule timers fire on a
+     * quiet topic.
      */
     private static DataStream<EventEnvelope> buildTopicStream(
             StreamExecutionEnvironment env,
@@ -450,9 +520,9 @@ public class AgentBasedDataStreamJob {
             String consumerGroup,
             String bootstrapServers,
             long outOfOrderMs,
-            AgentDescriptor agent) {
-
-        final String entityKeyExtractor = agent.getEntityKeyExtractor();
+            long idlenessMs,
+            AgentDescriptor agent,
+            String entityKeyExtractor) {
 
         KafkaSource<EventEnvelope> source = KafkaSource.<EventEnvelope>builder()
             .setBootstrapServers(bootstrapServers)
@@ -468,7 +538,7 @@ public class AgentBasedDataStreamJob {
             .<EventEnvelope>forBoundedOutOfOrderness(Duration.ofMillis(outOfOrderMs))
             .withTimestampAssigner((envelope, recordTs) ->
                 envelope.getTimestamp() > 0 ? envelope.getTimestamp() : recordTs)
-            .withIdleness(Duration.ofSeconds(30));
+            .withIdleness(Duration.ofMillis(idlenessMs));
 
         return env.fromSource(source, watermarks,
             "Kafka[" + agent.getAgentId() + "/" + topic + "]");
@@ -514,6 +584,37 @@ public class AgentBasedDataStreamJob {
      * @param agents      list of agent descriptors
      */
     public record AgentFileDescriptor(int parallelism, List<AgentDescriptor> agents) {}
+
+    /**
+     * Reads the per-topic source idleness from the top-level {@code topics[]} section of the
+     * agents file.
+     *
+     * <p>Each entry of {@code topics[]} may carry an {@code idleness} (same format as a horizon
+     * {@code timeLimit}: {@code 30s}, {@code 1mn}, {@code 2h}…).  Topics without it use
+     * {@link #DEFAULT_IDLENESS_MS}.  A file without a {@code topics} section (or a plain JSON
+     * array of agents) yields an empty map.
+     *
+     * @return topic name → idleness in milliseconds
+     * @throws IllegalArgumentException if an {@code idleness} value is invalid or not positive
+     */
+    static Map<String, Long> loadTopicIdleness(String agentDescriptorPath) throws IOException {
+        Map<String, Long> result = new HashMap<>();
+
+        JsonNode topics = new ObjectMapper().readTree(readFile(agentDescriptorPath)).get("topics");
+        if (topics == null || !topics.isArray()) return result;
+        for (JsonNode topic : topics) {
+            JsonNode name = topic.get("name");
+            JsonNode idleness = topic.get("idleness");
+            if (name == null || !name.isTextual() || idleness == null || idleness.isNull()) continue;
+            long ms = HorizonConfig.time(idleness.asText()).timeLimitMs();
+            if (ms <= 0) {
+                throw new IllegalArgumentException("agents.json: topic '" + name.asText()
+                    + "' has a non-positive idleness '" + idleness.asText() + "'");
+            }
+            result.put(name.asText(), ms);
+        }
+        return result;
+    }
 
     /**
      * Loads the agent descriptor file and returns an {@link AgentFileDescriptor}.
@@ -717,28 +818,35 @@ public class AgentBasedDataStreamJob {
             throw new IllegalArgumentException(
                 "AgentDescriptor.ruleset.path must not be blank for agentId=" + agent.getAgentId());
 
-        // ── enforce entityKeyExtractor when subscriptions are present ────────
-        // A missing extractor means every event keys to "unknown", routing all processing
-        // to a single Flink keyed partition (hot-key).  Raise an error at descriptor-load
-        // time so misconfiguration is caught before the Flink job starts rather than
-        // silently degrading throughput under load.
+        // ── enforce entityKeyExtractor for every subscription ────────────────
+        // The effective extractor is the subscription-level value, else the agent-level
+        // value.  A missing extractor means every event keys to "unknown", routing all
+        // processing to a single Flink keyed partition (hot-key).  Raise an error at
+        // descriptor-load time so misconfiguration is caught before the Flink job starts
+        // rather than silently degrading throughput under load.
         // To opt out explicitly for history-only agents with no keying need, set
-        // "entityKeyExtractor": "" in the descriptor.
-        if (agent.getEntityKeyExtractor() == null
-                && agent.getSubscriptions() != null && !agent.getSubscriptions().isEmpty()) {
-            throw new IllegalArgumentException(
-                "agentId=" + agent.getAgentId()
-                + ": entityKeyExtractor is required when an agent has subscriptions. "
-                + "Set it to a JSONPath expression (e.g. \"$.accountId\") to partition "
-                + "events by entity key. Use \"entityKeyExtractor\": \"\" to opt into "
-                + "history-only mode where all events key to 'unknown'.");
-        }
-        if (agent.getEntityKeyExtractor() != null
-                && agent.getEntityKeyExtractor().isBlank()
-                && agent.getSubscriptions() != null && !agent.getSubscriptions().isEmpty()) {
-            LOG.warn("[{}] entityKeyExtractor is blank — all events will key to 'unknown' "
-                + "(history-only / single-partition mode). Intentional opt-in only.",
-                agent.getAgentId());
+        // "entityKeyExtractor": "" at agent or subscription level.
+        // Schedule subscriptions are synthesised by timers and never use the extractor.
+        if (agent.getSubscriptions() != null) {
+            for (EventSubscription sub : agent.getSubscriptions()) {
+                if (sub.isScheduleSubscription()) continue;
+                String eke = agent.entityKeyExtractorFor(sub);
+                if (eke == null) {
+                    throw new IllegalArgumentException(
+                        "agentId=" + agent.getAgentId()
+                        + ": entityKeyExtractor is required for subscription '"
+                        + sub.getEventType() + "' (set it on the subscription or on the agent). "
+                        + "Use a JSONPath expression (e.g. \"$.accountId\") to partition "
+                        + "events by entity key, or \"\" to opt into "
+                        + "history-only mode where all events key to 'unknown'.");
+                }
+                if (eke.isBlank()) {
+                    LOG.warn("[{}] entityKeyExtractor is blank for subscription '{}' — all its "
+                        + "events will key to 'unknown' (history-only / single-partition mode). "
+                        + "Intentional opt-in only.",
+                        agent.getAgentId(), sub.getEventType());
+                }
+            }
         }
 
         if (agent.getOutputs() != null) {
@@ -760,6 +868,15 @@ public class AgentBasedDataStreamJob {
         if (agent.getSubscriptions() != null) {
             java.util.Set<String> seenOperations = new java.util.HashSet<>();
             for (EventSubscription sub : agent.getSubscriptions()) {
+                // Rule: the Schedule subscription is fed by timers, never by a topic
+                if (sub.isScheduleSubscription()
+                        && sub.getTopic() != null && !sub.getTopic().isBlank()) {
+                    throw new IllegalArgumentException(
+                        "agentId=" + agent.getAgentId()
+                        + ": the '" + ScheduleManager.SCHEDULE_EVENT_TYPE
+                        + "' subscription must not declare a topic (events are generated "
+                        + "by schedule timers).");
+                }
                 // Rule: operation must be explicitly present (null = field absent in JSON)
                 if (sub.getOperation() == null) {
                     throw new IllegalArgumentException(
@@ -769,16 +886,29 @@ public class AgentBasedDataStreamJob {
                         + "Use \"operation\": \"\" to subscribe for context only (history-only mode), "
                         + "or provide the IBM Decision Intelligence operation name to invoke.");
                 }
-                // Rule: each non-blank operation name must be unique within this agent
+                // Rule: each non-blank operation name should be unique within this agent.
+                // A duplicate may indicate a configuration mistake but is not fatal —
+                // warn so the operator can correct it without killing the job (H-5).
                 if (sub.hasOperation()) {
                     if (!seenOperations.add(sub.getOperation())) {
-                        throw new IllegalArgumentException(
-                            "agentId=" + agent.getAgentId()
-                            + ": duplicate operation name '" + sub.getOperation()
-                            + "' found in subscriptions. Each operation may appear at most once "
-                            + "per agent because one operation processes exactly one event type.");
+                        LOG.warn("agentId={}: duplicate operation name '{}' found in subscriptions. "
+                            + "Each operation should appear at most once per agent because one "
+                            + "operation processes exactly one event type. The second occurrence "
+                            + "will be registered and may silently override the first.",
+                            agent.getAgentId(), sub.getOperation());
                     }
                 }
+            }
+
+            boolean hasScheduleSub = agent.getSubscriptions().stream()
+                .anyMatch(EventSubscription::isScheduleSubscription);
+            boolean emitsSchedules = agent.getRuleset().getOperations() != null
+                && agent.getRuleset().getOperations().stream()
+                    .anyMatch(op -> op.scheduleRequestsField() != null);
+            if (emitsSchedules && !hasScheduleSub) {
+                LOG.warn("[{}] An operation declares a 'schedule' section but no '{}' "
+                    + "subscription exists: fired schedules will not trigger any operation.",
+                    agent.getAgentId(), ScheduleManager.SCHEDULE_EVENT_TYPE);
             }
         }
     }

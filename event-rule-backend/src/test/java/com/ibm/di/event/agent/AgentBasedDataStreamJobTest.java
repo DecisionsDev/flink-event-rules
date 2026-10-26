@@ -592,8 +592,11 @@ class AgentBasedDataStreamJobTest {
         }
 
         @Test
-        @DisplayName("Duplicate non-blank operation across two subscriptions is rejected")
+        @DisplayName("Duplicate non-blank operation across two subscriptions produces a warning but does not throw (H-5)")
         void duplicateOperationRejected() {
+            // H-5: changed from throw to LOG.warn so the job is not killed by a config
+            // mistake that may be intentional (e.g. multi-topic fan-in to the same rule).
+            // The validate() method must now complete without throwing.
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("b");
             d.setEntityKeyExtractor("$.id");
@@ -602,10 +605,8 @@ class AgentBasedDataStreamJobTest {
                 new EventSubscription("txn1", "t1", "SharedOp", HorizonConfig.count(5)),
                 new EventSubscription("txn2", "t2", "SharedOp", HorizonConfig.count(5))
             ));
-            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> AgentBasedDataStreamJob.validate(d));
-            assertTrue(ex.getMessage().contains("SharedOp"),
-                "Error must name the duplicate operation");
+            assertDoesNotThrow(() -> AgentBasedDataStreamJob.validate(d),
+                "Duplicate operation should warn, not throw");
         }
 
         @Test
@@ -688,6 +689,54 @@ class AgentBasedDataStreamJobTest {
             d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
             // No subscriptions and no entityKeyExtractor
             assertDoesNotThrow(() -> AgentBasedDataStreamJob.validate(d));
+        }
+
+        @Test
+        @DisplayName("subscription-level entityKeyExtractor satisfies validate() without an agent-level value")
+        void subscriptionLevelExtractorAccepted() {
+            AgentDescriptor d = new AgentDescriptor();
+            d.setAgentId("sub-level-agent");
+            d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
+            EventSubscription a = new EventSubscription("txn", "txn-topic", "EvalTxn", HorizonConfig.count(10));
+            a.setEntityKeyExtractor("$.accountId");
+            EventSubscription b = new EventSubscription("upd", "upd-topic", "EvalUpd", HorizonConfig.count(10));
+            b.setEntityKeyExtractor("$.payload.accountId");
+            d.setSubscriptions(List.of(a, b));
+            assertDoesNotThrow(() -> AgentBasedDataStreamJob.validate(d));
+            assertEquals("$.accountId", d.entityKeyExtractorFor(a));
+            assertEquals("$.payload.accountId", d.entityKeyExtractorFor(b));
+        }
+
+        @Test
+        @DisplayName("subscription without extractor inherits the agent-level value; override wins")
+        void agentLevelFallbackAndOverride() {
+            AgentDescriptor d = new AgentDescriptor();
+            d.setAgentId("fallback-agent");
+            d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
+            d.setEntityKeyExtractor("$.accountId");
+            EventSubscription inherit = new EventSubscription("txn", "txn-topic", "EvalTxn", HorizonConfig.count(10));
+            EventSubscription override = new EventSubscription("upd", "upd-topic", "EvalUpd", HorizonConfig.count(10));
+            override.setEntityKeyExtractor("$.payload.accountId");
+            d.setSubscriptions(List.of(inherit, override));
+            assertDoesNotThrow(() -> AgentBasedDataStreamJob.validate(d));
+            assertEquals("$.accountId", d.entityKeyExtractorFor(inherit));
+            assertEquals("$.payload.accountId", d.entityKeyExtractorFor(override));
+        }
+
+        @Test
+        @DisplayName("one subscription without any extractor is rejected even if another declares one")
+        void partialSubscriptionLevelExtractorRejected() {
+            AgentDescriptor d = new AgentDescriptor();
+            d.setAgentId("partial-agent");
+            d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
+            EventSubscription a = new EventSubscription("txn", "txn-topic", "EvalTxn", HorizonConfig.count(10));
+            a.setEntityKeyExtractor("$.accountId");
+            EventSubscription b = new EventSubscription("upd", "upd-topic", "EvalUpd", HorizonConfig.count(10));
+            d.setSubscriptions(List.of(a, b));
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> AgentBasedDataStreamJob.validate(d));
+            assertTrue(ex.getMessage().contains("entityKeyExtractor is required"));
+            assertTrue(ex.getMessage().contains("'upd'"));
         }
     }
 

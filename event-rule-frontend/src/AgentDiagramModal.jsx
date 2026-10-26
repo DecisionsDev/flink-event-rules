@@ -17,8 +17,7 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import './AgentDiagramModal.css';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+import { API_URL } from './config.js';
 
 // ─── Layout constants ──────────────────────────────────────────────────────────
 const AGENT_W      = 200;
@@ -435,7 +434,7 @@ function AgentDiagramSVG({ agents, svgRef, onNodeClick }) {
               </text>
               <text x={n.x + n.w / 2} y={n.y + 22} textAnchor="middle"
                 fill={C.text} fontSize={8} fontWeight="600">
-                {topic}
+                {topic || 'no Kafka topic'}
               </text>
               <text x={n.x + n.w / 2} y={n.y + 33} textAnchor="middle"
                 fill={C.textMuted} fontSize={7.5}>
@@ -721,7 +720,7 @@ function SelectionDetailPanel({ useCaseId, selection, onClose }) {
         setError(err.message);
         setLoading(false);
       });
-  }, [useCaseId, kind, agentDescriptor?.agentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useCaseId, kind, agentDescriptor?.agentId]);
 
   // Initial fetch + reset whenever the selected agent changes
   useEffect(() => {

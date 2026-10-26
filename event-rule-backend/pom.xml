@@ -42,45 +42,20 @@
     </properties>
 
     <profiles>
-        <!-- Development profile that includes provided dependencies in classpath -->
+        <!--
+            Development profile — for local IDE / exec:java runs.
+            All Flink dependencies are currently compile-scoped in the main <dependencies>
+            block (required because the application is packaged as a self-contained fat JAR
+            and the Flink image does not supply the Kafka connector or IBM libraries).
+            If the Flink dependencies are ever changed to provided scope (e.g. when targeting
+            a cluster that pre-installs them), add compile-scope overrides here so that
+            `mvn exec:java -Pdev` and IDE runs still have the full classpath.
+        -->
         <profile>
             <id>dev</id>
             <activation>
                 <activeByDefault>false</activeByDefault>
             </activation>
-            <dependencies>
-                <!-- Override Flink dependencies to compile scope for IDE debugging -->
-                <dependency>
-                    <groupId>org.apache.flink</groupId>
-                    <artifactId>flink-core</artifactId>
-                    <version>${flink.version}</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.apache.flink</groupId>
-                    <artifactId>flink-streaming-java</artifactId>
-                    <version>${flink.version}</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.apache.flink</groupId>
-                    <artifactId>flink-clients</artifactId>
-                    <version>${flink.version}</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.apache.flink</groupId>
-                    <artifactId>flink-connector-kafka</artifactId>
-                    <version>4.0.0-2.0</version>
-                    <scope>compile</scope>
-                </dependency>
-                <dependency>
-                    <groupId>org.apache.flink</groupId>
-                    <artifactId>flink-connector-base</artifactId>
-                    <version>${flink.version}</version>
-                    <scope>compile</scope>
-                </dependency>
-            </dependencies>
         </profile>
 
         <!-- Functional profile — runs BFF and Flink integration tests that require a
@@ -269,32 +244,27 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
-            <version>5.10.1</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
-            <version>5.10.1</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-params</artifactId>
-            <version>5.10.1</version>
             <scope>test</scope>
         </dependency>
         <!-- Mockito for mocking the DI DecisionRunner in unit tests -->
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
-            <version>5.10.0</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-junit-jupiter</artifactId>
-            <version>5.10.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -307,6 +277,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
                 <configuration>
+                    <enableAssertions>true</enableAssertions>
+                    <testFailureIgnore>false</testFailureIgnore>
                     <!-- Redirect the Log4j2 RollingFileAppender to target/ during tests
                          so ${sys:log.file} never creates a stray file in the project root -->
                     <systemPropertyVariables>
@@ -316,7 +288,7 @@
                          and the banking-fraud E2E test (requires full deployed stack). -->
                     <excludes>
                         <exclude>**/functional/**</exclude>
-                        <exclude>**/BankingFraudAgentE2ETest.java</exclude>
+                        <exclude>**/*E2ETest.java</exclude>
                     </excludes>
                 </configuration>
             </plugin>
@@ -328,7 +300,7 @@
                 <version>3.2.5</version>
                 <configuration>
                     <includes>
-                        <include>**/BankingFraudAgentE2ETest.java</include>
+                        <include>**/*E2ETest.java</include>
                     </includes>
                     <systemPropertyVariables>
                         <log.file>${project.build.directory}/test-logs/e2e-test.log</log.file>
@@ -557,14 +529,15 @@
                                         <exclude>META-INF/proguard/**</exclude>
                                     </excludes>
                                 </filter>
-                                <filter>
-                                    <artifact>com.ibm.aid.engine:decisionJar</artifact>
-                                    <excludes>
-                                        <exclude>myModel/**</exclude>
-                                        <exclude>META-INF/decisions/myModelName-*.json</exclude>
-                                        <exclude>META-INF/services/com.ibm.decision.run.DecisionServiceProvider</exclude>
-                                    </excludes>
-                                </filter>
+                                <!--
+                                    NOTE: com.ibm.aid.engine:decisionJar was removed.
+                                    The IBM Decision Engine compact runtime (engine-compact-runtime) is
+                                    deployed separately at runtime — it is NOT a Maven dependency of this
+                                    module and was never on the shade classpath.  The exclusions it
+                                    carried (myModel/**, META-INF/decisions/myModelName-*.json, and the
+                                    DecisionServiceProvider SPI descriptor) are already covered by the
+                                    global *:* filter above.
+                                -->
                             </filters>
                             <transformers>
                                 <!-- Merge SPI descriptors; the ruleset provider descriptor above remains intentionally external. -->

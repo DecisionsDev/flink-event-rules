@@ -17,7 +17,6 @@ COPY node_modules ./node_modules
 # Copy application code
 COPY server.js ./
 COPY routes/ ./routes/
-COPY services/ ./services/
 
 # Expose port
 EXPOSE 8080

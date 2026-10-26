@@ -175,14 +175,15 @@ validate_infrastructure() {
 
 # ── Per-use-case validation ────────────────────────────────────────────────────
 #
-# Each use case reads its agent descriptor from agents.json (loaded by
-# AgentBasedDataStreamJob via AGENT_DESCRIPTOR_PATH) and its BFF metadata from
-# descriptor.json (used by the BFF for tile-visibility and topic discovery).
+# Each use case is described by a single agents.json file: the agents themselves
+# (loaded by AgentBasedDataStreamJob via AGENT_DESCRIPTOR_PATH) plus the top-level
+# BFF metadata (name, flinkJobName, topics, outboundTopics — used by the BFF for
+# tile-visibility and topic discovery).
 # Reload is handled via broadcast-reload.sh (Kafka broadcast state).
 
 validate_use_case() {
     local use_case="$1"
-    local descriptor_path="samples/${use_case}/descriptor.json"
+    local descriptor_path="samples/${use_case}/agents.json"
     SECTION_FAILED=false
 
     header "Use Case: $(echo "$use_case" | tr '[:lower:]' '[:upper:]')"
@@ -217,7 +218,7 @@ for t in data.get('topics', []):
 " 2>/dev/null)
     fi
 
-    # Outbound topics (outboundTopics array in descriptor.json)
+    # Outbound topics (top-level outboundTopics array in agents.json)
     local outbound_topics=()
     if command -v jq &>/dev/null; then
         while IFS= read -r t; do [[ -n "$t" ]] && outbound_topics+=("$t"); done \

@@ -94,7 +94,32 @@ echo ""
 # Return to project root before building Docker images
 cd "$PROJECT_ROOT"
 
-# ── 4. Docker images ──────────────────────────────────────────────────────────
+# ── 4. Runtime directories ────────────────────────────────────────────────────
+# Create host-side bind-mount directories for Flink checkpoints and savepoints
+# before the Docker images are built or run.  docker-compose.yml maps:
+#   ./checkpoints  ->  /opt/flink/checkpoints  (jobmanager + taskmanager)
+#   ./savepoints   ->  /opt/flink/savepoints   (jobmanager + taskmanager)
+
+echo "=========================================="
+echo "Creating Runtime Directories"
+echo "=========================================="
+mkdir -p checkpoints savepoints
+chmod 775 checkpoints savepoints
+echo "✓ checkpoints/ and savepoints/ created (mode 775)"
+echo ""
+
+# Verify the directories are writable by the current user
+for dir in checkpoints savepoints; do
+    if [ -w "$dir" ]; then
+        echo "  ✓ $dir: writable"
+    else
+        echo "  ✗ $dir: not writable — check filesystem permissions" >&2
+        exit 1
+    fi
+done
+echo ""
+
+# ── 5. Docker images ──────────────────────────────────────────────────────────
 echo "=========================================="
 echo "Building Docker Images"
 echo "=========================================="
@@ -140,6 +165,7 @@ echo "All components and tests have passed successfully:"
 echo "  ✓ Backend tests & JAR: event-rule-backend/target/event-rule-backend-1.0-SNAPSHOT.jar"
 echo "  ✓ Frontend tests & build: event-rule-frontend/build/"
 echo "  ✓ BFF tests & dependencies: event-rule-frontend/bff/node_modules/"
+echo "  ✓ Runtime directories: checkpoints/ savepoints/ (mode 775)"
 echo "  ✓ Docker images: event-rule-backend, event-rule-bff, event-rule-frontend"
 echo "  ✓ Platform: $PLATFORM"
 echo ""

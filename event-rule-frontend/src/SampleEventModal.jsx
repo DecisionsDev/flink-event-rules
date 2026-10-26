@@ -16,6 +16,7 @@
  *
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { API_URL } from './config.js';
 
 /**
  * SampleEventModal
@@ -32,8 +33,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
  *   useCase   {string}   — the use-case folder id (same as agentId for agent use cases)
  *   onClose   {function} — called when the modal is dismissed
  */
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 function SampleEventModal({ agentId, useCase, onClose }) {
   // ── State ──────────────────────────────────────────────────────────────────

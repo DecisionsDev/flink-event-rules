@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Copyright IBM Corp. 2025
+# Copyright IBM Corp. 2026
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -154,8 +154,8 @@ EOF
 PROJECT_PATH=""
 OUTPUT_DIR=""
 DI_URL=""
-DI_USERNAME="${DI_USERNAME:-}"
-DI_API_KEY="${DI_API_KEY:-}"
+DI_USERNAME="${DI_USERNAME:-${DI_ZEN_USERNAME:-}}"
+DI_API_KEY="${DI_API_KEY:-${DI_ZEN_API_KEY:-}}"
 MVN_CMD=""
 VERSION_OVERRIDE=""
 SKIP_TLS=false
@@ -396,6 +396,10 @@ info "index.json retrieved successfully."
 # execution_api_maven_plugin    → com.ibm.decision.execution:execution-api
 # ml_integration_maven_plugin   → com.ibm.decision:ml-integration-runtime
 # ml_predictor_maven_plugin     → com.ibm.decision:decision-ml-predictor
+#
+# import-maven-plugin ships at the same version as build-maven-plugin and is
+# required by external-library-ads.  It is not always listed in index.json, so
+# we derive its Maven repository path from the build-plugin path.
 
 # Write index JSON to a temp file to avoid pipe/heredoc conflicts under set -e
 INDEX_JSON_FILE="${WORK_DIR}/index.json"
@@ -445,6 +449,8 @@ ENGINE_API_COORDS=$(_read_artifact "engine_de_api_maven_plugin")
 EXEC_API_COORDS=$(_read_artifact "execution_api_maven_plugin")
 ML_INTEG_COORDS=$(_read_artifact "ml_integration_maven_plugin")
 ML_PRED_COORDS=$(_read_artifact "ml_predictor_maven_plugin")
+# import-maven-plugin: try index.json first; fall back to deriving from build-plugin path.
+IMPORT_PLUGIN_COORDS=$(_read_artifact "import_maven_plugin")
 
 for name_val in \
   "build_command_maven_plugin:${BUILD_PLUGIN_COORDS}" \
@@ -519,10 +525,27 @@ ML_PRED_ARTIFACT=$(_field "${ML_PRED_COORDS}" 2)
 ML_PRED_VERSION=$(_field "${ML_PRED_COORDS}" 3)
 ML_PRED_PATH=$(_field "${ML_PRED_COORDS}" 5)
 
+# import-maven-plugin: if not in index.json, derive coordinates from build-plugin.
+# The import plugin always ships at the same version as the build plugin and
+# lives at the same path prefix (just swap the artifactId).
+if [[ "${IMPORT_PLUGIN_COORDS}" == "MISSING" || -z "${IMPORT_PLUGIN_COORDS}" ]]; then
+  IMPORT_PLUGIN_GROUP="${BUILD_PLUGIN_GROUP}"
+  IMPORT_PLUGIN_ARTIFACT="import-maven-plugin"
+  IMPORT_PLUGIN_VERSION="${BUILD_PLUGIN_VERSION}"
+  # Derive path by substituting build-maven-plugin → import-maven-plugin in the build path
+  IMPORT_PLUGIN_PATH="${BUILD_PLUGIN_PATH/build-maven-plugin/import-maven-plugin}"
+else
+  IMPORT_PLUGIN_GROUP=$(_field "${IMPORT_PLUGIN_COORDS}" 1)
+  IMPORT_PLUGIN_ARTIFACT=$(_field "${IMPORT_PLUGIN_COORDS}" 2)
+  IMPORT_PLUGIN_VERSION=$(_field "${IMPORT_PLUGIN_COORDS}" 3)
+  IMPORT_PLUGIN_PATH=$(_field "${IMPORT_PLUGIN_COORDS}" 5)
+fi
+
 if [[ "${ANNOTATIONS_COORDS}" != "MISSING" && -n "${ANNOTATIONS_COORDS}" ]]; then
   info "Annotations:   ${ANNOTATIONS_GROUP}:${ANNOTATIONS_ARTIFACT}:${ANNOTATIONS_VERSION}"
 fi
 info "Build plugin:  ${BUILD_PLUGIN_GROUP}:${BUILD_PLUGIN_ARTIFACT}:${BUILD_PLUGIN_VERSION}"
+info "Import plugin: ${IMPORT_PLUGIN_GROUP}:${IMPORT_PLUGIN_ARTIFACT}:${IMPORT_PLUGIN_VERSION}"
 info "Foundation:    ${FOUNDATION_GROUP}:${FOUNDATION_ARTIFACT}:${FOUNDATION_VERSION}"
 info "Engine RT:     ${ENGINE_RT_GROUP}:${ENGINE_RT_ARTIFACT}:${ENGINE_RT_VERSION}"
 info "Engine API:    ${ENGINE_API_GROUP}:${ENGINE_API_ARTIFACT}:${ENGINE_API_VERSION}"
@@ -564,30 +587,51 @@ install_di_artifact() {
   local m2_group_path="${group//.//}"
   local m2_dir="${LOCAL_REPO}/${m2_group_path}/${artifact}/${version}"
 
-  # Skip download if already installed (idempotent)
+  mkdir -p "${m2_dir}"
+
+  # ── Purge negative-cache markers ──────────────────────────────────────────
+  # Maven writes .lastUpdated files when a remote fetch fails. If such a file
+  # exists alongside a valid artifact, Maven still reports the artifact as
+  # "(present, but unavailable)" and refuses to use it — even if the bytes are
+  # correct on disk.  This happens when:
+  #   • The repo ID in _remote.repositories doesn't match any configured repo
+  #     (e.g. artifact was installed from "ads-release" but our settings use
+  #     "ads-maven"), causing Maven to attempt re-validation from "ads-maven".
+  #   • The re-validation request fails (TLS, auth, timeout), writing a fresh
+  #     .lastUpdated failure entry.
+  # We remove all .lastUpdated files for this artifact/version directory before
+  # writing anything, so they cannot block the subsequent Maven build.
+  find "${m2_dir}" -maxdepth 1 -name "*.lastUpdated" -delete 2>/dev/null || true
+  debug "  Cleared any .lastUpdated markers in ${m2_dir}"
+
+  # Skip re-downloading if the artifact file is already present.
+  # We still fall through to write _remote.repositories and the POM so that
+  # the repo ID is always recorded as "ads-maven" (matching our settings.xml),
+  # which prevents Maven from attempting remote re-validation on future runs.
+  local already_installed=false
   if [[ -f "${m2_dir}/${artifact}-${version}.${packaging}" ]]; then
-    debug "  Already installed: ${group}:${artifact}:${version}"
-    return 0
+    already_installed=true
+    debug "  Artifact already present: ${group}:${artifact}:${version}"
   fi
 
-  info "  Downloading ${group}:${artifact}:${version}..."
+  if [[ "${already_installed}" == "false" ]]; then
+    info "  Downloading ${group}:${artifact}:${version}..."
 
-  mkdir -p "${m2_dir}"
-  local jar_dest="${m2_dir}/${artifact}-${version}.${packaging}"
+    local jar_dest="${m2_dir}/${artifact}-${version}.${packaging}"
 
-  # Download the artifact JAR/ZIP
-  local download_url="${DI_URL}/${ads_path}"
-  local http_code
-  http_code=$(curl "${CURL_TLS_FLAGS[@]+"${CURL_TLS_FLAGS[@]}"}" --silent --max-time 120 \
-    -H "Authorization: ${AUTH_HEADER}" \
-    -o "${jar_dest}" \
-    -w "%{http_code}" \
-    "${download_url}")
+    # Download the artifact JAR/ZIP
+    local download_url="${DI_URL}/${ads_path}"
+    local http_code
+    http_code=$(curl "${CURL_TLS_FLAGS[@]+"${CURL_TLS_FLAGS[@]}"}" --silent --max-time 120 \
+      -H "Authorization: ${AUTH_HEADER}" \
+      -o "${jar_dest}" \
+      -w "%{http_code}" \
+      "${download_url}")
 
-  if [[ "${http_code}" != "200" ]]; then
-    rm -f "${jar_dest}"
-    error "Failed to download ${artifact}-${version}.${packaging} (HTTP ${http_code})."
-    cat >&2 <<EOF
+    if [[ "${http_code}" != "200" ]]; then
+      rm -f "${jar_dest}"
+      error "Failed to download ${artifact}-${version}.${packaging} (HTTP ${http_code})."
+      cat >&2 <<EOF
 
 Download URL: ${download_url}
 Possible causes:
@@ -600,17 +644,19 @@ Manual test:
     -H "Authorization: ${AUTH_MASKED}" \\
     "${download_url}"
 EOF
-    return 1
+      return 1
+    fi
   fi
 
-  # Write or fetch the POM
+  # Write or fetch the POM (always, even when the artifact was already present,
+  # so the POM reflects the correct content and repo provenance).
   local pom_dest="${m2_dir}/${artifact}-${version}.pom"
   if [[ -n "${pom_xml}" ]]; then
     # Use provided POM string (needed for plugin POM with dependencies)
     printf '%s\n' "${pom_xml}" > "${pom_dest}"
     debug "  Wrote synthetic POM for ${artifact}-${version}"
-  else
-    # Attempt to fetch POM from the DI Maven repo
+  elif [[ "${already_installed}" == "false" ]]; then
+    # Attempt to fetch POM from the DI Maven repo (only when JAR was just downloaded)
     local pom_path="${ads_path%.*}.pom"
     local pom_http
     pom_http=$(curl "${CURL_TLS_FLAGS[@]+"${CURL_TLS_FLAGS[@]}"}" --silent --max-time 30 \
@@ -634,6 +680,23 @@ POMEOF
       debug "  POM not available from server; wrote minimal POM for ${artifact}-${version}"
     fi
   fi
+
+  # ── Write _remote.repositories ─────────────────────────────────────────────
+  # This file tells Maven which repository each artifact came from.  Writing it
+  # with "ads-maven" (the repo ID in our generated settings.xml) prevents Maven
+  # from treating the artifacts as "locally installed" with an unknown origin and
+  # attempting to re-validate them from the remote repository on every build.
+  # Without this, artifacts originally installed from a differently-named repo
+  # (e.g. "ads-release" from an Artifactory mirror) cause Maven to contact
+  # "ads-maven" for re-validation, fail, and write a .lastUpdated negative-cache
+  # entry — producing the "(present, but unavailable)" error.
+  local remote_repos_file="${m2_dir}/_remote.repositories"
+  {
+    printf '#NOTE: This is a Maven Resolver internal implementation file, its format can be changed without prior notice.\n'
+    printf '%s-%s.%s>ads-maven=\n' "${artifact}" "${version}" "${packaging}"
+    printf '%s-%s.pom>ads-maven=\n' "${artifact}" "${version}"
+  } > "${remote_repos_file}"
+  debug "  Wrote _remote.repositories for ${group}:${artifact}:${version} (repo: ads-maven)"
 
   debug "  Installed ${artifact}-${version}.${packaging} → ${m2_dir}"
 }
@@ -660,6 +723,30 @@ cat > "${BUILD_PLUGIN_POM_FILE}" <<PLUGINPOM
 PLUGINPOM
 BUILD_PLUGIN_POM="$(<"${BUILD_PLUGIN_POM_FILE}")"
 
+# ── Import plugin POM (same foundation dependency as build plugin) ─────────────
+# The import-maven-plugin is required by external-library-ads (import:import goal).
+# Installing it here guarantees it is available in the isolated local repo so that
+# the external-library-ads Maven invocation never needs to contact ads-maven for it.
+IMPORT_PLUGIN_POM_FILE="${WORK_DIR}/import-plugin.pom"
+cat > "${IMPORT_PLUGIN_POM_FILE}" <<IMPORTPLUGPOM
+<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>${IMPORT_PLUGIN_GROUP}</groupId>
+  <artifactId>${IMPORT_PLUGIN_ARTIFACT}</artifactId>
+  <version>${IMPORT_PLUGIN_VERSION}</version>
+  <packaging>maven-plugin</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>${FOUNDATION_GROUP}</groupId>
+      <artifactId>${FOUNDATION_ARTIFACT}</artifactId>
+      <version>${FOUNDATION_VERSION}</version>
+    </dependency>
+  </dependencies>
+</project>
+IMPORTPLUGPOM
+IMPORT_PLUGIN_POM="$(<"${IMPORT_PLUGIN_POM_FILE}")"
+
 # Install foundation first (required by build plugin classloader)
 install_di_artifact \
   "${FOUNDATION_GROUP}" "${FOUNDATION_ARTIFACT}" "${FOUNDATION_VERSION}" \
@@ -669,6 +756,18 @@ install_di_artifact \
 install_di_artifact \
   "${BUILD_PLUGIN_GROUP}" "${BUILD_PLUGIN_ARTIFACT}" "${BUILD_PLUGIN_VERSION}" \
   "jar" "${BUILD_PLUGIN_PATH}" "${BUILD_PLUGIN_POM}" true
+
+# Install import plugin with its dependency-aware POM.
+# This is required by external-library-ads (import:import goal) and must be
+# present in the isolated LOCAL_REPO before external-library-ads is built so
+# that Maven does not need to resolve it from the ads-maven remote repository.
+# Without this, Maven may find a .lastUpdated negative-cache marker from a
+# prior failed resolution attempt and report the POM as "(present, but
+# unavailable)", causing the external-library-ads build to fail even though
+# the manual `mvn install -f external-library-ads/pom.xml` would succeed.
+install_di_artifact \
+  "${IMPORT_PLUGIN_GROUP}" "${IMPORT_PLUGIN_ARTIFACT}" "${IMPORT_PLUGIN_VERSION}" \
+  "jar" "${IMPORT_PLUGIN_PATH}" "${IMPORT_PLUGIN_POM}" true
 
 # Install engine-compact-runtime
 install_di_artifact \
@@ -1113,8 +1212,9 @@ MVN_ARGS=(
   -U
   -f "${PROJECT_DIR}/pom.xml"
   -s "${MVN_SETTINGS}"
-  --no-transfer-progress
+  "-Dmaven.repo.local=${LOCAL_REPO}"
   "-Dlocalm2=${LOCAL_REPO}"
+  --no-transfer-progress
   # Version override: sets project.version and parent.version for the reactor
 )
 

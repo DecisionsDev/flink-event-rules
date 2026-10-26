@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { formatDuration, extractTimestampMs } from './ScenarioTimeline';
+import { formatDuration, extractTimestampMs, formatTooltipValue } from './ScenarioTimeline';
 
 describe('formatDuration', () => {
   test('returns "0s" for 0ms', () => {
@@ -81,5 +81,47 @@ describe('extractTimestampMs', () => {
     expect(extractTimestampMs({})).toBeNull();
     expect(extractTimestampMs({ payload: {} })).toBeNull();
     expect(extractTimestampMs({ payload: { timestamp: 'invalid-date' } })).toBeNull();
+  });
+});
+
+describe('formatTooltipValue', () => {
+  test('returns string representation of short strings unchanged', () => {
+    expect(formatTooltipValue('hello world')).toBe('hello world');
+  });
+
+  test('truncates strings exceeding maxLength and appends ellipsis', () => {
+    const longStr = 'a'.repeat(100);
+    const formatted = formatTooltipValue(longStr, 80);
+    expect(formatted).toBe('a'.repeat(80) + '…');
+    expect(formatted.length).toBe(81);
+  });
+
+  test('uses default maxLength of 80 characters', () => {
+    const str80 = 'x'.repeat(80);
+    expect(formatTooltipValue(str80)).toBe(str80);
+
+    const str81 = 'x'.repeat(81);
+    expect(formatTooltipValue(str81)).toBe('x'.repeat(80) + '…');
+  });
+
+  test('formats numbers and booleans', () => {
+    expect(formatTooltipValue(12345)).toBe('12345');
+    expect(formatTooltipValue(0)).toBe('0');
+    expect(formatTooltipValue(true)).toBe('true');
+    expect(formatTooltipValue(false)).toBe('false');
+  });
+
+  test('handles null and undefined', () => {
+    expect(formatTooltipValue(null)).toBe('null');
+    expect(formatTooltipValue(undefined)).toBe('undefined');
+  });
+
+  test('serializes objects to JSON and truncates if too long', () => {
+    const obj = { key: 'value' };
+    expect(formatTooltipValue(obj)).toBe(JSON.stringify(obj));
+
+    const largeObj = { accountId: '12345', details: 'A very long message that extends beyond the limit and should be truncated' };
+    const serialized = JSON.stringify(largeObj);
+    expect(formatTooltipValue(largeObj, 30)).toBe(serialized.slice(0, 30) + '…');
   });
 });

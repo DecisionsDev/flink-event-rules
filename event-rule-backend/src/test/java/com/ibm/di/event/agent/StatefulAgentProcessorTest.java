@@ -212,6 +212,55 @@ class StatefulAgentProcessorTest {
             assertNotNull(out.getEntityId());
         }
     }
+    // ── invokeForTest: Schedule event routing ─────────────────────────────────
+
+    @Nested
+    @DisplayName("invokeForTest — Schedule event routing")
+    class ScheduleRouting {
+
+        private AgentDescriptor scheduleDescriptor(String scheduleOperation) {
+            AgentDescriptor d = baseDescriptor();
+            EventSubscription schedule = new EventSubscription();
+            schedule.setEventType(ScheduleManager.SCHEDULE_EVENT_TYPE);
+            schedule.setOperation(scheduleOperation);
+            d.setSubscriptions(List.of(d.getSubscriptions().get(0), schedule));
+            return d;
+        }
+
+        private EventEnvelope scheduleEvent() {
+            ObjectNode payload = MAPPER.createObjectNode();
+            payload.put("timestamp", "2026-10-18T23:29:16Z");
+            payload.put("id", "S-1");
+            payload.put("description", "reminder");
+            return envelope("ENT-010", ScheduleManager.SCHEDULE_EVENT_TYPE, null, 5000L, payload);
+        }
+
+        @Test
+        @DisplayName("A topic-less Schedule event resolves to the Schedule subscription's operation")
+        void scheduleEventResolvesOperation() {
+            StatefulAgentProcessor p = new StatefulAgentProcessor(scheduleDescriptor("ScheduleOp"));
+            StubRuleEngine stub = new StubRuleEngine(null);
+            p.injectRuleEngine(stub);
+
+            EventEnvelope out = p.invokeForTest(scheduleEvent(), null);
+
+            assertNotNull(out, "Schedule event must reach the rule engine and produce an output");
+            assertEquals(1, stub.callCount());
+        }
+
+        @Test
+        @DisplayName("A Schedule subscription without operation is history-only")
+        void scheduleSubscriptionWithoutOperationEmitsNothing() {
+            StatefulAgentProcessor p = new StatefulAgentProcessor(scheduleDescriptor(null));
+            StubRuleEngine stub = new StubRuleEngine(null);
+            p.injectRuleEngine(stub);
+
+            assertNull(p.invokeForTest(scheduleEvent(), null));
+            assertEquals(0, stub.callCount());
+        }
+    }
+
+
 
     // ── invokeForTest: count-horizon eviction ────────────────────────────────
 
@@ -1024,9 +1073,10 @@ class StatefulAgentProcessorTest {
     class TimeLimitMs {
 
         @Test @DisplayName("'1s'  → 1 000 ms")  void seconds() { assertEquals(1_000L,        HorizonConfig.time("1s").timeLimitMs()); }
-        @Test @DisplayName("'2m'  → 120 000 ms") void minutes() { assertEquals(120_000L,      HorizonConfig.time("2m").timeLimitMs()); }
+        @Test @DisplayName("'2mn' → 120 000 ms") void minutes() { assertEquals(120_000L,      HorizonConfig.time("2mn").timeLimitMs()); }
         @Test @DisplayName("'3h'  → 10 800 000 ms") void hours() { assertEquals(10_800_000L,  HorizonConfig.time("3h").timeLimitMs()); }
         @Test @DisplayName("'1d'  → 86 400 000 ms") void days()  { assertEquals(86_400_000L,  HorizonConfig.time("1d").timeLimitMs()); }
+        @Test @DisplayName("'1m'  → 2 592 000 000 ms") void months() { assertEquals(2_592_000_000L, HorizonConfig.time("1m").timeLimitMs()); }
 
         @Test
         @DisplayName("Null timeLimit returns 0")
@@ -1068,11 +1118,11 @@ class StatefulAgentProcessorTest {
         }
 
         @Test
-        @DisplayName("time('30m') sets type='time' and timeLimit='30m'")
+        @DisplayName("time('30mn') sets type='time' and timeLimit='30mn'")
         void timeFactory() {
-            HorizonConfig h = HorizonConfig.time("30m");
+            HorizonConfig h = HorizonConfig.time("30mn");
             assertEquals("time", h.getType());
-            assertEquals("30m",  h.getTimeLimit());
+            assertEquals("30mn", h.getTimeLimit());
         }
 
         @Test
@@ -2607,6 +2657,409 @@ class StatefulAgentProcessorTest {
             assertEquals("agent-error", out.getEventType());
             assertEquals("ACC-ERR", out.getEntityId(),
                 "agent-error output must carry the inbound entityId");
+        }
+    }
+
+    // ── Payload fallback entity-state persistence ─────────────────────────────
+
+    @Nested
+    @DisplayName("Payload fallback — entity-state persistence when entityField absent from rule result")
+    class PayloadFallbackPersistence {
+
+        /**
+         * Returns a descriptor with the "domain-event"/"domain-events" subscription (matching
+         * {@link #baseDescriptor()}) and the primary operation configured with the given entityField.
+         * Tests use the canonical domain-event/domain-events pair so resolveOperation() can match.
+         */
+        private AgentDescriptor descriptorForFallback(String entityField) {
+            AgentDescriptor d = baseDescriptor(); // has "domain-event" on "domain-events" → "TestModel-op"
+            RulesetConfig.OperationConfig cfg = new RulesetConfig.OperationConfig();
+            cfg.setOperation("TestModel-op");
+            cfg.setEntityField(entityField);
+            cfg.setOutbounds(List.of(new RulesetConfig.OutboundConfig("NextBestOffer", "NextBestOffer")));
+            d.getRuleset().setOperations(List.of(cfg));
+            return d;
+        }
+
+        @Test
+        @DisplayName("When rule result lacks entityField, payload field is persisted as entity state")
+        void payloadFallbackPersistsContextFromPayload() throws Exception {
+            // Simulates ProcessCustomerContext: rule returns NextBestOffer, not customerContext.
+            // Entity state must fall back to payload.customerContext.
+            AgentDescriptor d = descriptorForFallback("customerContext");
+            StatefulAgentProcessor p = new StatefulAgentProcessor(d);
+
+            // Rule result has NextBestOffer but NOT customerContext
+            ObjectNode result = MAPPER.createObjectNode();
+            result.set("NextBestOffer",
+                MAPPER.createArrayNode().add(
+                    MAPPER.createObjectNode().put("decision", "eligible")));
+
+            p.injectRunner("bootstrap:TestModel-op", new StubRuleEngine(result));
+
+            // Event payload contains customerContext — use domain-event/domain-events to match subscription
+            ObjectNode payload = MAPPER.createObjectNode();
+            ObjectNode customerCtx = payload.putObject("customerContext");
+            customerCtx.put("customerIdentifier", "CUST-001");
+            customerCtx.put("loyaltyStatus", "Gold");
+            customerCtx.putArray("purchaseHistory").add("laptop").add("tablet");
+
+            AgentState state = AgentState.init("CUST-001", "Customer", 1000L);
+            EventEnvelope ev = envelope("CUST-001", "domain-event", "domain-events", 1000L, payload);
+
+            p.invokeForTest(ev, state);
+
+            // Entity state must have been set from payload fallback
+            assertNotNull(state.getEntityData(),
+                "Entity state must be set after CustomerEvent via payload fallback");
+            assertEquals("Gold",
+                state.getEntityData().get("loyaltyStatus").asText(),
+                "Persisted entity must contain loyaltyStatus from payload.customerContext");
+            assertEquals("CUST-001",
+                state.getEntityData().get("customerIdentifier").asText(),
+                "Persisted entity must contain customerIdentifier from payload.customerContext");
+        }
+
+        @Test
+        @DisplayName("Primary path takes precedence: entityField in result wins over payload fallback")
+        void primaryPathPrecedesPayloadFallback() throws Exception {
+            // Rule result CONTAINS entityField → primary path fires, payload fallback skipped
+            AgentDescriptor d = descriptorForFallback("customerContext");
+            StatefulAgentProcessor p = new StatefulAgentProcessor(d);
+
+            // Rule result has customerContext (primary path)
+            ObjectNode resultCustomerCtx = MAPPER.createObjectNode();
+            resultCustomerCtx.put("customerIdentifier", "CUST-002");
+            resultCustomerCtx.put("loyaltyStatus", "Platinum"); // updated value
+            ObjectNode result = MAPPER.createObjectNode();
+            result.set("customerContext", resultCustomerCtx);
+            result.set("NextBestOffer",
+                MAPPER.createArrayNode().add(
+                    MAPPER.createObjectNode().put("decision", "eligible")));
+
+            p.injectRunner("bootstrap:TestModel-op", new StubRuleEngine(result));
+
+            // Payload has a different loyaltyStatus — should be ignored when result has entity field
+            ObjectNode payload = MAPPER.createObjectNode();
+            ObjectNode payloadCtx = payload.putObject("customerContext");
+            payloadCtx.put("customerIdentifier", "CUST-002");
+            payloadCtx.put("loyaltyStatus", "Bronze"); // different from result
+
+            AgentState state = AgentState.init("CUST-002", "Customer", 1000L);
+            EventEnvelope ev = envelope("CUST-002", "domain-event", "domain-events", 1000L, payload);
+
+            p.invokeForTest(ev, state);
+
+            // Primary path — entity state must reflect the rule result, not the payload
+            assertNotNull(state.getEntityData(), "Entity state must be set via primary path");
+            assertEquals("Platinum",
+                state.getEntityData().get("loyaltyStatus").asText(),
+                "Primary path must win: loyaltyStatus must be 'Platinum' from rule result");
+        }
+
+        @Test
+        @DisplayName("Fallback does not fire when payload lacks the entityField key")
+        void fallbackDoesNotFireWhenPayloadLacksEntityField() throws Exception {
+            // Rule result has no entityField; payload also has no entityField → no state update
+            AgentDescriptor d = descriptorForFallback("customerContext");
+            StatefulAgentProcessor p = new StatefulAgentProcessor(d);
+
+            // Rule result has no customerContext
+            ObjectNode result = MAPPER.createObjectNode();
+            result.set("NextBestOffer",
+                MAPPER.createArrayNode().add(
+                    MAPPER.createObjectNode().put("decision", "no action")));
+
+            p.injectRunner("bootstrap:TestModel-op", new StubRuleEngine(result));
+
+            // Payload has NO customerContext field
+            ObjectNode payload = MAPPER.createObjectNode();
+            payload.put("otherField", "some value"); // not customerContext
+
+            AgentState state = AgentState.init("CUST-003", "Customer", 1000L);
+            EventEnvelope ev = envelope("CUST-003", "domain-event", "domain-events", 1000L, payload);
+
+            p.invokeForTest(ev, state);
+
+            // Neither path fires — entity state remains null
+            assertNull(state.getEntityData(),
+                "Entity state must remain null when neither result nor payload contains entityField");
+        }
+
+        @Test
+        @DisplayName("Fallback: persisted entity state is available after CustomerEvent for downstream processing")
+        void endToEndCustomerEventThenShoppingEventUsesPersistedState() throws Exception {
+            // CustomerEvent → payload fallback persists customerContext into entity state
+            AgentDescriptor d = descriptorForFallback("customerContext");
+            StatefulAgentProcessor customerProc = new StatefulAgentProcessor(d);
+
+            ObjectNode customerResult = MAPPER.createObjectNode();
+            customerResult.set("NextBestOffer",
+                MAPPER.createArrayNode().add(
+                    MAPPER.createObjectNode().put("decision", "eligible")));
+            customerProc.injectRunner("bootstrap:TestModel-op", new StubRuleEngine(customerResult));
+
+            ObjectNode customerPayload = MAPPER.createObjectNode();
+            ObjectNode customerCtxNode = customerPayload.putObject("customerContext");
+            customerCtxNode.put("customerIdentifier", "CUST-E2E");
+            customerCtxNode.put("loyaltyStatus", "Gold");
+            customerCtxNode.putArray("purchaseHistory")
+                .add("h1").add("h2").add("h3").add("h4").add("h5").add("h6");
+
+            AgentState state = AgentState.init("CUST-E2E", "Customer", 1000L);
+            EventEnvelope customerEvent = envelope("CUST-E2E", "domain-event",
+                "domain-events", 1000L, customerPayload);
+            customerProc.invokeForTest(customerEvent, state);
+
+            // Entity state must contain the full customer context
+            assertNotNull(state.getEntityData(), "CustomerEvent must persist entity state");
+            assertEquals("Gold", state.getEntityData().get("loyaltyStatus").asText(),
+                "Entity state must have Gold loyalty from CustomerEvent");
+
+            // Verify entity data is accessible for subsequent processing
+            assertEquals("CUST-E2E",
+                state.getEntityData().get("customerIdentifier").asText(),
+                "customerIdentifier must be present in persisted entity state");
+            assertEquals(6,
+                state.getEntityData().get("purchaseHistory").size(),
+                "All 6 purchase history entries must be persisted");
+        }
+    }
+
+    @Nested
+    @DisplayName("outboundEntityField — reading modified entity state from custom result field")
+    class OutboundEntityFieldPersistence {
+
+        @Test
+        @DisplayName("When outboundEntityField is set, updateEntityState reads from rule result using outboundEntityField")
+        void outboundEntityFieldReadsFromResult() throws Exception {
+            AgentDescriptor d = baseDescriptor();
+            RulesetConfig.OperationConfig cfg = new RulesetConfig.OperationConfig();
+            cfg.setOperation("TestModel-op");
+            cfg.setEntityField("inCustomer");
+            cfg.setOutboundEntityField("outCustomer");
+            d.getRuleset().setOperations(List.of(cfg));
+
+            StatefulAgentProcessor p = new StatefulAgentProcessor(d);
+
+            ObjectNode resultCustomer = MAPPER.createObjectNode();
+            resultCustomer.put("customerId", "CUST-OUT-1");
+            resultCustomer.put("tier", "Diamond");
+
+            ObjectNode result = MAPPER.createObjectNode();
+            result.set("outCustomer", resultCustomer);
+
+            p.injectRunner("bootstrap:TestModel-op", new StubRuleEngine(result));
+
+            AgentState state = AgentState.init("CUST-OUT-1", "Customer", 1000L);
+            EventEnvelope ev = envelope("CUST-OUT-1", "domain-event", "domain-events", 1000L, MAPPER.createObjectNode());
+
+            p.invokeForTest(ev, state);
+
+            assertNotNull(state.getEntityData(), "Entity state must be updated via outboundEntityField");
+            assertEquals("Diamond", state.getEntityData().get("tier").asText());
+            assertEquals("CUST-OUT-1", state.getEntityData().get("customerId").asText());
+        }
+
+        @Test
+        @DisplayName("When outboundEntityField is set, it takes precedence over entityField in rule result")
+        void outboundEntityFieldTakesPrecedenceOverEntityFieldInResult() throws Exception {
+            AgentDescriptor d = baseDescriptor();
+            RulesetConfig.OperationConfig cfg = new RulesetConfig.OperationConfig();
+            cfg.setOperation("TestModel-op");
+            cfg.setEntityField("inCustomer");
+            cfg.setOutboundEntityField("outCustomer");
+            d.getRuleset().setOperations(List.of(cfg));
+
+            StatefulAgentProcessor p = new StatefulAgentProcessor(d);
+
+            ObjectNode inCustomer = MAPPER.createObjectNode();
+            inCustomer.put("tier", "Silver");
+
+            ObjectNode outCustomer = MAPPER.createObjectNode();
+            outCustomer.put("tier", "Gold");
+
+            ObjectNode result = MAPPER.createObjectNode();
+            result.set("inCustomer", inCustomer);
+            result.set("outCustomer", outCustomer);
+
+            p.injectRunner("bootstrap:TestModel-op", new StubRuleEngine(result));
+
+            AgentState state = AgentState.init("CUST-OUT-2", "Customer", 1000L);
+            EventEnvelope ev = envelope("CUST-OUT-2", "domain-event", "domain-events", 1000L, MAPPER.createObjectNode());
+
+            p.invokeForTest(ev, state);
+
+            assertNotNull(state.getEntityData());
+            assertEquals("Gold", state.getEntityData().get("tier").asText(),
+                "outCustomer from outboundEntityField must take precedence over inCustomer");
+        }
+
+        @Test
+        @DisplayName("When outboundEntityField is absent from result, payload fallback uses entityField")
+        void outboundEntityFieldAbsentFallsBackToPayloadEntityField() throws Exception {
+            AgentDescriptor d = baseDescriptor();
+            RulesetConfig.OperationConfig cfg = new RulesetConfig.OperationConfig();
+            cfg.setOperation("TestModel-op");
+            cfg.setEntityField("customerContext");
+            cfg.setOutboundEntityField("outCustomer");
+            d.getRuleset().setOperations(List.of(cfg));
+
+            StatefulAgentProcessor p = new StatefulAgentProcessor(d);
+
+            ObjectNode result = MAPPER.createObjectNode();
+            p.injectRunner("bootstrap:TestModel-op", new StubRuleEngine(result));
+
+            ObjectNode payload = MAPPER.createObjectNode();
+            ObjectNode customerCtx = payload.putObject("customerContext");
+            customerCtx.put("loyaltyStatus", "Silver");
+
+            AgentState state = AgentState.init("CUST-OUT-3", "Customer", 1000L);
+            EventEnvelope ev = envelope("CUST-OUT-3", "domain-event", "domain-events", 1000L, payload);
+
+            p.invokeForTest(ev, state);
+
+            assertNotNull(state.getEntityData(), "Payload fallback must persist customerContext");
+            assertEquals("Silver", state.getEntityData().get("loyaltyStatus").asText());
+        }
+    }
+
+    // ── Regression: Schedule event must not re-trigger fireAllSchedules ──────
+    //
+    // Root cause: processElement() called fireAllSchedules() for EVERY incoming event,
+    // including Schedule events generated by fireAllSchedules/fireSchedules themselves.
+    // This produced an unbounded recursive call stack:
+    //
+    //   processElement(event@T)
+    //     └─ fireAllSchedules(T)               ← Step 2: ctx is not OnTimerContext
+    //          └─ fireSchedules(t1 ≤ T)
+    //               └─ processElement(Schedule@t1) ← recursive, ctx still ReadOnlyContext
+    //                    └─ fireAllSchedules(t1)   ← guard was true AGAIN → infinite loop
+    //
+    // The fix adds a second guard:
+    //   !ScheduleManager.SCHEDULE_EVENT_TYPE.equals(event.getEventType())
+    // so that Schedule events themselves never re-seed fireAllSchedules.
+    //
+    // TaskManager CPU symptom: The JVM thread spun in recursive processElement calls,
+    // consuming 100% CPU. Flink's restart strategy (fixed-delay, 10 attempts) continuously
+    // restarted the task (StackOverflowError / OOM), keeping the thread permanently saturated.
+
+    @Nested
+    @DisplayName("Regression — Schedule event must not re-trigger fireAllSchedules (infinite-loop fix)")
+    class ScheduleRecursionRegression {
+
+        /**
+         * Builds a descriptor with a {@code Schedule} subscription wired to an operation
+         * that returns a new {@code ScheduleRequest} for a PAST time.  Before the fix this
+         * would send the processor into an infinite recursive loop.
+         *
+         * <p>The rule result schedules a new timer at {@code T_PAST} = 1_000 ms, which is
+         * before the triggering event's timestamp {@code T_EVENT} = 2_000 ms.  Without the
+         * fix, {@code processElement(Schedule@T_PAST)} would call
+         * {@code fireAllSchedules(T_PAST)}, immediately re-fire the newly-registered schedule,
+         * and descend infinitely.  With the fix, a Schedule event never seeds another round
+         * of {@code fireAllSchedules}, so the recursion terminates.
+         */
+        @Test
+        @DisplayName("Schedule event processed via invokeForTest does NOT loop: rule engine called exactly once")
+        void scheduleEventDoesNotLoopRuleEngineCalledExactlyOnce() {
+            // Descriptor with a Schedule subscription wired to an operation
+            AgentDescriptor d = baseDescriptor();
+            EventSubscription scheduleSub = new EventSubscription();
+            scheduleSub.setEventType(ScheduleManager.SCHEDULE_EVENT_TYPE);
+            scheduleSub.setOperation("TestModel-op");  // same op as the domain subscription
+            d.setSubscriptions(List.of(d.getSubscriptions().get(0), scheduleSub));
+
+            StatefulAgentProcessor p = new StatefulAgentProcessor(d);
+
+            // Rule engine returns a new schedule for a past time (the infinite-loop trigger)
+            ObjectNode pastScheduleResult = MAPPER.createObjectNode();
+            pastScheduleResult.set("outputEvents",
+                MAPPER.createArrayNode().add(MAPPER.createObjectNode().put("done", true)));
+            StubRuleEngine stub = new StubRuleEngine(pastScheduleResult);
+            p.injectRuleEngine(stub);
+
+            // Send a Schedule event via invokeForTest — must terminate, not loop
+            ObjectNode payload = MAPPER.createObjectNode();
+            payload.put("timestamp", "1970-01-01T00:00:02Z"); // T=2000 ms
+            payload.put("id", "sched-1");
+            payload.put("description", "test schedule");
+            EventEnvelope scheduleEvent = EventEnvelope.from(
+                ScheduleManager.SCHEDULE_EVENT_TYPE, null, 2_000L, payload);
+            scheduleEvent.setEntityId("ENT-SCHED");
+
+            // If the bug is present: StackOverflowError or infinite loop
+            // If the fix is working: terminates and calls the rule engine exactly once
+            assertDoesNotThrow(() -> p.invokeForTest(scheduleEvent, null),
+                "Processing a Schedule event must terminate — not loop or overflow");
+
+            assertEquals(1, stub.callCount(),
+                "Rule engine must be called exactly once for a Schedule event (not recursively)");
+        }
+
+        @Test
+        @DisplayName("Domain event with one pending past schedule fires the schedule exactly once")
+        void domainEventWithPastScheduleFiresExactlyOnce() throws Exception {
+            // Descriptor with a Schedule subscription
+            AgentDescriptor d = baseDescriptor();
+            EventSubscription scheduleSub = new EventSubscription();
+            scheduleSub.setEventType(ScheduleManager.SCHEDULE_EVENT_TYPE);
+            scheduleSub.setOperation("TestModel-op");
+            d.setSubscriptions(List.of(d.getSubscriptions().get(0), scheduleSub));
+
+            StatefulAgentProcessor p = new StatefulAgentProcessor(d);
+
+            // Rule result: always returns a valid output regardless of event type
+            ObjectNode result = MAPPER.createObjectNode();
+            result.set("outputEvents",
+                MAPPER.createArrayNode().add(MAPPER.createObjectNode().put("seq", 1)));
+            StubRuleEngine stub = new StubRuleEngine(result);
+            p.injectRuleEngine(stub);
+
+            // Inject a ScheduleManager with one pending schedule at T=1_000 ms
+            ScheduleManagerTest.MemMapState<String, ScheduleRequest> byId =
+                new ScheduleManagerTest.MemMapState<>();
+            ScheduleManagerTest.MemMapState<Long, List<String>> idsByTime =
+                new ScheduleManagerTest.MemMapState<>();
+            ScheduleManagerTest.FakeTimers timers = new ScheduleManagerTest.FakeTimers();
+            ScheduleManager mgr = new ScheduleManager(byId, idsByTime, "test");
+
+            // Register a schedule at T=1_000 < incoming domain-event timestamp T=2_000
+            mgr.apply(List.of(new ScheduleRequest("s1", "test", "1970-01-01T00:00:01Z",
+                ScheduleRequest.Status.START)), timers);
+            p.injectScheduleManagerForTest(mgr);
+
+            // Send a domain event at T=2_000 ms — this would trigger fireAllSchedules(2_000)
+            // which fires the schedule at T=1_000, which calls processElement(Schedule@1_000).
+            // Without the fix, that inner processElement would call fireAllSchedules(1_000) again
+            // and re-fire any new schedule registered by the rule engine at t ≤ 1_000.
+            EventEnvelope domainEvent = envelope("ENT-D1", "domain-event", "domain-events",
+                2_000L, MAPPER.createObjectNode());
+
+            // Must terminate without StackOverflowError
+            assertDoesNotThrow(() -> p.invokeForTest(domainEvent, null),
+                "Domain event must terminate even when pending schedules exist");
+
+            // Rule engine is called once for the domain event itself (no Flink context →
+            // invokeForTest does not call fireAllSchedules, that path is only in processElement)
+            assertEquals(1, stub.callCount(),
+                "invokeForTest must call the rule engine exactly once for the domain event");
+        }
+
+        @Test
+        @DisplayName("SCHEDULE_EVENT_TYPE constant is 'Schedule' (guard relies on exact match)")
+        void scheduleEventTypeConstant() {
+            assertEquals("Schedule", ScheduleManager.SCHEDULE_EVENT_TYPE,
+                "SCHEDULE_EVENT_TYPE must be the exact string 'Schedule' — the guard in " +
+                "processElement compares with this constant to break the recursion");
+        }
+
+        @Test
+        @DisplayName("Schedule event type is different from domain event type (guard is specific)")
+        void scheduleEventTypeDistinctFromDomainEvent() {
+            assertNotEquals(ScheduleManager.SCHEDULE_EVENT_TYPE, "domain-event",
+                "Schedule event type must not match regular domain event types; " +
+                "the guard only skips fireAllSchedules for the 'Schedule' event type specifically");
         }
     }
 

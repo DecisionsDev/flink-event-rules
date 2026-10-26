@@ -31,7 +31,7 @@ import java.io.Serializable;
  *       (current-event only, no state accumulation).</dd>
  *   <dt>{@code "time"}</dt>
  *   <dd>Keep all events whose age is ≤ {@link #timeLimit}.  Supported units:
- *       {@code s} (seconds), {@code m} (minutes), {@code h} (hours), {@code d} (days).
+ *       {@code s} (seconds), {@code mn} (minutes), {@code h} (hours), {@code d} (days), {@code m} (months).
  *       Example: {@code "24h"}.</dd>
  *   <dt>{@code "hybrid"}</dt>
  *   <dd>Keep the last {@link #countLimit} events <em>and</em> only those within
@@ -54,7 +54,7 @@ public class HorizonConfig implements Serializable {
     private int countLimit = 0;
 
     /**
-     * Age ceiling.  Supports {@code "24h"}, {@code "7d"}, {@code "30m"}, {@code "90s"}.
+     * Age ceiling.  Supports {@code "1m"}, {@code "7d"}, {@code "24h"}, {@code "30mn"}, {@code "90s"}.
      * Used by {@code "time"} and {@code "hybrid"} horizons.
      */
     private String timeLimit;
@@ -112,16 +112,17 @@ public class HorizonConfig implements Serializable {
         if (timeLimit == null || timeLimit.isBlank()) return 0L;
         String s = timeLimit.trim().toLowerCase();
         try {
-            if (s.endsWith("d"))  return Long.parseLong(s.substring(0, s.length() - 1)) * 86_400_000L;
-            if (s.endsWith("h"))  return Long.parseLong(s.substring(0, s.length() - 1)) *  3_600_000L;
-            if (s.endsWith("m"))  return Long.parseLong(s.substring(0, s.length() - 1)) *     60_000L;
-            if (s.endsWith("s"))  return Long.parseLong(s.substring(0, s.length() - 1)) *      1_000L;
+            if (s.endsWith("mn")) return Long.parseLong(s.substring(0, s.length() - 2)) *        60_000L;
+            if (s.endsWith("m"))  return Long.parseLong(s.substring(0, s.length() - 1)) * 30L * 86_400_000L;
+            if (s.endsWith("d"))  return Long.parseLong(s.substring(0, s.length() - 1)) *    86_400_000L;
+            if (s.endsWith("h"))  return Long.parseLong(s.substring(0, s.length() - 1)) *     3_600_000L;
+            if (s.endsWith("s"))  return Long.parseLong(s.substring(0, s.length() - 1)) *         1_000L;
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(
-                "Unparseable timeLimit '" + timeLimit + "'. Expected format: 30d / 24h / 60m / 90s", e);
+                "Unparseable timeLimit '" + timeLimit + "'. Expected format: 1m / 30d / 24h / 60mn / 90s", e);
         }
         throw new IllegalArgumentException(
-            "Unparseable timeLimit '" + timeLimit + "'. Missing unit suffix (d/h/m/s).");
+            "Unparseable timeLimit '" + timeLimit + "'. Missing unit suffix (m/d/h/mn/s).");
     }
 
     // ── Getters / Setters ─────────────────────────────────────────────────────

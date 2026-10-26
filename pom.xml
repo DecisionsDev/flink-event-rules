@@ -36,9 +36,12 @@
 		<maven.compiler.target>21</maven.compiler.target>
 		<!-- Shared artifact versions — child modules reference these without repeating the version -->
 		<jackson.version>2.16.2</jackson.version>
+		<ads-annotations.version>2.0.21</ads-annotations.version>
 		<foundation.version>16.7.3</foundation.version>
 		<execution.api.version>4.1.4</execution.api.version>
 		<engine.de.api.version>3.12.0</engine.de.api.version>
+		<junit.version>5.10.1</junit.version>
+		<mockito.version>5.10.0</mockito.version>
 	</properties>
 
 	<dependencyManagement>
@@ -67,6 +70,11 @@
 			<!-- IBM Decision artifacts — versions discovered via /ads/index.json -->
 			<dependency>
 				<groupId>com.ibm.decision</groupId>
+				<artifactId>annotations</artifactId>
+				<version>${ads-annotations.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>com.ibm.decision</groupId>
 				<artifactId>foundation</artifactId>
 				<version>${foundation.version}</version>
 			</dependency>
@@ -80,6 +88,37 @@
 				<artifactId>engine-de-api</artifactId>
 				<version>${engine.de.api.version}</version>
 			</dependency>
+			<!-- Testing dependencies -->
+			<dependency>
+				<groupId>org.junit.jupiter</groupId>
+				<artifactId>junit-jupiter-api</artifactId>
+				<version>${junit.version}</version>
+				<scope>test</scope>
+			</dependency>
+			<dependency>
+				<groupId>org.junit.jupiter</groupId>
+				<artifactId>junit-jupiter-engine</artifactId>
+				<version>${junit.version}</version>
+				<scope>test</scope>
+			</dependency>
+			<dependency>
+				<groupId>org.junit.jupiter</groupId>
+				<artifactId>junit-jupiter-params</artifactId>
+				<version>${junit.version}</version>
+				<scope>test</scope>
+			</dependency>
+			<dependency>
+				<groupId>org.mockito</groupId>
+				<artifactId>mockito-core</artifactId>
+				<version>${mockito.version}</version>
+				<scope>test</scope>
+			</dependency>
+			<dependency>
+				<groupId>org.mockito</groupId>
+				<artifactId>mockito-junit-jupiter</artifactId>
+				<version>${mockito.version}</version>
+				<scope>test</scope>
+			</dependency>
 		</dependencies>
 	</dependencyManagement>
 
@@ -90,6 +129,15 @@
 					<groupId>org.apache.maven.plugins</groupId>
 					<artifactId>maven-compiler-plugin</artifactId>
 					<version>3.11.0</version>
+				</plugin>
+				<plugin>
+					<groupId>org.apache.maven.plugins</groupId>
+					<artifactId>maven-surefire-plugin</artifactId>
+					<version>3.2.5</version>
+					<configuration>
+						<enableAssertions>true</enableAssertions>
+						<testFailureIgnore>false</testFailureIgnore>
+					</configuration>
 				</plugin>
 				<plugin>
 					<groupId>org.jacoco</groupId>

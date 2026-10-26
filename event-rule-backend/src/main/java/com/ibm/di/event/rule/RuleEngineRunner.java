@@ -25,6 +25,7 @@ import com.ibm.decision.run.DecisionServiceProvider;
 import com.ibm.decision.run.RunContext;
 import com.ibm.decision.run.impl.AbstractDecisionProvider;
 import com.ibm.rules.engine.observer.Observable;
+import com.ibm.rules.engine.runtime.NoteObserver;
 import com.ibm.rules.engine.ruledef.runtime.RuleEngineObserver;
 import com.ibm.rules.engine.ruledef.runtime.RuleInstance;
 import org.slf4j.Logger;
@@ -214,7 +215,7 @@ public class RuleEngineRunner implements Serializable, AutoCloseable {
             JsonNode resultNode = objectMapper.valueToTree(result);
 
             // ── Result summary ────────────────────────────────────────────────
-            LOG.debug("[IBM DI] ◀ Complete  eventId={} elapsedMs={} firedRules={}\n{}",
+            LOG.debug("[IBM DI] ◀ Complete  eventId={} elapsedMs={} firedRules={}\nresult: {}",
                 eventId, elapsedMs, observer.getFiredRuleCount(), resultNode.toPrettyString());
             if (!observer.getFiredRuleNames().isEmpty()) {
                 LOG.debug("[IBM DI]   fired: {}", observer.getFiredRuleNames());
@@ -540,9 +541,10 @@ public class RuleEngineRunner implements Serializable, AutoCloseable {
      * Observer for rule execution events.
      *
      * <p>Collects the names of every rule that fires during a single invocation
-     * so they can be included in the post-execution log line.
+     * so they can be included in the post-execution log line, and logs messages
+     * printed by rules (received via {@link NoteObserver}) at DEBUG level.
      */
-    private static class RuleObserver implements RuleEngineObserver, Serializable {
+    private static class RuleObserver implements RuleEngineObserver, NoteObserver, Serializable {
         
         @Serial
         private static final long serialVersionUID = 1L;
@@ -559,6 +561,11 @@ public class RuleEngineRunner implements Serializable, AutoCloseable {
             return firedRuleNames.size();
         }
         
+        @Override
+        public void note(Observable observable, String message) {
+            LOG.debug("[IBM DI]   ✎ Rule message: {}", message);
+        }
+
         @Override
         public void exceptionRaisedInAction(Observable observable, Exception exception,
                                             RuleInstance ruleInstance, boolean b) {

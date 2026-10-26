@@ -1,0 +1,371 @@
+[
+  {
+    "id": "upgrade-customer-to-gold",
+    "label": "1. Upgrade Customer to Gold",
+    "description": "Send history of purchases to trigger upgrade to Gold",
+    "events": [
+      {
+        "type": "CustomerEvent",
+        "topic": "agent-customer-events",
+        "payload": {
+          "timestamp": "2026-05-19T20:29:16Z",
+          "customerId": "JS",
+          "type": "ONBOARD",
+          "onboardingInfo": 
+            {
+              "customerId": "JS",
+              "customerName": "John Smith",
+              "birthdate" : "1980-10-19T20:29:16Z",
+              "loyaltyStatus": "Silver",
+              "address": "NYC"
+          }
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "JS",
+          "timestamp": "2026-06-19T20:29:16Z",
+          "amount": 2000,
+          "channel": "MOBILE",
+          "product": "Iphone 15",
+          "productCategory": "PHONE"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "JS",
+          "timestamp": "2026-07-19T20:29:16Z",
+          "amount": 2000,
+          "channel": "MOBILE",
+          "product": "Iphone 16",
+          "productCategory": "PHONE"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "JS",
+          "timestamp": "2026-08-19T20:29:16Z",
+          "amount": 1800,
+          "channel": "MOBILE",
+          "product": "Iphone 17",
+          "productCategory": "PHONE"
+        }
+      },
+      {
+        "type": "BrowseEvent",
+        "topic": "agent-browse-events",
+        "payload": {
+          "customerId": "JS",
+          "timestamp": "2026-08-26T22:29:16Z",
+          "channel": "MOBILE",
+          "productCategory": "PHONE"
+        }
+      }
+    ]
+  },
+  {
+    "id": "upgrade-customer-to-platinum",
+    "label": "2. Upgrade Customer to Platinum",
+    "description": "Send history of purchases to trigger upgrade to Platinum",
+    "events": [
+      {
+        "type": "CustomerEvent",
+        "topic": "agent-customer-events",
+        "payload": {
+          "timestamp": "2026-01-19T20:29:16Z",
+          "customerId": "TS",
+          "type": "ONBOARD",
+          "onboardingInfo": 
+            {
+              "customerId": "TS",
+              "customerName": "Taylor Swift",
+              "birthdate" : "1980-10-19T20:29:16Z",
+              "loyaltyStatus": "Gold",
+              "address": "NYC"
+          }
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "TS",
+          "timestamp": "2026-06-19T20:29:16Z",
+          "amount": 2000,
+          "channel": "MOBILE",
+          "product": "Iphone 15",
+          "productCategory": "PHONE"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "TS",
+          "timestamp": "2026-07-19T20:29:16Z",
+          "amount": 2000,
+          "channel": "MOBILE",
+          "product": "Iphone 16",
+          "productCategory": "PHONE"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "TS",
+          "timestamp": "2026-08-19T20:29:16Z",
+          "amount": 1800,
+          "channel": "MOBILE",
+          "product": "Iphone 17",
+          "productCategory": "PHONE"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "TS",
+          "timestamp": "2026-09-19T20:29:16Z",
+          "amount": 3000,
+          "channel": "MOBILE",
+          "product": "Iphone 18",
+          "productCategory": "PHONE"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "TS",
+          "timestamp": "2026-09-20T21:29:16Z",
+          "amount": 2400,
+          "channel": "MOBILE",
+          "product": "Iphone 19",
+          "productCategory": "PHONE"
+        }
+      },
+      {
+        "type": "BrowseEvent",
+        "topic": "agent-browse-events",
+        "payload": {
+          "customerId": "TS",
+          "timestamp": "2026-09-27T22:29:16Z",
+          "channel": "MOBILE",
+          "productCategory": "PHONE"
+        }
+      }
+    ]
+  },
+  {
+    "id": "large-purchase-reward",
+    "label": "3. Large Purchase Reward",
+    "description": "Send history of purchases to trigger a 10% promotion",
+    "events": [
+      {
+        "type": "CustomerEvent",
+        "topic": "agent-customer-events",
+        "payload": {
+          "timestamp": "2026-05-01T20:29:16Z",
+          "customerId": "WM",
+          "type": "ONBOARD",
+          "onboardingInfo": 
+            {
+              "customerId": "WM",
+              "customerName": "William Mendel",
+              "birthdate" : "1980-10-19T20:29:16Z",
+              "loyaltyStatus": "Gold",
+              "address": "NYC"
+          }
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "WM",
+          "timestamp": "2026-06-13T20:29:16Z",
+          "amount": 2000,
+          "channel": "MOBILE",
+          "product": "Iphone 15",
+          "productCategory": "PHONE"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "WM",
+          "timestamp": "2026-06-14T20:29:16Z",
+          "amount": 3000,
+          "channel": "WEB",
+          "product": "Samsung TV 40 in",
+          "productCategory": "ELECTRONICS"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "WM",
+          "timestamp": "2026-06-15T20:29:16Z",
+          "amount": 4000,
+          "channel": "WEB",
+          "product": "PS5 Console",
+          "productCategory": "ELECTRONICS"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "WM",
+          "timestamp": "2026-06-16T20:29:16Z",
+          "amount": 1755,
+          "channel": "STORE",
+          "product": "EV Xiaomi Scooter",
+          "productCategory": "SPORT"
+        }
+      }
+    ]
+  },
+  {
+    "id": "repeat-purchase-reward",
+    "label": "4. Repeat Purchase Reward",
+    "description": "Send history of purchases in 48h window to trigger a 5% promotion",
+    "events": [
+      {
+        "type": "CustomerEvent",
+        "topic": "agent-customer-events",
+        "payload": {
+          "timestamp": "2026-10-19T20:29:16Z",
+          "customerId": "EC",
+          "type": "ONBOARD",
+          "onboardingInfo": 
+            {
+              "customerId": "EC",
+              "customerName": "Eric Cornwell",
+              "birthdate" : "1980-10-19T20:29:16Z",
+              "loyaltyStatus": "Silver",
+              "address": "NYC"
+          }
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "EC",
+          "timestamp": "2026-10-17T23:29:16Z",
+          "amount": 510,
+          "channel": "MOBILE",
+          "product": "SDD 4To hard drive",
+          "productCategory": "ELECTRONICS"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "EC",
+          "timestamp": "2026-10-18T20:29:16Z",
+          "amount": 645,
+          "channel": "WEB",
+          "product": "IPad Mini 10",
+          "productCategory": "ELECTRONICS"
+        }
+      },
+      {
+        "type": "Purchase",
+        "topic": "agent-purchases",
+        "payload": {
+          "customerId": "EC",
+          "timestamp": "2026-10-19T10:29:16Z",
+          "amount": 765,
+          "channel": "WEB",
+          "product": "PS5 Console",
+          "productCategory": "ELECTRONICS"
+        }
+      },
+      {
+        "type": "CustomerEvent",
+        "topic": "agent-customer-events",
+        "payload": {
+          "timestamp": "2026-10-19T14:29:16Z",
+          "customerId": "EC",
+          "type": "ENTERSTORE"
+        }
+      }
+    ]
+  },
+  {
+    "id": "clear-purchase-intent-reward",
+    "label": "5. Clear Purchase Intent Incentive",
+    "description": "Send history of browse events in 48h window and a customer visit to the store to trigger a 5% promotion",
+    "events": [
+      {
+        "type": "CustomerEvent",
+        "topic": "agent-customer-events",
+        "payload": {
+          "timestamp": "2026-10-01T20:29:16Z",
+          "customerId": "LB",
+          "type": "ONBOARD",
+          "onboardingInfo": 
+            {
+              "customerId": "LB",
+              "customerName": "Lisa Bailey",
+              "birthdate" : "1980-10-19T20:29:16Z",
+              "loyaltyStatus": "Silver",
+              "address": "NYC"
+          }
+        }
+      },
+      {
+        "type": "BrowseEvent",
+        "topic": "agent-browse-events",
+        "payload": {
+          "customerId": "LB",
+          "timestamp": "2026-10-17T23:29:16Z",
+          "productCategory": "ELECTRONICS",
+          "channel" : "WEB"          
+        }
+      },
+      {
+        "type": "BrowseEvent",
+        "topic": "agent-browse-events",
+        "payload": {
+          "customerId": "LB",
+          "timestamp": "2026-10-18T23:29:16Z",
+          "productCategory": "ELECTRONICS",
+          "channel" : "WEB"          
+        }
+      },
+      {
+        "type": "BrowseEvent",
+        "topic": "agent-browse-events",
+        "payload": {
+          "customerId": "LB",
+          "timestamp": "2026-10-19T09:29:16Z",
+          "productCategory": "ELECTRONICS",
+          "channel" : "WEB"          
+        }
+      },
+      {
+        "type": "CustomerEvent",
+        "topic": "agent-customer-events",
+        "payload": {
+          "timestamp": "2026-10-19T14:29:16Z",
+          "customerId": "LB",
+          "type": "ENTERSTORE"
+        }
+      }
+    ]
+  }  
+  
+]

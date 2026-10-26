@@ -56,3 +56,43 @@ samples/*/.job-state.json
 \${sys:log.file}.*
 *.log
 *.log.*
+
+# FLINK
+checkpoints/
+savepoints/
+
+# Python Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+wheels/
+pip-wheel-metadata/
+
+# Python Test / coverage / type-check caches
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# Jupyter
+.ipynb_checkpoints/

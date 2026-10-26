@@ -24,7 +24,7 @@ function toLabel(key) {
   if (!key || typeof key !== 'string') return String(key ?? '');
 
   // Replace separators (_, -, .) with spaces
-  let s = key.replace(/[_.\-]+/g, ' ');
+  let s = key.replace(/[_.-]+/g, ' ');
 
   // Insert space before sequences: lowercase→uppercase, uppercase→uppercase+lowercase
   // e.g. "camelCase" → "camel Case", "APIKey" → "API Key"
@@ -64,7 +64,7 @@ function formatPrimitive(v) {
   if (/^\d{4}-\d{2}-\d{2}T[\d:.Z+-]+$/.test(s)) {
     try {
       return <span style={styles.strValue}>{new Date(s).toLocaleString()}</span>;
-    } catch (_) { /* fall through */ }
+    } catch { /* fall through */ }
   }
 
   // Detect epoch-ms timestamps (13-digit numbers stored as strings)

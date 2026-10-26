@@ -17,6 +17,8 @@
  */
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import './AgentWizard.css';
+import { API_URL } from './config.js';
+import { newKey } from './newKey.js';
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
@@ -26,11 +28,18 @@ const DEFAULT_OPERATION = {
   currentEventField: '',
   history: [],
   outbounds: [],
+  scheduleRequestsField: '',
 };
 
 const DEFAULT_AGENT = {
   parallelism: 0,          // job-level
   useCaseId: '',           // BFF folder key / Flink Job identity; defaults to agentId for single-agent cases
+  // Use-case properties stored at the top level of agents.json. Blank = not written,
+  // the BFF then derives the value (name from the agent, flinkJobName = <useCaseId>-job, ...).
+  useCaseName: '',
+  flinkJobName: '',
+  useCaseDescription: '',
+  consumerGroupId: '',
   agentId: '',
   name: '',
   entityType: '',
@@ -39,9 +48,11 @@ const DEFAULT_AGENT = {
   chainingEnabled: true,   // per-agent chaining flag (default true = participate in chain)
   subscriptions: [
     {
+      _key: newKey(),
       eventType: '',
       topic: '',             // single Kafka topic name (EventSubscription.topic is a String)
       operation: '',         // IBM DI operation name; "" = history-only (no rule processing)
+      entityKeyExtractor: '', // blank = inherit the agent-level entityKeyExtractor
       horizonType: 'hybrid', // matches the "Add Subscription" default
       horizonValue: 10,
       horizonCountLimit: 100,
@@ -56,7 +67,7 @@ const DEFAULT_AGENT = {
     operations: [],
   },
   outputs: [
-    { eventType: '', topic: '', description: '' },
+    { _key: newKey(), eventType: '', topic: '', description: '' },
   ],
   stateConfig: {
     ttl: '30d',
@@ -73,11 +84,34 @@ const STEPS = [
   'Publish & Deploy',
 ];
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-
 // Job states that indicate the Flink job is actively running
 const RUNNING_STATES = new Set(['RUNNING', 'RESTARTING', 'CREATED', 'INITIALIZING']);
 const STATUS_POLL_MS = 3000;
+
+// ── Helper: resolve the use-case folder key ───────────────────────────────────
+
+// Lowercase, hyphen-separated slug that satisfies the BFF's id pattern
+// (^[a-zA-Z0-9_-]{1,64}$). Returns '' when nothing usable remains.
+export function slugify(text) {
+  return (text || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // strip accents
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+    .replace(/-+$/, '');
+}
+
+// The folder under samples/ that holds the use case, and the key of every /api/agents call.
+//   1. form.useCaseId — set when editing or appending to an existing use case (never changes,
+//      so renaming the use case does not move its folder);
+//   2. otherwise a slug of the Use-Case Name;
+//   3. otherwise the Agent ID.
+export function resolveUseCaseId(form) {
+  return (form.useCaseId || '').trim()
+    || slugify(form.useCaseName)
+    || (form.agentId || '').trim();
+}
 
 // ── Helper: build the agents.json object from wizard state ────────────────────
 
@@ -96,10 +130,12 @@ export function buildDescriptor(form) {
         const horizon = buildHorizon(s);
         return {
           eventType: s.eventType.trim(),
-          // EventSubscription.topic is a single String in the Java model (serialVersionUID=3,
-          // "topics (List) replaced by topic (String)").  Take the first non-empty value.
-          topic: s.topic.trim(),
+          // EventSubscription.topic is an optional single String in the Java model: sources
+          // such as Schedule subscriptions have no Kafka topic, so omit it when blank.
+          ...(s.topic?.trim() && { topic: s.topic.trim() }),
           operation: s.operation ?? '',  // required; "" = history-only
+          // Optional per-subscription override of the agent-level entityKeyExtractor.
+          ...(s.entityKeyExtractor?.trim() && { entityKeyExtractor: s.entityKeyExtractor.trim() }),
           horizon,
         };
       }),
@@ -121,11 +157,15 @@ export function buildDescriptor(form) {
     ...(form.chainingEnabled === false && { chainingEnabled: false }),
   };
 
-  const wrapper = { agents: [agent] };
+  const wrapper = {};
+  // Use-case properties come first in the file; blank values are omitted.
+  if ((form.useCaseName || '').trim())        wrapper.name            = form.useCaseName.trim();
+  if ((form.flinkJobName || '').trim())       wrapper.flinkJobName    = form.flinkJobName.trim();
+  if ((form.useCaseDescription || '').trim()) wrapper.description     = form.useCaseDescription.trim();
+  if ((form.consumerGroupId || '').trim())    wrapper.consumerGroupId = form.consumerGroupId.trim();
+  wrapper.agents = [agent];
   if (form.parallelism > 0) wrapper.parallelism = form.parallelism;
-  // useCaseId: default to agentId when blank so single-agent behaviour is unchanged.
-  const useCaseId = (form.useCaseId || '').trim() || form.agentId.trim();
-  return { descriptor: wrapper, useCaseId };
+  return { descriptor: wrapper, useCaseId: resolveUseCaseId(form) };
 }
 
 function buildHorizon(s) {
@@ -168,6 +208,7 @@ function buildRuleset(rs) {
       outbounds: (op.outbounds || [])
         .filter(o => o.field?.trim() || o.eventType?.trim())
         .map(o => ({ field: o.field?.trim() || '', eventType: o.eventType?.trim() || '' })),
+      ...(op.scheduleRequestsField?.trim() && { scheduleRequestsField: op.scheduleRequestsField.trim() }),
     }));
   }
   return obj;
@@ -178,13 +219,16 @@ function buildRuleset(rs) {
 // ── Step 6: Publish & Deploy ──────────────────────────────────────────────────
 
 // props:
-//   useCaseId   — BFF folder key; all job-lifecycle API calls use this
-//   agentId     — individual agent id (used for per-agent delete; may equal useCaseId)
-//   mode        — "replace" | "append"  (default: "replace")
-//   jarFile     — File object for JAR upload, or null
-//   onMountSave — callback(saveFn) called on mount so parent can trigger save
+//   useCaseId    — BFF folder key; all job-lifecycle API calls use this
+//   agentId      — individual agent id (used for per-agent delete; may equal useCaseId)
+//   mode         — "replace" | "append"  (default: "replace")
+//   jarFile      — File object for JAR upload, or null
+//   descriptor   — pre-built agents.json descriptor object; passed on mount and kept
+//                  in a ref so the manual "Save Descriptor" retry button can re-invoke
+//                  handleSave with the most-recent descriptor without needing a parent callback
+//   onMountSave  — callback(saveFn) called on mount so parent can trigger the initial auto-save
 //   onJobRunning — callback(useCaseId) fired once when job reaches RUNNING
-function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, onMountSave, onJobRunning }) {
+function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, descriptor: descriptorProp, onMountSave, onJobRunning }) {
   const [jarState,       setJarState]       = useState(jarFile ? 'idle' : 'not-needed');
   const [jarMsg,         setJarMsg]         = useState(null);
   const [saveState,      setSaveState]      = useState('idle');
@@ -197,10 +241,19 @@ function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, onMountSav
   const [restartRequired, setRestartRequired] = useState(false);
   const pollRef            = useRef(null);
   const jobRunningFiredRef = useRef(false);
+  // Keep the latest descriptor in a ref so the manual "Save Descriptor" retry button
+  // can call handleSave(descriptorRef.current) without the parent needing to re-trigger.
+  const descriptorRef      = useRef(descriptorProp);
+  useEffect(() => { descriptorRef.current = descriptorProp; }, [descriptorProp]);
 
-  // Auto-trigger save on mount via parent callback
+  // Capture onMountSave in a ref so the mount effect sees a stable reference
+  // even if the parent passes a new function identity on a re-render (M-6).
+  const onMountSaveRef = useRef(onMountSave);
+  useEffect(() => { onMountSaveRef.current = onMountSave; }, [onMountSave]);
+
+  // Auto-trigger save on mount via parent callback — runs exactly once.
   useEffect(() => {
-    if (onMountSave) onMountSave(handleSave);
+    if (onMountSaveRef.current) onMountSaveRef.current(handleSave);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -259,7 +312,16 @@ function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, onMountSav
         r = await fetch(`${API_URL}/api/agents/${useCaseId}/agents/${agentId}`, {
           method:  'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ descriptor: descriptor.agents[0] }),
+          body:    JSON.stringify({
+            descriptor: descriptor.agents[0],
+            // Blank values remove the property from agents.json (the BFF then derives it).
+            useCaseProperties: {
+              name:            descriptor.name            ?? '',
+              flinkJobName:    descriptor.flinkJobName    ?? '',
+              description:     descriptor.description     ?? '',
+              consumerGroupId: descriptor.consumerGroupId ?? '',
+            },
+          }),
         });
       } else {
         r = await fetch(`${API_URL}/api/agents`, {
@@ -272,7 +334,7 @@ function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, onMountSav
       if (!r.ok) {
         // Friendly message for duplicate-agentId conflict in append mode
         if (body.error === 'DUPLICATE_AGENT_ID')
-          throw new Error(`Agent ID '${body.agentId}' already exists in use-case '${useCaseId}'. Choose a different Agent ID.`);
+          throw new Error(`Agent ID '${body.agentId}' already exists in event rule application '${useCaseId}'. Choose a different Agent ID.`);
         throw new Error(body.error || r.statusText);
       }
       setSaveState('saved');
@@ -321,10 +383,11 @@ function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, onMountSav
       const r = await fetch(`${API_URL}/api/agents/${useCaseId}`, { method: 'DELETE' });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error || r.statusText);
+      clearInterval(pollRef.current);
       setDeleteState('deleted');
       setStartState('idle');
       setJobStatus(null);
-      setActionMsg(`Use-case '${useCaseId}' and all descriptor files deleted.`);
+      setActionMsg(`Event rule application '${useCaseId}' and all descriptor files deleted.`);
     } catch (err) {
       setDeleteState('error');
       setActionMsg(`Delete failed: ${err.message}`);
@@ -379,16 +442,15 @@ function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, onMountSav
           {mode === 'patch'
             ? <>Updates agent <code>{agentId}</code> inside <code>samples/{useCaseId}/agents.json</code>.
                Sibling agents are not modified.</>
-            : <>Writes <code>samples/{useCaseId}/agents.json</code> and a stub{' '}
-               <code>descriptor.json</code> to the BFF server, and ensures all
-               referenced Kafka topics exist.
-               {mode === 'append' && <> Agent will be <strong>appended</strong> to the existing use-case.</>}</>
+            : <>Writes <code>samples/{useCaseId}/agents.json</code> to the BFF server,
+               and ensures all referenced Kafka topics exist.
+               {mode === 'append' && <> Agent will be <strong>appended</strong> to the existing event rule application.</>}</>
           }
         </p>
         <div className="wz-deploy-row">
           <button
             className={`wz-primary-btn${saveState === 'saving' ? ' wz-btn-busy' : ''}`}
-            onClick={() => onMountSave && onMountSave(handleSave)}
+            onClick={() => handleSave(descriptorRef.current)}
             disabled={saveState === 'saving' || saveState === 'saved' || isDeleted || !jarReady}
           >
             {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? '✓ Saved' : 'Save Descriptor'}
@@ -444,9 +506,9 @@ function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, onMountSav
       {/* 3 — Delete */}
       {isSaved && (
         <div className="wz-deploy-section wz-deploy-danger-zone">
-          <div className="wz-section-label">Delete Use-Case</div>
+          <div className="wz-section-label">Delete event rule application</div>
           <p className="wz-hint wz-hint-block">
-            Cancels any running job and removes all descriptor files for this use-case.
+            Cancels any running job and removes all descriptor files for this event rule application.
             This cannot be undone.
           </p>
           <button
@@ -454,7 +516,7 @@ function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, onMountSav
             disabled={deleteState === 'deleting' || isDeleted}
             onClick={handleDelete}
           >
-            {deleteState === 'deleting' ? 'Deleting…' : isDeleted ? '✓ Deleted' : 'Delete Use-Case'}
+            {deleteState === 'deleting' ? 'Deleting…' : isDeleted ? '✓ Deleted' : 'Delete Event Rule Application'}
           </button>
         </div>
       )}
@@ -462,14 +524,19 @@ function StepPublish({ useCaseId, agentId, mode = 'replace', jarFile, onMountSav
   );
 }
 
-function validateStep(step, form) {
+export function validateStep(step, form) {
   if (step === 0) {
     if (!form.agentId.trim()) return 'Agent ID is required.';
-    // useCaseId is optional — when blank it defaults to agentId, which is always valid.
-    // When explicitly provided, validate the same pattern as agentId.
-    const uid = (form.useCaseId || '').trim();
-    if (uid && !/^[a-zA-Z0-9_-]{1,64}$/.test(uid))
-      return 'Use-Case ID may only contain letters, numbers, hyphens, or underscores (max 64 chars).';
+    // The use-case folder key is derived (existing id, else slug of the use-case name, else
+    // agentId). Only the agentId fallback can be invalid; the BFF requires this pattern.
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(resolveUseCaseId(form)))
+      return 'Agent ID may only contain letters, numbers, hyphens, or underscores (max 64 chars) — it names the event rule application folder when no Event Rule Application Name is given.';
+    // Warn when entityKeyExtractor uses a complex expression that may not work
+    // with the built-in string extractor (L-6).  Simple paths like "$.id" or
+    // "$.account.id" are fine; predicates and array indices are not.
+    const eke = (form.entityKeyExtractor || '').trim();
+    if (eke && /[[\]?@(),:*]/.test(eke))
+      return 'Warning: the entity key extractor looks complex. Only simple dot-notation JSONPath expressions (e.g. $.id, $.account.id) are supported. Verify before continuing.';
   }
   // Step 1 is now Ruleset (was step 2)
   if (step === 1) {
@@ -477,17 +544,30 @@ function validateStep(step, form) {
   }
   // Step 2 is now Subscriptions (was step 1)
   if (step === 2) {
+    const TIME_LIMIT_RE = /^\d+(?:mn|[smhd])$/;
     for (const s of form.subscriptions) {
       if (!s.eventType.trim()) continue;
-      if (!s.topic.trim())
-        return 'Every subscription with an event type needs a Kafka topic.';
       if (s.operation === null || s.operation === undefined)
         return `Subscription "${s.eventType}" is missing an operation. Use "" to subscribe for context only.`;
+      const subEke = (s.entityKeyExtractor || '').trim();
+      if (subEke && /[[\]?@(),:*]/.test(subEke))
+        return `Subscription "${s.eventType}": the entity key extractor looks complex. Only simple dot-notation JSONPath expressions (e.g. $.id, $.account.id) are supported.`;
+      if ((s.horizonType === 'time' || s.horizonType === 'hybrid') && s.horizonTimeLimit) {
+        if (!TIME_LIMIT_RE.test(s.horizonTimeLimit.trim()))
+          return `Subscription "${s.eventType}": time limit must be a number followed by s, mn, h, d, or m (e.g. 24h, 30mn, 7m).`;
+      }
     }
   }
   if (step === 3) {
-    const valid = form.outputs.filter(o => o.eventType.trim() && o.topic.trim());
-    if (valid.length === 0) return 'At least one output with event type and topic is required.';
+    // Re-evaluate against the current form state — the user may have returned to
+    // Step 2 and cleared all operation fields, which removes the output requirement.
+    const hasActiveOutput = form.subscriptions.some(
+      s => s.eventType.trim() && s.operation !== null && s.operation !== undefined && s.operation !== ''
+    );
+    if (hasActiveOutput) {
+      const valid = form.outputs.filter(o => o.eventType.trim() && o.topic.trim());
+      if (valid.length === 0) return 'At least one output with event type and topic is required.';
+    }
   }
   return null;
 }
@@ -542,17 +622,51 @@ function Select({ value, onChange, options }) {
 // ── Step 1: Job & Identity ────────────────────────────────────────────────────
 
 function StepIdentity({ form, set, saveMode }) {
-  const useCaseIdLocked = saveMode === 'append';
+  // Append mode adds an agent to an existing use case: its properties are not edited here.
+  const useCaseLocked = saveMode === 'append';
+  const effectiveId = resolveUseCaseId(form) || '<use-case-id>';
+  const existingUseCase = (form.useCaseId || '').trim();
   return (
     <div className="wz-step-body">
-      <Field
-        label="Use-Case / Job ID"
-        hint={useCaseIdLocked
-          ? "This new agent will be appended to the existing use-case. The Use-Case ID is fixed and cannot be changed in append mode."
-          : "The Flink Job folder key. All agents sharing this ID run in the same Flink Job. Leave blank to use the Agent ID below (default for single-agent use cases). Use lowercase with hyphens (e.g. shared-job)."}
-      >
-        <TextInput value={form.useCaseId} onChange={v => set('useCaseId', v)} placeholder="(defaults to Agent ID)" mono readOnly={useCaseIdLocked} />
-      </Field>
+      {useCaseLocked && (
+        <p className="wz-note">
+          This new agent will be appended to the existing event rule application <code>{existingUseCase}</code>.
+        </p>
+      )}
+      {!useCaseLocked && (
+        <>
+          <Field
+            label="Event Rule Application Name"
+            hint={existingUseCase
+              ? `Display name of the event rule application in the dashboard (agents.json “name”). Leave blank to derive it from the agent. The event rule application stays in samples/${existingUseCase}/.`
+              : `Display name of the event rule application in the dashboard (agents.json “name”). Leave blank to derive it from the agent. The event rule application is stored in samples/${effectiveId}/ (a slug of this name, else the Agent ID).`}
+          >
+            <TextInput value={form.useCaseName} onChange={v => set('useCaseName', v)} placeholder="Fraud Detection" />
+          </Field>
+          <Field
+            label="Flink Job Name"
+            hint="Name under which the Flink job is submitted and looked up (agents.json “flinkJobName”). Leave blank to use <event-rule-application-id>-job."
+          >
+            <TextInput value={form.flinkJobName} onChange={v => set('flinkJobName', v)} placeholder={`${effectiveId}-job`} />
+          </Field>
+          <Field
+            label="Event Rule Application Description"
+            hint="Short description shown on the event rule application tile (agents.json “description”). Optional."
+          >
+            <TextInput value={form.useCaseDescription} onChange={v => set('useCaseDescription', v)} placeholder="Detects fraudulent transactions in real time" />
+          </Field>
+          <Field
+            label="Consumer Group ID"
+            hint="Kafka consumer group used by the dashboard (agents.json “consumerGroupId”). Leave blank to use event-rule-bff-<event-rule-application-id>."
+          >
+            <TextInput value={form.consumerGroupId} onChange={v => set('consumerGroupId', v)} placeholder={`event-rule-bff-${effectiveId}`} mono />
+          </Field>
+          <div className="wz-section-divider" data-testid="wz-agent-section-divider">
+            <span className="wz-section-label">Agent</span>
+            <span className="wz-hint">Properties of this individual agent within the event rule application.</span>
+          </div>
+        </>
+      )}
       <Field
         label="Agent ID *"
         hint="Unique, stable identifier for this agent used as the Flink operator UID. Must be unique within the Flink Job. Use lowercase with hyphens (e.g. fraud-detection-agent)."
@@ -570,7 +684,7 @@ function StepIdentity({ form, set, saveMode }) {
       </Field>
       <Field
         label="Entity Key Extractor"
-        hint="JSONPath expression that extracts the entity's unique key from each incoming event. All events with the same key share state."
+        hint="JSONPath expression that extracts the entity's unique key from each incoming event. All events with the same key share state. Used by every subscription unless it sets its own extractor in the Subscriptions step."
       >
         <TextInput value={form.entityKeyExtractor} onChange={v => set('entityKeyExtractor', v)} placeholder="$.accountId" mono />
       </Field>
@@ -614,7 +728,7 @@ function SubscriptionRow({ sub, onChange, onRemove, index, total }) {
       <Field label="Event Type" hint="Logical name for this event stream — used as the key in the agent's history map.">
         <TextInput value={sub.eventType} onChange={v => update('eventType', v)} placeholder="transaction" mono />
       </Field>
-      <Field label="Kafka Topic" hint="The Kafka topic name to consume this event type from.">
+      <Field label="Kafka Topic" hint="Optional. The Kafka topic name to consume this event type from. Leave blank for subscriptions with no Kafka source, such as Schedule.">
         <TextInput value={sub.topic} onChange={v => update('topic', v)} placeholder="agent-transactions" mono />
       </Field>
       <Field
@@ -622,6 +736,12 @@ function SubscriptionRow({ sub, onChange, onRemove, index, total }) {
         hint="Rule engine operation to invoke when this event arrives (e.g. MyService_myEvent_op). Leave blank to store the event in history without invoking the rule engine."
       >
         <TextInput value={sub.operation ?? ''} onChange={v => update('operation', v)} placeholder="MyService_eventType_op" mono />
+      </Field>
+      <Field
+        label="Entity Key Extractor"
+        hint="Optional. JSONPath that extracts the entity key from events of this subscription. Leave blank to use the agent-level extractor. Every subscription must resolve to the same entity key for the same entity."
+      >
+        <TextInput value={sub.entityKeyExtractor ?? ''} onChange={v => update('entityKeyExtractor', v)} placeholder="Inherit agent-level extractor" mono />
       </Field>
       <Field label="History Window" hint="How much history to retain per entity for this event type.">
         <Select value={sub.horizonType} onChange={v => update('horizonType', v)} options={[
@@ -636,7 +756,7 @@ function SubscriptionRow({ sub, onChange, onRemove, index, total }) {
         </Field>
       )}
       {sub.horizonType === 'time' && (
-        <Field label="Time Limit" hint="Retain events from this far back. Examples: 24h, 7d, 30m">
+        <Field label="Time Limit" hint="Retain events from this far back. Examples: 24h, 7d, 1m, 30mn">
           <TextInput value={sub.horizonTimeLimit} onChange={v => update('horizonTimeLimit', v)} placeholder="24h" mono />
         </Field>
       )}
@@ -659,7 +779,8 @@ function SubscriptionRow({ sub, onChange, onRemove, index, total }) {
 
 function StepSubscriptions({ form, setSubscriptions }) {
   const add = () => setSubscriptions([...form.subscriptions, {
-    eventType: '', topic: '', operation: '', horizonType: 'hybrid',
+    _key: newKey(),
+    eventType: '', topic: '', operation: '', entityKeyExtractor: '', horizonType: 'hybrid',
     horizonValue: 10, horizonCountLimit: 100, horizonTimeLimit: '24h', horizonDescription: '',
   }]);
   const remove = i => setSubscriptions(form.subscriptions.filter((_, idx) => idx !== i));
@@ -668,11 +789,11 @@ function StepSubscriptions({ form, setSubscriptions }) {
   return (
     <div className="wz-step-body">
       <p className="wz-note">
-        Each subscription connects an event type to one or more Kafka topics and defines
+        Each subscription connects an event type to an optional Kafka topic and defines
         how much history to retain per entity. Add one subscription per event type your agent needs.
       </p>
       {form.subscriptions.map((sub, i) => (
-        <SubscriptionRow key={i} sub={sub} index={i} total={form.subscriptions.length}
+        <SubscriptionRow key={sub._key ?? i} sub={sub} index={i} total={form.subscriptions.length}
           onChange={v => change(i, v)} onRemove={() => remove(i)} />
       ))}
       <button className="wz-add-btn" onClick={add}>+ Add Subscription</button>
@@ -684,7 +805,7 @@ function StepSubscriptions({ form, setSubscriptions }) {
 
 // ── Operation history row (inside an OperationRow) ───────────────────────────
 
-function HistoryRow({ h, onChange, onRemove, index, total }) {
+function HistoryRow({ h, onChange, onRemove, total }) {
   const update = (k, v) => onChange({ ...h, [k]: v });
   return (
     <div className="wz-history-row">
@@ -701,7 +822,7 @@ function HistoryRow({ h, onChange, onRemove, index, total }) {
 
 // ── Single outbound config row ────────────────────────────────────────────────
 
-function OutboundRow({ outbound, onChange, onRemove, index, total }) {
+function OutboundRow({ outbound, onChange, onRemove, total }) {
   const update = (k, v) => onChange({ ...outbound, [k]: v });
   return (
     <div className="wz-sub-row">
@@ -758,7 +879,7 @@ function OperationRow({ op, onChange, onRemove, index, total }) {
         )}
         {(op.history || []).map((h, i) => (
           <HistoryRow
-            key={i}
+            key={h._key ?? i}
             h={h}
             index={i}
             total={(op.history || []).length}
@@ -777,7 +898,7 @@ function OperationRow({ op, onChange, onRemove, index, total }) {
         )}
         {(op.outbounds || []).map((o, i) => (
           <OutboundRow
-            key={i}
+            key={o._key ?? i}
             outbound={o}
             index={i}
             total={(op.outbounds || []).length}
@@ -786,6 +907,12 @@ function OperationRow({ op, onChange, onRemove, index, total }) {
           />
         ))}
         <button className="wz-add-btn wz-add-btn-sm" onClick={addOutbound}>+ Add Outbound</button>
+      </Field>
+      <Field
+        label="Schedule Requests Field (optional)"
+        hint="Name of the result field holding the list of schedule requests this operation emits. Leave blank if the operation never schedules anything."
+      >
+        <TextInput value={op.scheduleRequestsField || ''} onChange={v => update('scheduleRequestsField', v)} placeholder="scheduleRequests" mono />
       </Field>
     </div>
   );
@@ -1120,7 +1247,7 @@ function OutputRow({ out, onChange, onRemove, index, total }) {
 }
 
 function StepOutputs({ form, setOutputs }) {
-  const add = () => setOutputs([...form.outputs, { eventType: '', topic: '', description: '' }]);
+  const add = () => setOutputs([...form.outputs, { _key: newKey(), eventType: '', topic: '', description: '' }]);
   const remove = i => setOutputs(form.outputs.filter((_, idx) => idx !== i));
   const change = (i, val) => setOutputs(form.outputs.map((o, idx) => idx === i ? val : o));
 
@@ -1132,7 +1259,7 @@ function StepOutputs({ form, setOutputs }) {
         <code>AGENT_ERROR_TOPIC</code> environment variable.
       </p>
       {form.outputs.map((out, i) => (
-        <OutputRow key={i} out={out} index={i} total={form.outputs.length}
+        <OutputRow key={out._key ?? i} out={out} index={i} total={form.outputs.length}
           onChange={v => change(i, v)} onRemove={() => remove(i)} />
       ))}
       <button className="wz-add-btn" onClick={add}>+ Add Output</button>
@@ -1167,7 +1294,7 @@ function StepReview({ form, setStateConfig }) {
       <div className="wz-row">
         <Field
           label="State TTL"
-          hint="How long per-entity state is retained after the last event. Examples: 30d, 24h, 60m. Use a value that covers your longest expected gap between events."
+          hint="How long per-entity state is retained after the last event. Examples: 1m, 30d, 24h, 60mn. Use a value that covers your longest expected gap between events."
         >
           <TextInput value={sc.ttl} onChange={v => set('ttl', v)} placeholder="30d" mono />
         </Field>
@@ -1221,6 +1348,7 @@ export function descriptorToForm(descriptor, targetAgentId, useCaseId) {
   const subscriptions = (agent.subscriptions || []).map(s => {
     const h = s.horizon || {};
     return {
+      _key: newKey(),
       eventType: s.eventType || '',
       // The Java model uses a single-string topic field.  Accept both spellings for
       // resilience when loading hand-authored descriptors that pre-date this fix.
@@ -1228,6 +1356,7 @@ export function descriptorToForm(descriptor, targetAgentId, useCaseId) {
       // operation is required in the model; null means the field was absent in JSON (legacy) —
       // treat it as "" (history-only) in the wizard so the form is always in a valid state.
       operation: s.operation ?? '',
+      entityKeyExtractor: s.entityKeyExtractor || '',
       horizonType: h.type || 'count',
       horizonValue: h.value ?? 10,
       horizonCountLimit: h.countLimit ?? 100,
@@ -1248,11 +1377,16 @@ export function descriptorToForm(descriptor, targetAgentId, useCaseId) {
       field: o.field || '',
       eventType: o.eventType || '',
     })),
+    scheduleRequestsField: op.scheduleRequestsField || '',
   }));
 
   return {
     parallelism: descriptor.parallelism ?? 0,
     useCaseId:   useCaseId || '',    // pre-filled by caller when editing an existing use-case
+    useCaseName:        descriptor.name            || '',
+    flinkJobName:       descriptor.flinkJobName    || '',
+    useCaseDescription: descriptor.description     || '',
+    consumerGroupId:    descriptor.consumerGroupId || '',
     agentId: agent.agentId || '',
     name: agent.name || '',
     entityType: agent.entityType || '',
@@ -1269,6 +1403,7 @@ export function descriptorToForm(descriptor, targetAgentId, useCaseId) {
       operations,
     },
     outputs: (agent.outputs || []).map(o => ({
+      _key: newKey(),
       eventType: o.eventType || '',
       topic: o.topic || '',
       description: o.description || '',
@@ -1286,7 +1421,8 @@ export function descriptorToForm(descriptor, targetAgentId, useCaseId) {
 //   onClose          — close the wizard
 //   onJobRunning     — callback(useCaseId) when job reaches RUNNING
 //   initialDescriptor — agents.json object to pre-fill (edit mode)
-//   initialUseCaseId  — BFF folder key; pre-fills Use-Case ID field (append/patch mode)
+//   initialUseCaseId  — BFF folder key of the existing use case (edit/append/patch mode);
+//                       for a new use case it is derived from the Use-Case Name or Agent ID
 //   initialTargetAgentId — agentId to edit within a multi-agent descriptor (patch mode)
 //   initialMode       — "replace" | "append" | "patch" (default: "replace")
 //     replace: create/overwrite entire use-case (single-agent create flow)
@@ -1301,8 +1437,6 @@ function AgentWizard({ onClose, onJobRunning, initialDescriptor, initialUseCaseI
     descriptorToForm(initialDescriptor, initialTargetAgentId, initialUseCaseId)
   );
   const [error, setError] = useState(null);
-  // Ref to the StepPublish save trigger (called when "Next" is pressed on Step 4)
-  const publishSaveRef = useRef(null);
 
   // The mode is fixed for the lifetime of this wizard session.
   const saveMode = initialMode || 'replace';
@@ -1322,16 +1456,15 @@ function AgentWizard({ onClose, onJobRunning, initialDescriptor, initialUseCaseI
 
   const back = () => { setError(null); setStep(s => Math.max(s - 1, 0)); };
 
-  // When the user arrives on Step 5 (Publish & Deploy), auto-trigger the save.
+  // When the user arrives on Step 5 (Publish & Deploy), auto-trigger the initial save.
   // buildDescriptor returns { descriptor, useCaseId }; we pass only descriptor to saveFn.
   const handleEnterPublish = useCallback((saveFn) => {
-    publishSaveRef.current = saveFn;
     const { descriptor } = buildDescriptor(form);
     saveFn(descriptor);
   }, [form]);
 
   // Effective use-case id for display and job-lifecycle calls
-  const effectiveUseCaseId = (form.useCaseId || '').trim() || form.agentId.trim();
+  const effectiveUseCaseId = resolveUseCaseId(form);
 
   return (
     <div className="wz-overlay">
@@ -1373,6 +1506,7 @@ function AgentWizard({ onClose, onJobRunning, initialDescriptor, initialUseCaseI
               agentId={form.agentId.trim()}
               mode={saveMode}
               jarFile={form.ruleset._jarFile || null}
+              descriptor={buildDescriptor(form).descriptor}
               onMountSave={handleEnterPublish}
               onJobRunning={onJobRunning}
             />

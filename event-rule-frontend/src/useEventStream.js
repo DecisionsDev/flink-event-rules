@@ -39,7 +39,10 @@ import { useState, useEffect, useRef } from 'react';
 const DEFAULT_POLL_MS    = 2000;
 const DEFAULT_PING_MS    = 30000;
 const WS_RECONNECT_MS    = 5000;  // backoff before reconnect attempt
-const WS_FAILURE_LIMIT   = 3;     // failed connects before giving up on WS
+const WS_FAILURE_LIMIT   = 3;     // failed *initial* connects before giving up on WS
+// Maximum total reconnects after a successful open — prevents infinite retry noise
+// when the BFF is shut down permanently after a session.
+const WS_RECONNECT_LIMIT = 20;
 
 export function useEventStream(useCase, apiUrl, {
   pollIntervalMs   = DEFAULT_POLL_MS,
@@ -49,11 +52,12 @@ export function useEventStream(useCase, apiUrl, {
   const [error, setError]               = useState(null);
 
   // Stable refs so the effect cleanup works across re-renders
-  const wsRef         = useRef(null);
-  const pollTimerRef  = useRef(null);
-  const pingTimerRef  = useRef(null);
-  const cancelledRef  = useRef(false);
-  const wsFailureRef  = useRef(0);
+  const wsRef            = useRef(null);
+  const pollTimerRef     = useRef(null);
+  const pingTimerRef     = useRef(null);
+  const cancelledRef     = useRef(false);
+  const wsFailureRef     = useRef(0);
+  const wsReconnectCount = useRef(0);
 
   useEffect(() => {
     if (!useCase) {
@@ -71,10 +75,16 @@ export function useEventStream(useCase, apiUrl, {
     wsFailureRef.current  = 0;
 
     // ── Derive WebSocket URL from apiUrl ────────────────────────────────────
-    const wsBase = apiUrl
+    // Strip any path prefix so the WS endpoint is always at the server root /ws,
+    // matching the BFF WebSocketServer registration (path: '/ws').
+    const wsOrigin = apiUrl
       .replace(/^http:\/\//, 'ws://')
-      .replace(/^https:\/\//, 'wss://');
-    const wsUrl = `${wsBase}/ws`;
+      .replace(/^https:\/\//, 'wss://')
+      // Strip single-segment path suffix if present (e.g. /bff → '').
+      // The capture group (\/\/[^/]+) anchors to the authority so that bare
+      // origins like 'ws://host:8080' (no path at all) are left untouched.
+      .replace(/(\/\/[^/]+)(\/[^/]*)$/, '$1');
+    const wsUrl = `${wsOrigin}/ws`;
 
     // ── HTTP fallback poll ──────────────────────────────────────────────────
     function startPolling() {
@@ -115,8 +125,13 @@ export function useEventStream(useCase, apiUrl, {
         return;
       }
       wsRef.current = ws;
+      // Track whether this socket ever successfully opened.
+      // onerror that fires after onopen (e.g. network drop mid-session) should
+      // NOT count as a connection failure — we already know WS works.
+      let everOpened = false;
 
       ws.onopen = () => {
+        everOpened = true;
         wsFailureRef.current = 0;
         ws.send(JSON.stringify({ type: 'subscribe', useCase }));
         // Keepalive ping
@@ -136,13 +151,23 @@ export function useEventStream(useCase, apiUrl, {
       };
 
       ws.onerror = () => {
-        wsFailureRef.current++;
+        // Only count as a failure when the connection was never established.
+        // Errors after a successful open are transient drops — onclose will
+        // handle reconnection with backoff.
+        if (!everOpened) wsFailureRef.current++;
       };
 
       ws.onclose = () => {
         clearInterval(pingTimerRef.current);
         if (!cancelledRef.current) {
-          // Reconnect with a short backoff; give up after WS_FAILURE_LIMIT
+          wsReconnectCount.current++;
+          if (wsReconnectCount.current > WS_RECONNECT_LIMIT) {
+            // Too many reconnects — BFF is likely shut down. Fall back to polling.
+            console.info('[useEventStream] WebSocket reconnect limit reached — switching to HTTP polling');
+            startPolling();
+            return;
+          }
+          // Reconnect with a short backoff
           setTimeout(connectWs, WS_RECONNECT_MS);
         }
       };
@@ -152,6 +177,7 @@ export function useEventStream(useCase, apiUrl, {
 
     return () => {
       cancelledRef.current = true;
+      wsReconnectCount.current = 0;
       clearTimeout(pollTimerRef.current);
       clearInterval(pingTimerRef.current);
       if (wsRef.current) {

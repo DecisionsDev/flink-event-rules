@@ -16,6 +16,7 @@
  *
  */
 import React, { useState, useEffect, useRef, useCallback, Fragment } from 'react';
+import { API_URL } from './config.js';
 
 /**
  * AgentScenariosPanel
@@ -38,8 +39,6 @@ import React, { useState, useEffect, useRef, useCallback, Fragment } from 'react
  * prevents the button from flickering back to "Deploy" while a job is still
  * being submitted or is polling for a RUNNING state.
  */
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 // States that count as "the job is running / warming up"
 const RUNNING_STATES = new Set(['RUNNING', 'RESTARTING', 'CREATED', 'INITIALIZING', 'RECONCILING']);
@@ -208,9 +207,9 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
 
   const description = agent.description || 'No description added yet';
 
-  const lastUpdated = agent.id?.includes('airtraffic')
-    ? '9/11/2026, 6:52:26 PM by John Doe'
-    : '9/11/2026, 2:00:46 PM by John Doe';
+  const lastUpdated = agent.lastModified
+    ? new Date(agent.lastModified).toLocaleString()
+    : 'Unknown';
 
   return (
     <Fragment>
@@ -256,9 +255,9 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
           </div>
           <button
             className="di-agent-card-menu-btn"
-            onClick={(e) => e.stopPropagation()}
-            title="Options"
-            aria-label="Options"
+            disabled
+            title="Options (coming soon)"
+            aria-label="Options (coming soon)"
           >
             <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor">
               <circle cx="16" cy="8" r="2" />
@@ -280,7 +279,7 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
             {agentList.map(a => (
               <div key={a.agentId} className="di-agent-sub-row">
                 <span className="di-agent-sub-name">{a.name || a.agentId}</span>
-                {(canEdit && onEditSpecificAgent || canEdit && onDeleteSpecificAgent) && (
+                {(canEdit && (onEditSpecificAgent || onDeleteSpecificAgent)) && (
                   <div className="di-agent-sub-actions">
                     {canEdit && onEditSpecificAgent && (
                       <button
@@ -384,9 +383,13 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
 
 function AgentScenarioCardWithState({ agent, onEditAgent, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase }) {
   const runState = useAgentRunState(agent.id);
+  // Keep a stable ref to probe so the mount effect runs exactly once regardless
+  // of any future identity changes to the callback (M-3).
+  const probeRef = useRef(runState.probe);
+  useEffect(() => { probeRef.current = runState.probe; }, [runState.probe]);
 
-  // Probe initial state once on mount
-  useEffect(() => { runState.probe(); }, [runState.probe]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Probe initial state exactly once on mount
+  useEffect(() => { probeRef.current(); }, []);
 
   return (
     <AgentScenarioCard
@@ -404,11 +407,15 @@ function AgentScenarioCardWithState({ agent, onEditAgent, onEditSpecificAgent, o
 
 // ── Single Agent List Row (for List View mode) ───────────────────────────────
 
-function AgentScenarioListRowWithState({ agent, onEditAgent, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase }) {
+function AgentScenarioListRowWithState({ agent, onEditAgent, onSelectUseCase }) {
   const runState = useAgentRunState(agent.id);
   const { phase, jobId, run } = runState;
+  // Stable ref pattern — same fix as AgentScenarioCardWithState (M-3).
+  const probeRef = useRef(runState.probe);
+  useEffect(() => { probeRef.current = runState.probe; }, [runState.probe]);
 
-  useEffect(() => { runState.probe(); }, [runState.probe]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Probe initial state exactly once on mount
+  useEffect(() => { probeRef.current(); }, []);
 
   const isProbing  = phase === 'probing';
   const isRunning  = phase === 'running';
@@ -420,9 +427,9 @@ function AgentScenarioListRowWithState({ agent, onEditAgent, onEditSpecificAgent
 
   const description = agent.description || 'No description added yet';
 
-  const lastUpdated = agent.id?.includes('airtraffic')
-    ? '9/11/2026, 6:52:26 PM by rtsAdmin'
-    : '9/11/2026, 2:00:46 PM by rtsAdmin';
+  const lastUpdated = agent.lastModified
+    ? new Date(agent.lastModified).toLocaleString()
+    : 'Unknown';
 
   return (
     <div className="di-list-item">
@@ -499,7 +506,7 @@ function AgentScenariosPanel({ onEditAgent, onEditSpecificAgent, onAddAgentToJob
   // call that was previously inside the Flink-poll effect.
   useEffect(() => {
     fetchAgents();
-  }, [fetchAgents, refreshToken]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchAgents, refreshToken]);
 
   useEffect(() => {
     // Seed the signature with the current Flink state before the first poll

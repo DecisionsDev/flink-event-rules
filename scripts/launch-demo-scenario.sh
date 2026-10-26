@@ -33,7 +33,7 @@
 #
 # Topic resolution order per event:
 #   1. Explicit "topic" field on the event object (highest priority)
-#   2. Matching entry in samples/<use-case>/descriptor.json .topics[]
+#   2. Matching entry in samples/<use-case>/agents.json .topics[]
 #   3. Matching entry in samples/<use-case>/agents.json .agents[].subscriptions[].topics[0]
 #
 # Usage:
@@ -91,7 +91,7 @@ fi
 # Define paths to metadata and scenario files
 SCENARIOS_FILE="$USE_CASE_DIR/demo-scenarios.json"
 AGENTS_FILE="$USE_CASE_DIR/agents.json"
-DESCRIPTOR_FILE="$USE_CASE_DIR/descriptor.json"
+DESCRIPTOR_FILE="$USE_CASE_DIR/agents.json"
 
 if [ ! -f "$SCENARIOS_FILE" ]; then
     echo "Error: Scenarios file '$SCENARIOS_FILE' not found."
@@ -235,12 +235,12 @@ reset_scenario_entities() {
 }
 
 # Resolve the Kafka topic for a given event type.
-# Checks descriptor.json first, then agents.json as a fallback.
+# Checks the top-level topics of agents.json first, then the agent subscriptions as a fallback.
 resolve_topic() {
     local event_type=$1
     local topic=""
 
-    # 1. Attempt to resolve topic from descriptor.json first
+    # 1. Attempt to resolve topic from the top-level topics of agents.json first
     if [ -f "$DESCRIPTOR_FILE" ]; then
         topic=$(jq -r --arg type "$event_type" '.topics[]? | select(.type == $type) | .name' "$DESCRIPTOR_FILE" 2>/dev/null)
     fi

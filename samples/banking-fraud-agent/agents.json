@@ -1,4 +1,37 @@
 {
+  "name": "Banking Fraud Detection Agent",
+  "flinkJobName": "Banking Fraud Detection Agent",
+  "description": "Event Rules Application for tracking fraud on banking transactions. Detect potentially fraudulent transaction situations based on the flow of transactions and account-related events.",
+  "consumerGroupId": "event-rule-bff-banking-fraud-agent",
+  "topics": [
+    {
+      "name": "agent-transactions",
+      "type": "Transaction",
+      "label": "Transactions"
+    },
+    {
+      "name": "agent-account-events",
+      "type": "AccountEvent",
+      "label": "Account Events"
+    }
+  ],
+  "outboundTopics": [
+    {
+      "name": "agent-fraud-alerts",
+      "type": "Alert",
+      "label": "Alerts - Transactions flagged as fraudulent"
+    },
+    {
+      "name": "agent-banking-errors",
+      "type": "agent-error",
+      "label": "Processing errors for investigation"
+    },
+    {
+      "name": "agent-account-entity-changelog",
+      "type": "entity-changelog",
+      "label": "Entity Changelog (Account)"
+    }
+  ],
   "agents": [
     {
       "agentId": "banking-fraud-agent",

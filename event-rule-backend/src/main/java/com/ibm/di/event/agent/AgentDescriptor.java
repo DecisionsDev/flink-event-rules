@@ -112,6 +112,15 @@ public class AgentDescriptor implements Serializable {
     public String getEntityKeyExtractor()                { return entityKeyExtractor; }
     public void   setEntityKeyExtractor(String eke)      { this.entityKeyExtractor = eke; }
 
+    /**
+     * Resolves the entity-key extractor for {@code sub}: the subscription-level value when
+     * set, otherwise the agent-level value.  May return {@code null} when neither is set.
+     */
+    public String entityKeyExtractorFor(EventSubscription sub) {
+        return (sub != null && sub.getEntityKeyExtractor() != null)
+            ? sub.getEntityKeyExtractor() : entityKeyExtractor;
+    }
+
     public List<EventSubscription> getSubscriptions()                        { return subscriptions; }
     public void                    setSubscriptions(List<EventSubscription> s) { this.subscriptions = s; }
 

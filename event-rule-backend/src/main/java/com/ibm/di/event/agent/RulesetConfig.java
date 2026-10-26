@@ -139,7 +139,7 @@ public class RulesetConfig implements Serializable {
     public static class OperationConfig implements Serializable {
 
         @Serial
-        private static final long serialVersionUID = 3L;
+        private static final long serialVersionUID = 4L;
 
         /** The IBM Decision Intelligence operation name this mapping applies to. */
         private String operation;
@@ -149,9 +149,17 @@ public class RulesetConfig implements Serializable {
          * When non-null the entity is exposed under this key instead of (or alongside)
          * the canonical {@code "entity"} key.
          * A field with this name may also be present in the rule output context, indicating
-         * that the entity has been modified by the rules.
+         * that the entity has been modified by the rules (unless overridden by {@link #outboundEntityField}).
          */
         private String entityField;
+
+        /**
+         * Optional domain-specific field name for the entity object inside the rule result.
+         * When set, {@code StatefulAgentProcessor.updateEntityState()} reads the modified entity
+         * state from this field in the rule execution result instead of {@link #entityField}.
+         * If unset or blank, {@link #entityField} is used.
+         */
+        private String outboundEntityField;
 
         /**
          * Domain-specific field name for the current event inside the rule input context.
@@ -184,6 +192,13 @@ public class RulesetConfig implements Serializable {
          */
         private List<OutboundConfig> outbounds;
 
+        /**
+         * Optional. JSON name of the data-model attribute in the Decision Service result that
+         * holds the list of {@link ScheduleRequest}s the operation emits. Must match the JSON
+         * name exactly. {@code null} or blank means the operation never schedules anything.
+         */
+        private String scheduleRequestsField;
+
         public OperationConfig() {}
 
         public String getOperation()                      { return operation; }
@@ -191,6 +206,9 @@ public class RulesetConfig implements Serializable {
 
         public String getEntityField()                    { return entityField; }
         public void   setEntityField(String f)            { this.entityField = f; }
+
+        public String getOutboundEntityField()              { return outboundEntityField; }
+        public void   setOutboundEntityField(String f)      { this.outboundEntityField = f; }
 
         public String getCurrentEventField()              { return currentEventField; }
         public void   setCurrentEventField(String f)      { this.currentEventField = f; }
@@ -201,10 +219,20 @@ public class RulesetConfig implements Serializable {
         public List<OutboundConfig> getOutbounds()                     { return outbounds; }
         public void                 setOutbounds(List<OutboundConfig> o) { this.outbounds = o; }
 
+        public String getScheduleRequestsField()              { return scheduleRequestsField; }
+        public void   setScheduleRequestsField(String f)      { this.scheduleRequestsField = f; }
+
+        /** Returns the schedule-requests result field name, or {@code null} when not configured. */
+        public String scheduleRequestsField() {
+            return scheduleRequestsField != null && !scheduleRequestsField.isBlank()
+                ? scheduleRequestsField : null;
+        }
+
         @Override
         public String toString() {
             return "OperationConfig{operation='" + operation
                 + "', entityField='" + entityField
+                + "', outboundEntityField='" + outboundEntityField
                 + "', currentEventField='" + currentEventField
                 + "', history=" + (history != null ? history.size() : 0) + " mappings"
                 + "', outbounds=" + (outbounds != null ? outbounds.size() : 0) + " entries}";

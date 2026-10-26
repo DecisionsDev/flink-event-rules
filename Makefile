@@ -15,7 +15,7 @@
 # Makefile — top-level convenience targets for the Event Rule project.
 
 .PHONY: functional-tests functional-test-aircraft functional-test-banking \
-        functional-test-skip-compose functional-test-clean help
+        functional-test-retail functional-test-skip-compose functional-test-clean clean help
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ _ENV = BFF_URL=$(BFF_URL) \
 
 # ── Targets ───────────────────────────────────────────────────────────────────
 
-## Run ALL use-case functional tests (banking + aircraft).
+## Run ALL use-case functional tests (banking + aircraft + retail).
 ## Starts Docker Compose, deploys Flink jobs, runs tests, tears down.
 ## Prerequisites: docker, curl, jq, and a pre-built fat JAR (./build.sh).
 ## Uses COMPOSE_CLEAN_VOLUMES=true to ensure a clean Kafka state on each run.
@@ -75,6 +75,13 @@ functional-test-aircraft:
 functional-test-banking:
 	@COMPOSE_CLEAN_VOLUMES=true $(_ENV) bash functional-tests/run-functional-tests.sh banking
 
+## Run only the Retail Promotion Agent functional tests.
+## Starts Docker Compose, deploys the retail Flink job, runs tests, tears down.
+## Prerequisites: docker, curl, jq, and a pre-built fat JAR (./build.sh).
+## Uses COMPOSE_CLEAN_VOLUMES=true to ensure a clean Kafka state on each run.
+functional-test-retail:
+	@COMPOSE_CLEAN_VOLUMES=true $(_ENV) bash functional-tests/run-functional-tests.sh retail
+
 ## Run ALL functional tests against an already-running stack (skip Compose + deploy).
 ## Useful for rapid re-runs during development when the stack is already up.
 functional-test-skip-compose:
@@ -93,21 +100,28 @@ functional-test-clean:
 	@rm -rf functional-tests/reports/
 	@echo "Done."
 
+## Complete project cleanup (removes containers, volumes, checkpoints, build artifacts, state).
+clean:
+	@bash run.sh clean --force
+
 ## Show this help message.
 help:
 	@echo ""
 	@echo "Event Rule — available make targets:"
 	@echo ""
-	@echo "  functional-tests              Run ALL use-case functional tests (banking + aircraft)"
+	@echo "  functional-tests              Run ALL use-case functional tests (banking + aircraft + retail)"
 	@echo "  functional-test-aircraft     Run only the Air Traffic Control functional tests"
 	@echo "  functional-test-banking      Run only the Banking Fraud Detection functional tests"
+	@echo "  functional-test-retail       Run only the Retail Promotion Agent functional tests"
 	@echo "  functional-test-skip-compose Run all tests against an already-running stack"
 	@echo "  functional-test-clean        Remove generated test reports"
+	@echo "  clean                        Completely clean all containers, volumes, checkpoints, state, and artifacts"
 	@echo ""
 	@echo "Usage examples:"
 	@echo "  make functional-tests"
 	@echo "  make functional-test-aircraft"
 	@echo "  make functional-test-banking"
+	@echo "  make functional-test-retail"
 	@echo "  make functional-test SKIP_FLINK_DEPLOY=true"
 	@echo "  make functional-test-skip-compose"
 	@echo "  make functional-test-aircraft ALERT_WAIT_TIMEOUT=120"

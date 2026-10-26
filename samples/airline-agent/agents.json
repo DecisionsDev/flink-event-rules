@@ -1,0 +1,225 @@
+{
+  "name": "Transport — Airline Agent",
+  "flinkJobName": "Airline Agent",
+  "description": "Event Rules Application for Real-Time operation of an airline. Process airline events to notify systems and passenger about flight-related events.",
+  "consumerGroupId": "event-rule-bff-airline-agent",
+  "topics": [
+    {
+      "name": "agent-flight-events",
+      "type": "FlightEvent",
+      "label": "Flight Events"
+    },
+    {
+      "name": "agent-catering-events",
+      "type": "CateringEvent",
+      "label": "Catering Events"
+    },
+    {
+      "name": "agent-passenger-events",
+      "type": "PassengerEvent",
+      "label": "Passenger Events",
+      "idleness": "30s"
+    }
+  ],
+  "outboundTopics": [
+    {
+      "name": "agent-flight-notifications",
+      "type": "FlightNotification",
+      "label": "Flight Notifications"
+    },
+    {
+      "name": "agent-passenger-notifications",
+      "type": "PassengerNotification",
+      "label": "Passenger Notifications"
+    },
+    {
+      "name": "agent-airline-errors",
+      "type": "agent-error",
+      "label": "Agent Errors"
+    },
+    {
+      "name": "agent-flight-entity-changelog",
+      "type": "entity-changelog",
+      "label": "Flight Entity Changelog"
+    }
+  ],
+  "agents": [
+    {
+      "agentId": "airline-agent",
+      "name": "Airline Agent",
+      "entityType": "Flight",
+      "entityKeyExtractor": "$.flightNumber",
+      "chainingEnabled": true,
+      "subscriptions": [
+        {
+          "eventType": "FlightEvent",
+          "topic": "agent-flight-events",
+          "operation": "ProcessFlightEvent",
+          "horizon": {
+            "type": "time",
+            "timeLimit": "96h",
+            "description": "Keep 96 hours of Flight Events per flight"
+          }
+        },
+        {
+          "eventType": "CateringEvent",
+          "topic": "agent-catering-events",
+          "operation": "ProcessCateringEvent",
+          "horizon": {
+            "type": "hybrid",
+            "countLimit": 100,
+            "timeLimit": "96h",
+            "description": "Keep last 100 catering events or 96 hours of history per flight"
+          }
+        },
+        {
+          "eventType": "PassengerEvent",
+          "topic": "agent-passenger-events",
+          "operation": "ProcessPassengerEvent",
+          "horizon": {
+            "type": "time",
+            "timeLimit": "96h",
+            "description": "Keep last 96 hours of history per flight"
+          }
+        },
+        {
+          "eventType": "Schedule",
+          "operation": "ProcessSchedule"
+        }
+      ],
+      "ruleset": {
+        "path": "samples/airline-agent/AirlineDecisionService_1.1.0.jar",
+        "archiveControlTopic": "agent-airline-archive-control",
+        "operations": [
+          {
+            "operation": "ProcessFlightEvent",
+            "entityField": "flight",
+            "currentEventField": "flightEvent",
+            "history": [
+              {
+                "eventType": "FlightEvent",
+                "field": "pastFlightEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "flightNotifications",
+                "eventType": "FlightNotification"
+              },
+              {
+                "field": "passengerNotifications",
+                "eventType": "PassengerNotification"
+              },
+              {
+                "field": "cateringStatusNotifications",
+                "eventType": "CateringStatusNotification"
+              }
+            ],
+            "scheduleRequestsField": "scheduleRequests"
+          },
+          {
+            "operation": "ProcessPassengerEvent",
+            "entityField": "flight",
+            "currentEventField": "passengerEvent",
+            "history": [
+              {
+                "eventType": "PassengerEvent",
+                "field": "pastPassengerEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "flightNotifications",
+                "eventType": "FlightNotification"
+              },
+              {
+                "field": "passengerNotifications",
+                "eventType": "PassengerNotification"
+              },
+              {
+                "field": "cateringStatusNotifications",
+                "eventType": "CateringStatusNotification"
+              }
+            ],
+            "scheduleRequestsField": "scheduleRequests"
+          },
+          {
+            "operation": "ProcessCateringEvent",
+            "entityField": "flight",
+            "currentEventField": "cateringEvent",
+            "history": [
+              {
+                "eventType": "CateringEvent",
+                "field": "pastCateringEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "flightNotifications",
+                "eventType": "FlightNotification"
+              },
+              {
+                "field": "cateringStatusNotifications",
+                "eventType": "CateringStatusNotification"
+              }
+            ],
+            "scheduleRequestsField": "scheduleRequests"
+          },
+          {
+            "operation": "ProcessSchedule",
+            "entityField": "flight",
+            "currentEventField": "schedule",
+            "history": [
+              {
+                "eventType": "FlightEvent",
+                "field": "pastFlightEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "flightNotifications",
+                "eventType": "FlightNotification"
+              },
+              {
+                "field": "passengerNotifications",
+                "eventType": "PassengerNotification"
+              },
+              {
+                "field": "cateringStatusNotifications",
+                "eventType": "CateringStatusNotification"
+              }
+            ],
+            "scheduleRequestsField": "scheduleRequests"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "eventType": "FlightNotification",
+          "topic": "agent-flight-notifications",
+          "description": "Real-time flight notification"
+        },
+        {
+          "eventType": "PassengerNotification",
+          "topic": "agent-passenger-notifications",
+          "description": "Real-time passenger notification"
+        },
+        {
+          "eventType": "CateringStatusNotification",
+          "topic": "agent-catering-status-notifications",
+          "description": "Real-time catering status notification"
+        },
+        {
+          "eventType": "agent-error",
+          "topic": "agent-airline-errors",
+          "description": "Processing errors and unparseable events"
+        }
+      ],
+      "stateConfig": {
+        "ttl": "7m",
+        "backend": "rocksdb",
+        "changeLogTopic": "agent-flight-entity-changelog"
+      }
+    }
+  ]
+}

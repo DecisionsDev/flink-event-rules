@@ -6,19 +6,25 @@ The suite manages the full Docker Compose lifecycle automatically—it starts th
 stack, deploys Flink jobs, runs the tests, and tears everything down on exit (even
 on failure).
 
+Three use cases are covered: **Banking Fraud Detection**, **Air Traffic Control**, and
+**Retail Promotion**.
+
 ---
 
 ## Quick start
 
 ```bash
-# Run all use-case tests (Banking + Air Traffic Control)
-make functional-test
+# Run all use-case tests (Banking + Air Traffic Control + Retail)
+make functional-tests
 
 # Run only the banking use case
 make functional-test-banking
 
 # Run only the ATC use case
 make functional-test-aircraft
+
+# Run only the retail use case
+make functional-test-retail
 
 # Run against an already-running stack (skip Compose + Flink deploy)
 make functional-test-skip-compose
@@ -56,8 +62,10 @@ functional-tests/
 ├── bin/use_cases/
 │   ├── banking/
 │   │   └── banking-fraud-e2e.sh        # banking fraud detection E2E test (38 assertions)
-│   └── aircraft/
-│       └── aircraft-e2e.sh             # air traffic control E2E test (50 assertions)
+│   ├── aircraft/
+│   │   └── aircraft-e2e.sh             # air traffic control E2E test (50 assertions)
+│   └── retail/
+│       └── retail-agent-e2e.sh         # retail promotion E2E test (5 scenarios)
 ├── fixtures/
 │   ├── banking/                        # reference JSON payloads for banking
 │   └── aircraft/                       # reference JSON payloads for ATC
@@ -158,6 +166,38 @@ SKIP_FLINK_DEPLOY=true make functional-test    # skip both compose and deploy
 
 ---
 
+## Retail Promotion use case
+
+**Use-case ID:** `retail-agent`
+**Flink job:** `Retail Promotion Agent`
+**Scenario count:** 5
+
+The retail test drives every scenario in `samples/retail-agent/demo-scenarios.json`
+through the BFF and asserts the `Promotion` emitted on `agent-promotions`, the absence of
+errors on `agent-retail-errors`, and the final `loyaltyStatus` recorded on
+`agent-customer-entity-changelog`. Each scenario uses its own `customerId`, and all
+assertions are filtered by that id so scheduled promotions from earlier scenarios cannot
+leak into later ones.
+
+### Scenarios covered
+
+| Scenario | Customer | Description | Expected output |
+|---|---|---|---|
+| 1 | `JS` | Silver customer with 3 purchases | Upgraded to Gold, `discount=10` |
+| 2 | `TS` | Gold customer with 5 purchases | Upgraded to Platinum, `discount=12` |
+| 3 | `WM` | Gold customer, large purchase (SPORT) | `discount=10`, `productCategory=SPORT` |
+| 4 | `EC` | 3 ELECTRONICS purchases in 48h, then store visit | `discount=5`, status stays Silver |
+| 5 | `LB` | 3 ELECTRONICS browse events in 48h, then store visit | `discount=3`, status stays Silver |
+
+### Key environment variable
+
+| Variable | Default | Description |
+|---|---|---|
+| `OUTPUT_WAIT_TIMEOUT` | `60` | Seconds to wait for a `Promotion` on `agent-promotions` |
+| `INTER_EVENT_DELAY_MS` | `2000` | Milliseconds between injected events within one scenario |
+
+---
+
 ## Environment variables
 
 | Variable | Default | Description |
@@ -170,6 +210,8 @@ SKIP_FLINK_DEPLOY=true make functional-test    # skip both compose and deploy
 | `FLINK_JOB_TIMEOUT` | `180` | Seconds to wait for a Flink job to be RUNNING |
 | `ALERT_WAIT_TIMEOUT` | `90` | Seconds to wait for a fraud/ATC alert |
 | `TRACKED_WAIT_TIMEOUT` | `60` | Seconds to wait for a `TrackedAircraftEvent` |
+| `OUTPUT_WAIT_TIMEOUT` | `60` | Seconds to wait for a `Promotion` event (retail) |
+| `INTER_EVENT_DELAY_MS` | `2000` | Milliseconds between events in one retail scenario |
 
 ---
 
@@ -181,8 +223,8 @@ SKIP_FLINK_DEPLOY=true make functional-test    # skip both compose and deploy
   run: mvn package -pl event-rule-backend --settings settings.xml -DskipTests
 
 - name: Run functional tests
-  run: make functional-test
-  timeout-minutes: 20
+  run: make functional-tests
+  timeout-minutes: 30
 ```
 
 The suite is deterministic: each test run uses unique entity/account IDs
@@ -239,6 +281,16 @@ transaction. If the Flink worker is under load, increase this delay:
 ```bash
 INTER_EVENT_DELAY_MS=10000 make functional-test-banking
 ```
+
+### Test timeouts or slow startup on Apple Silicon
+
+By default, Docker Compose pulls images matching the host platform, but if you are running an emulated `amd64` container on Apple Silicon (using Rosetta 2 or QEMU), JVM startup and class loading can be extremely slow. This can cause Flink job registration or first-event processing to exceed default timeouts (such as the 60-second wait for a `TrackedAircraftEvent`).
+
+To resolve this, ensure you configure a native `arm64` image in your `.env` file:
+```bash
+FLINK_IMAGE=flink:2.2.0-scala_2.12-java21
+```
+This forces the Docker host to run the container natively, reducing warm-up latency from several minutes to under 20 seconds.
 
 ### Report files
 

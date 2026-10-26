@@ -406,7 +406,7 @@ class BffWebSocketFunctionalTest {
 
                 JsonNode eventMsg = ws.nextMessageOfType("event", 15);
 
-                // topicType for agent-transactions is "transaction" per descriptor.json
+                // topicType for agent-transactions is "transaction" per agents.json
                 assertEquals("transaction", eventMsg.path("topicType").asText(),
                     "topicType for agent-transactions events must be 'transaction': " + eventMsg);
 

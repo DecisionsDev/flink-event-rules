@@ -68,9 +68,12 @@ function scoreColor(pct) {
 
 // ── Shared normalisation helpers ──────────────────────────────────────────────
 
-// Accept both singular and IBM DI "@JsonProperty" pluralised-with-es spellings.
+// Accept both the primary field name and the pluralised form emitted by the IBM DI
+// Java model's @JsonProperty annotations (e.g. "triggeredRules" and "triggeredRuleses"
+// are both accepted).  Note: the "es" suffix is a deliberate Java serialisation quirk,
+// not standard English pluralisation — it is intentional here.
 function coerce(event, key) {
-  return event[key] ?? event[`${key}es`] ?? [];
+  return event[key] ?? event[`${key}s`] ?? event[`${key}es`] ?? [];
 }
 
 function normaliseRules(raw) {
@@ -125,15 +128,23 @@ const SEMANTIC_BADGE = {
   bg: '#f8fafc', color: '#64748b', border: '#cbd5e1',   // neutral default
 };
 
-const POSITIVE_WORDS  = /^(approved?|accept|allow|pass|success|ok|yes|sent|offer_sent)$/i;
-const NEGATIVE_WORDS  = /^(block|blocked|denied?|declined?|rejected?|suspend|fraudulent|flagged?)$/i;
-const WARNING_WORDS   = /^(pending|review|verify|verification|hold|investigate)$/i;
+// Match normalised decision strings: uppercase letters and underscores only.
+// Underscores are NOT stripped before testing so multi-word decisions like
+// OFFER_SENT remain matchable; each regex uses _? to tolerate both the
+// original form and a compacted form without separators.
+// Input to these regexes is already uppercased by decisionBadge(), so the /i
+// flag is redundant and has been removed (L-4).
+const POSITIVE_WORDS  = /^(APPROVED?|ACCEPT|ALLOW|PASS|SUCCESS|OK|YES|SENT|OFFER_?SENT)$/;
+const NEGATIVE_WORDS  = /^(BLOCK|BLOCKED|DENIED?|DECLINED?|REJECTED?|SUSPEND|FRAUDULENT|FLAGGED?)$/;
+const WARNING_WORDS   = /^(PENDING|REVIEW|VERIFY|VERIFICATION|HOLD|INVESTIGATE)$/;
 
 function decisionBadge(decision) {
+  // Normalise to uppercase; replace non-alpha characters with underscores
+  // (preserving underscores from the original value for multi-word matching).
   const d = String(decision || '').toUpperCase().replace(/[^A-Z_]/g, '_');
-  if (POSITIVE_WORDS.test(d.replace(/_/g, '')))  return { bg: '#f0fdf4', color: '#15803d', border: '#86efac' };
-  if (NEGATIVE_WORDS.test(d.replace(/_/g, '')))  return { bg: '#fef2f2', color: '#b91c1c', border: '#fca5a5' };
-  if (WARNING_WORDS.test(d.replace(/_/g, '')))   return { bg: '#fffbeb', color: '#b45309', border: '#fbbf24' };
+  if (POSITIVE_WORDS.test(d))  return { bg: '#f0fdf4', color: '#15803d', border: '#86efac' };
+  if (NEGATIVE_WORDS.test(d))  return { bg: '#fef2f2', color: '#b91c1c', border: '#fca5a5' };
+  if (WARNING_WORDS.test(d))   return { bg: '#fffbeb', color: '#b45309', border: '#fbbf24' };
   return SEMANTIC_BADGE;
 }
 
@@ -255,12 +266,13 @@ const CONTENT_RENDERERS = [
  * @returns {ReactNode}
  */
 export function renderCard(event, topicType, index) {
-  // Use position-based key only. Content-derived keys (transactionId, accountId,
-  // etc.) are NOT unique across the rendered slice — multiple events from the
-  // same account or referencing the same transaction share those values, causing
-  // React to treat distinct list entries as the same node and either skip or
-  // misrender them, which manifests as apparent duplicates in the panel.
-  const key = `${topicType}-${index}`;
+  // Prefer the stable BFF-assigned sequence number (_seq) when available (M-2).
+  // Fall back to the position-based index for events that pre-date the _seq
+  // addition (e.g. historical events fetched before the BFF was updated).
+  // Content-derived keys (transactionId, accountId, etc.) are intentionally NOT
+  // used here — multiple events from the same entity share those values, causing
+  // React to treat distinct list entries as the same node.
+  const key = event?._seq != null ? `${topicType}-seq-${event._seq}` : `${topicType}-${index}`;
 
   let inner;
 
@@ -298,7 +310,11 @@ export function renderCard(event, topicType, index) {
 
 /**
  * Generic empty-state node for outbound topics.
+ * @param {string} [topicType] - optional topic type used to tailor the message
  */
-export function OutboundEmptyState() {
+export function OutboundEmptyState({ topicType }) {
+  if (topicType === 'agent-error') {
+    return <p>No processing errors — the rule engine is running cleanly.</p>;
+  }
   return <p>No events yet — waiting for rule engine output…</p>;
 }

@@ -80,18 +80,32 @@ services:
         jobmanager.rpc.address: jobmanager
         jobmanager.rpc.port: 6123
         jobmanager.memory.process.size: 2048m
-        taskmanager.memory.process.size: 1728m
-        taskmanager.numberOfTaskSlots: 6
+        taskmanager.memory.process.size: 2048m
+        taskmanager.numberOfTaskSlots: 8
         parallelism.default: 1
         rest.port: 8081
         rest.address: 0.0.0.0
         execution.checkpointing.interval: 60000
-        execution.checkpointing.mode: EXACTLY_ONCE
+        # Cluster-side initial delay guard (Apache Flink 2.0+ only; silently ignored by
+        # Confluent Platform Flink 2.1.x).  The Java-API path in AgentBasedDataStreamJob
+        # (CheckpointConfig.setInitialDelay) is the authoritative mechanism and works on
+        # every runtime.  Both are set to the same value for defence in depth.
+        execution.checkpointing.initial-delay: 300000
+        execution.checkpointing.mode: AT_LEAST_ONCE
         execution.checkpointing.timeout: 300000
         execution.checkpointing.min-pause: 30000
-        execution.checkpointing.tolerable-failed-checkpoints: 2
+        # Tolerate up to 10 consecutive failed checkpoints (= 600 s at 60 s interval).
+        # Belt-and-suspenders: even with the initial delay, a slow restart on an emulated
+        # JVM may fire a checkpoint before warm-up completes.  10 failures gives 10 min
+        # of grace; the job is only terminated if failures persist past that window.
+        execution.checkpointing.tolerable-failed-checkpoints: 10
         state.backend.type: rocksdb
         state.backend.rocksdb.localdir: /tmp/flink-rocksdb
+        # Persist completed checkpoints to the JobManager volume so they survive restarts.
+        # The path resolves inside the jobmanager container via the ./event-rule-backend/target
+        # volume mount; use a dedicated subdirectory so checkpoints are not mixed with JARs.
+        execution.checkpointing.dir: file:///opt/flink/checkpoints
+        execution.checkpointing.savepoint-dir: file:///opt/flink/savepoints
         heartbeat.timeout: 300000
         heartbeat.interval: 50000
         pekko.ask.timeout: 120s
@@ -102,10 +116,20 @@ services:
       - JVM_ARGS=-XX:+UseG1GC
       # Disable in-process agent chaining. Set to "true" to opt in to chaining.
       - CHAINING_ENABLED=${CHAINING_ENABLED:-false}
+      # Propagate checkpoint timeout so AgentBasedDataStreamJob picks it up via longEnvOr().
+      # Defaults to 300000 ms (5 min) when not set — matches execution.checkpointing.timeout above.
+      - CHECKPOINT_TIMEOUT_MS=${CHECKPOINT_TIMEOUT_MS:-300000}
+      # Initial delay before the FIRST checkpoint.  Must cover RocksDB native-library
+      # extraction + IBM DI runner warm-up on a cold JVM.  Default: 5 × interval = 300 s.
+      # Passed to CheckpointConfig.setInitialDelay() in AgentBasedDataStreamJob, which works
+      # on every Flink runtime version regardless of cluster-config key support.
+      - CHECKPOINT_INITIAL_DELAY_MS=${CHECKPOINT_INITIAL_DELAY_MS:-300000}
     volumes:
       - ./event-rule-backend/target:/opt/flink/usrlib
       - ./samples:/opt/flink/samples
       - ./event-rule-backend/src/main/resources/log4j2.properties:/opt/flink/conf/log4j-console.properties:ro
+      - ./checkpoints:/opt/flink/checkpoints
+      - ./savepoints:/opt/flink/savepoints
     networks:
       event-rule-network:
         aliases:
@@ -132,10 +156,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
+          cpus: '4.0'
           memory: 3G
         reservations:
-          cpus: '1.0'
+          cpus: '2.0'
           memory: 1.5G
     environment:
       - |
@@ -144,10 +168,13 @@ services:
         jobmanager.rpc.port: 6123
         taskmanager.memory.process.size: 2048m
         taskmanager.memory.flink.size: 1536m
-        taskmanager.numberOfTaskSlots: 6
+        taskmanager.numberOfTaskSlots: 8
         taskmanager.registration.timeout: 10min
         taskmanager.registration.max-backoff: 30s
-        parallelism.default: 1
+        # parallelism.default is a job-submission setting controlled by the JobManager.
+        # It must not be set here — the TaskManager process ignores it and setting it to a
+        # different value from the JobManager (which declares parallelism.default: 1) causes
+        # confusing discrepancy in log diagnostics.
         heartbeat.timeout: 300000
         heartbeat.interval: 50000
         pekko.ask.timeout: 120s
@@ -162,6 +189,8 @@ services:
       - ./event-rule-backend/target:/opt/flink/usrlib
       - ./samples:/opt/flink/samples
       - ./event-rule-backend/src/main/resources/log4j2.properties:/opt/flink/conf/log4j-console.properties:ro
+      - ./checkpoints:/opt/flink/checkpoints
+      - ./savepoints:/opt/flink/savepoints
     networks:
       event-rule-network:
         aliases:
@@ -188,6 +217,9 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       TOPIC_PARTITIONS: 1
       PORT: 8080
+      # Browser origin(s) allowed by CORS, e.g. http://myhost:3010 or https://myhost.
+      # Empty → BFF default (http://localhost:3010).
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       SAMPLES_DIR: /app/samples
       FLINK_URL: http://jobmanager:8081
       JAR_PATH: /app/flink-jars/event-rule-backend-1.0-SNAPSHOT.jar
@@ -210,7 +242,10 @@ services:
     depends_on:
       - bff
     environment:
-      VITE_WS_URL: ws://localhost:8080
+      # Override BFF_URL_WS and BFF_URL_HTTP if the BFF is not on localhost:8080.
+      # These values are substituted into the nginx CSP header at container start.
+      BFF_URL_WS: ${BFF_URL_WS:-ws://localhost:8080}
+      BFF_URL_HTTP: ${BFF_URL_HTTP:-http://localhost:8080}
     ports:
       - "3010:80"
     networks:

@@ -4,7 +4,7 @@ This document covers agent and event-rule patterns that go beyond a single agent
 single event type — chaining, multi-input agents, parallel/fan-out processing, and a design
 pattern catalogue with worked examples.
 
-> For the core descriptor schema (`agents.json`, `descriptor.json`) see
+> For the core descriptor schema (`agents.json`) see
 > [`AGENT_PATTERN_DESIGN.md`](AGENT_PATTERN_DESIGN.md). For a step-by-step build guide see
 > [`../TUTORIAL.md`](../TUTORIAL.md).
 

@@ -12,7 +12,7 @@ Intelligence.
 | **Entity tracked** | `Account` (keyed by `$.accountNumber`) |
 | **Decision archive** | [`FraudDetectionService_1.5.2.jar`](FraudDetectionService_1.5.2.jar) |
 | **State TTL** | 30 days (RocksDB) |
-| **Descriptor** | [`agents.json`](agents.json) / [`descriptor.json`](descriptor.json) |
+| **Descriptor** | [`agents.json`](agents.json) |
 
 ## Table of Contents
 

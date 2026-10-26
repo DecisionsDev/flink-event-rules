@@ -26,6 +26,7 @@ import com.ibm.di.event.rule.broadcast.ArchiveControlCmd;
 import com.ibm.di.event.rule.broadcast.ArchiveDownloader;
 import com.ibm.di.event.rule.broadcast.ArchiveEntry;
 import org.apache.flink.api.common.functions.OpenContext;
+import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ReadOnlyBroadcastState;
 import org.apache.flink.api.common.state.StateTtlConfig;
@@ -37,6 +38,7 @@ import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.metrics.DescriptiveStatisticsHistogram;
+import org.apache.flink.streaming.api.TimeDomain;
 import org.apache.flink.streaming.api.functions.co.KeyedBroadcastProcessFunction;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
@@ -50,6 +52,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Stateful Agent rule processor with broadcast-state archive reload.
@@ -146,16 +152,55 @@ public class StatefulAgentProcessor
     private transient ObjectMapper           objectMapper;
 
     /**
+     * Keeps the entity's {@link ScheduleRequest}s and their Flink event-time timers in sync.
+     * {@code null} when the descriptor uses no scheduling (no operation has a {@code schedule}
+     * section and there is no {@code Schedule} subscription), in which case no schedule state
+     * is created at all.
+     */
+    private transient ScheduleManager scheduleManager;
+
+    /**
      * Per-subtask runner cache: archive version label → initialised {@link RuleEngineRunner}.
      * Field-initialised so unit-test accessors are safe before {@link #open} is called.
      */
-    private transient Map<String, RuleEngineRunner> runnerCache = new HashMap<>();
+    // ConcurrentHashMap is required because the async archive-reload path (M-10)
+    // can write to this map from a CompletableFuture completion while the Flink
+    // operator thread concurrently reads from it.
+    private transient Map<String, RuleEngineRunner> runnerCache = new ConcurrentHashMap<>();
 
     /**
      * Lazily-built bootstrap entry used when broadcast state is empty (cold start or no
      * checkpoint).
      */
     private transient ArchiveEntry bootstrapEntry;
+
+    /**
+     * Background future that drives the bootstrap runner pre-warm.
+     *
+     * <p>Pre-warming the IBM DI rule engine (class loading, DRL compilation, JIT warm-up)
+     * can take multiple minutes on environments where the JVM runs under QEMU emulation
+     * (e.g. an {@code amd64} Docker image on Apple Silicon).  Running it synchronously
+     * inside {@link #open} would block the Flink task thread and prevent the task from
+     * transitioning from {@code INITIALIZING} to {@code RUNNING}, causing every checkpoint
+     * that fires during warm-up to abort with "Not all required tasks are currently running".
+     *
+     * <p>Instead, {@link #open} starts the warm-up on a dedicated daemon thread and returns
+     * immediately.  The task reaches {@code RUNNING} within milliseconds.  The first incoming
+     * event that needs the rule engine calls {@link #awaitWarmUp()} which blocks only that
+     * single processing thread until the background work completes — at which point it is
+     * guaranteed to be ready for all subsequent events with zero additional wait.
+     *
+     * <p>Failures during background warm-up are surfaced as a {@link RuntimeException} on
+     * the first {@link #processElement} call rather than at open-time, preserving the
+     * existing error-propagation contract.
+     */
+    private transient volatile CompletableFuture<Void> warmUpFuture;
+
+    /**
+     * Dedicated single-thread executor for the background pre-warm.
+     * Shut down in {@link #close()} to release the daemon thread promptly.
+     */
+    private transient ExecutorService warmUpExecutor;
 
     // ── Flink metrics ──────────────────────────────────────────────────────────
 
@@ -212,33 +257,9 @@ public class StatefulAgentProcessor
     public void open(OpenContext openContext) throws Exception {
         super.open(openContext);
 
-        objectMapper = new ObjectMapper();
-        runnerCache  = new HashMap<>();
+        objectMapper   = new ObjectMapper();
+        runnerCache    = new ConcurrentHashMap<>();
         bootstrapEntry = null;
-
-        // ── Pre-warm one bootstrap runner per distinct operation ──────────
-        String rulesetPath = descriptor.getRuleset().getPath();
-        java.net.URI rulesetUri = rulesetPath.contains("://")
-            ? java.net.URI.create(rulesetPath)
-            : java.nio.file.Paths.get(rulesetPath).toUri();
-
-        if (descriptor.getSubscriptions() != null) {
-            descriptor.getSubscriptions().stream()
-                .filter(EventSubscription::hasOperation)
-                .map(EventSubscription::getOperation)
-                .distinct()
-                .forEach(op -> {
-                    try {
-                        RuleEngineRunner warmRunner = new RuleEngineRunner(op, rulesetUri);
-                        warmRunner.initializeEagerly();
-                        runnerCache.put(bootstrapKey(op), warmRunner);
-                        LOG.info("[{}] Bootstrap runner pre-warmed. operation={}", agentTag(), op);
-                    } catch (Exception e) {
-                        LOG.warn("[{}] Bootstrap runner pre-warm failed for operation={} (will retry on first event): {}",
-                            agentTag(), op, e.getMessage());
-                    }
-                });
-        }
 
         // ── Keyed state descriptor ─────────────────────────────────────────
         ValueStateDescriptor<AgentState> stateDesc = new ValueStateDescriptor<>(
@@ -259,6 +280,19 @@ public class StatefulAgentProcessor
         }
 
         agentStateHandle = getRuntimeContext().getState(stateDesc);
+
+        // ── Schedule state (only when the descriptor uses scheduling) ──────
+        // Deliberately no TTL: an expired schedule would silently never fire.
+        if (usesScheduling()) {
+            MapState<String, ScheduleRequest> byId = getRuntimeContext().getMapState(
+                new MapStateDescriptor<>("agent-schedule-by-id-" + descriptor.getAgentId(),
+                    Types.STRING, TypeInformation.of(ScheduleRequest.class)));
+            MapState<Long, List<String>> idsByTime = getRuntimeContext().getMapState(
+                new MapStateDescriptor<>("agent-schedule-by-time-" + descriptor.getAgentId(),
+                    Types.LONG, Types.LIST(Types.STRING)));
+            scheduleManager = new ScheduleManager(byId, idsByTime, agentTag());
+            LOG.info("[{}] Scheduling enabled", agentTag());
+        }
 
         // ── Metrics ────────────────────────────────────────────────────────
         MetricGroup mg = getRuntimeContext().getMetricGroup()
@@ -288,12 +322,102 @@ public class StatefulAgentProcessor
                 + "rule engine will never be invoked; events are accumulated for context only.",
                 agentTag(), subCount);
         }
+
+        // ── Background bootstrap runner pre-warm ───────────────────────────
+        // IBM DI runner initialisation (class loading, DRL compilation, JIT warm-up)
+        // is CPU-intensive and can block the Flink task thread for several minutes on
+        // slow or emulated environments (QEMU x86-64 on Apple Silicon being the worst
+        // case).  Running it here synchronously would keep the task stuck in INITIALIZING
+        // and cause every checkpoint that fires during warm-up to abort.
+        //
+        // Solution: submit the work to a daemon thread and return immediately.  The task
+        // reaches RUNNING in milliseconds.  The first processElement/processBroadcastElement
+        // call that needs a runner will block on awaitWarmUp() — by then the warm-up is
+        // almost always complete, so the wait is negligible in steady state.
+        String rulesetPath = descriptor.getRuleset().getPath();
+        java.net.URI rulesetUri = rulesetPath.contains("://")
+            ? java.net.URI.create(rulesetPath)
+            : java.nio.file.Paths.get(rulesetPath).toUri();
+
+        List<String> opsToWarm = descriptor.getSubscriptions() == null
+            ? java.util.Collections.emptyList()
+            : descriptor.getSubscriptions().stream()
+                .filter(EventSubscription::hasOperation)
+                .map(EventSubscription::getOperation)
+                .distinct()
+                .collect(java.util.stream.Collectors.toList());
+
+        if (opsToWarm.isEmpty()) {
+            // No operations to pre-warm; create a completed future so awaitWarmUp() is a no-op.
+            warmUpFuture = CompletableFuture.completedFuture(null);
+        } else {
+            warmUpExecutor = Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "agent-prewarm-" + descriptor.getAgentId());
+                t.setDaemon(true);
+                return t;
+            });
+            LOG.info("[{}] Launching background pre-warm for {} operation(s): {}",
+                agentTag(), opsToWarm.size(), opsToWarm);
+            warmUpFuture = CompletableFuture.runAsync(() -> {
+                for (String op : opsToWarm) {
+                    try {
+                        RuleEngineRunner warmRunner = new RuleEngineRunner(op, rulesetUri);
+                        warmRunner.initializeEagerly();
+                        synchronized (runnerCache) {
+                            runnerCache.put(bootstrapKey(op), warmRunner);
+                        }
+                        LOG.info("[{}] Bootstrap runner pre-warmed. operation={}", agentTag(), op);
+                    } catch (Exception e) {
+                        LOG.warn("[{}] Bootstrap runner pre-warm failed for operation={} "
+                            + "(will retry lazily on first event): {}",
+                            agentTag(), op, e.getMessage());
+                    }
+                }
+                LOG.info("[{}] Background pre-warm complete for all {} operation(s).",
+                    agentTag(), opsToWarm.size());
+            }, warmUpExecutor);
+        }
     }
 
     @Override
     public void close() throws Exception {
+        // Cancel any in-progress warm-up to avoid a thread leak.
+        if (warmUpFuture != null) {
+            warmUpFuture.cancel(true);
+        }
+        if (warmUpExecutor != null) {
+            warmUpExecutor.shutdownNow();
+        }
         closeAllRunners();
         super.close();
+    }
+
+    /**
+     * Blocks the calling thread until the background bootstrap pre-warm completes.
+     *
+     * <p>Must be called at the start of every entry point that touches the runner cache
+     * ({@link #processElement} and {@link #processBroadcastElement}).  After the first
+     * successful call, the future is already completed and subsequent calls return
+     * immediately without any synchronization overhead.
+     *
+     * <p>Warm-up failures (e.g., missing archive JAR) are re-thrown here as a
+     * {@link RuntimeException} so Flink can fail the task and trigger a restart, rather
+     * than silently proceeding with an uninitialised runner.
+     */
+    private void awaitWarmUp() {
+        if (warmUpFuture == null || warmUpFuture.isDone()) return;
+        try {
+            LOG.info("[{}] First event arrived while background pre-warm is still running — "
+                + "waiting for completion before processing.", agentTag());
+            warmUpFuture.join(); // blocks until done or cancelled
+        } catch (java.util.concurrent.CancellationException e) {
+            // Cancelled during close() — treat as a non-fatal warning; the task is shutting down.
+            LOG.warn("[{}] Background pre-warm was cancelled (task is closing).", agentTag());
+        } catch (java.util.concurrent.CompletionException e) {
+            // Unwrap so the root cause propagates up to Flink's task error handler.
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw new RuntimeException("Bootstrap pre-warm failed: " + cause.getMessage(), cause);
+        }
     }
 
     // ── Broadcast side: archive-control commands ───────────────────────────────
@@ -314,6 +438,9 @@ public class StatefulAgentProcessor
     public void processBroadcastElement(ArchiveControlCmd cmd,
                                         Context ctx,
                                         Collector<EventEnvelope> out) {
+        // Ensure the bootstrap pre-warm has completed before touching the runner cache.
+        awaitWarmUp();
+
         if (cmd == null) {
             LOG.warn("[{}] Received null archive-control command — ignoring", agentTag());
             return;
@@ -413,15 +540,20 @@ public class StatefulAgentProcessor
     // ── Non-broadcast side: event processing ──────────────────────────────────
 
     /**
-     * 10-step processing pipeline for a single incoming event.
+     * 13-step processing pipeline for a single incoming event.
      */
     @Override
     public void processElement(EventEnvelope event,
                                ReadOnlyContext ctx,
                                Collector<EventEnvelope> out) throws Exception {
+        // Ensure the bootstrap pre-warm has completed before touching the runner cache.
+        awaitWarmUp();
+
         if (event == null) {
             LOG.warn("[{}] Null event received — skipping", agentTag());
             return;
+        } else {
+            LOG.debug("[{}] Processing event: {}. Current timestamp: {} [Watermark: {}]", agentTag(), event.toString(), ctx.timestamp(), ctx.currentWatermark());
         }
 
         // ── Sentinel: targeted per-entity state reset ─────────────────────
@@ -430,6 +562,8 @@ public class StatefulAgentProcessor
         // is affected — all other entities are completely untouched.
         if (ENTITY_RESET_EVENT_TYPE.equals(event.getEventType())) {
             agentStateHandle.clear();
+            // A reset entity must not receive Schedule events registered before the reset.
+            if (scheduleManager != null) scheduleManager.cancelAll(ctx.timerService());
             LOG.info("[{}] Entity state cleared for entityId={}", agentTag(), event.getEntityId());
             return;
         }
@@ -440,57 +574,84 @@ public class StatefulAgentProcessor
             state = AgentState.init(event.getEntityId(),
                 descriptor.getEntityType(), event.getTimestamp());
             if (newEntityCounter != null) newEntityCounter.inc();
-            LOG.debug("[{}] New entity state entityId={}", agentTag(), event.getEntityId());
+            LOG.debug("[{}] New entity state created for entityId={} of type {}", agentTag(), event.getEntityId(), descriptor.getEntityType());
         }
 
-        // ── Step 2: look up the operation for this event's subscription ───
-        String operation = resolveOperation(event);
+        // ── Step 2: trigger schedule requests that are due at this event time ──────────────────────────────
+        // Guard: only fire accumulated past schedules when this event is NOT itself a Schedule event.
+        // Schedule events are produced by fireSchedules() (called from fireAllSchedules() or onTimer())
+        // and recursively arrive here via processElement().  If fireAllSchedules() were called again for a
+        // Schedule event, each recursive processElement() call would invoke fireAllSchedules() once more,
+        // creating an unbounded recursion stack — and an infinite loop whenever the rule engine returns new
+        // ScheduleRequests for a timepoint ≤ the current Schedule event's timestamp.
+        // Schedule events must never seed another round of fireAllSchedules: they are already the product
+        // of that round, and any new ScheduleRequests they produce are for FUTURE timepoints that will be
+        // handled correctly by the Flink event-time timer in onTimer().
+        if (!(ctx instanceof OnTimerContext) && !ScheduleManager.SCHEDULE_EVENT_TYPE.equals(event.getEventType())) {
+            // timers are event-time timers that are triggered by Watermark. The watermark of this processor
+            // is the lowest watermark of all incoming sources, which delays the execution of the timers if one
+            // or more sources are idle. This is solved by idleness attached to the source, but we anticipate
+            // the watermark when we receive an event by triggering all timers due at this event time.
+            fireAllSchedules(event.getTimestamp(), ctx, out);
+        }
 
-        // -- Step 3: evict events from horizon based on the current event time
+
+        // ── Step 3: look up the operation for this event's subscription ───
+        String operation = resolveOperation(event);
+        if (operation == null) {
+            LOG.debug("[{}] no operation registered for {}", agentTag(), event.getEventType());
+        }
+
+        // -- Step 4: evict events from horizon based on the current event time
         state.evictExpiredEvents(event.getTimestamp());
 
-        // ── Step 4: prepare rule execution context ────────────────────────
-        if (state.getEntityData() == null) {
-            LOG.debug("[{}] entity is null for entityId={} currentEventType={} — "
-                + "null entity will be passed to DI as input.entity; "
-                + "rules may create and populate it from the current event.",
-                agentTag(), event.getEntityId(), event.getEventType());
-        }
-
-        JsonNode ruleContext = buildRuleContext(state, event);
-
-        // ── Step 5: resolve active runner for this operation and execute ──
         JsonNode ruleResult = null;
-        try {
-            RuleEngineRunner runner = resolveRunnerForOperation(operation, ctx);
-            long t0 = System.currentTimeMillis();
-            ruleResult = runner.execute(ruleContext);
-            long latencyMs = System.currentTimeMillis() - t0;
-            if (ruleLatencyHistogram != null) ruleLatencyHistogram.update(latencyMs);
-            LOG.debug("[{}] Rule execution complete entityId={} eventType={} operation={} latencyMs={}",
-                agentTag(), event.getEntityId(), event.getEventType(), operation, latencyMs);
-        } catch (Exception e) {
-            LOG.error("[{}] Rule engine error entityId={} operation={}: {}",
-                agentTag(), event.getEntityId(), operation, e.getMessage());
-        }
-
-        // ── Step 6: update entity state from rule result ──────────────────
-        JsonNode entityBefore = state.getEntityData() != null
-            ? state.getEntityData().deepCopy() : null;
-        if (ruleResult != null) {
-            updateEntityState(state, ruleResult, operation);
-        }
-
-        // ── Step 6b: emit changelog side-output when entity changed ────────
-        if (descriptor.getStateConfig() != null
-                && descriptor.getStateConfig().hasChangeLogTopic()) {
-            JsonNode entityAfter = state.getEntityData();
-            if (entityAfter != null && !entityAfter.equals(entityBefore)) {
-                ctx.output(changelogTag, buildChangeLogEnvelope(event, entityAfter));
+        if (operation != null) {
+            // ── Step 5: prepare rule execution context ────────────────────────
+            if (state.getEntityData() == null) {
+                LOG.debug("[{}] entity is null for entityId={} currentEventType={} — "
+                    + "null entity will be passed to DI as input.entity; "
+                    + "rules may create and populate it from the current event.",
+                    agentTag(), event.getEntityId(), event.getEventType());
             }
+
+            JsonNode ruleContext = buildRuleContext(state, event);
+
+            // ── Step 6: resolve active runner for this operation and execute ──
+            try {
+                RuleEngineRunner runner = resolveRunnerForOperation(operation, ctx);
+                long t0 = System.currentTimeMillis();
+                ruleResult = runner.execute(ruleContext);
+                long latencyMs = System.currentTimeMillis() - t0;
+                if (ruleLatencyHistogram != null) ruleLatencyHistogram.update(latencyMs);
+                LOG.debug("[{}] Rule execution complete entityId={} eventType={} operation={} latencyMs={}",
+                    agentTag(), event.getEntityId(), event.getEventType(), operation, latencyMs);
+            } catch (Exception e) {
+                LOG.error("[{}] Rule engine error entityId={} operation={}: {}",
+                    agentTag(), event.getEntityId(), operation, e.getMessage());
+            }
+
+            // ── Step 7: update entity state from rule result ──────────────────
+            JsonNode entityBefore = state.getEntityData() != null
+                ? state.getEntityData().deepCopy() : null;
+            if (ruleResult != null) {
+                updateEntityState(state, ruleResult, operation, event);
+            }
+
+            // ── Step 8: emit changelog side-output when entity changed ────────
+            if (descriptor.getStateConfig() != null
+                    && descriptor.getStateConfig().hasChangeLogTopic()) {
+                JsonNode entityAfter = state.getEntityData();
+                if (entityAfter != null && !entityAfter.equals(entityBefore)) {
+                    ctx.output(changelogTag, buildChangeLogEnvelope(event, entityAfter));
+                }
+            }
+
+            // ── Step 9: apply schedule requests returned by the rules ────────
+            processScheduleRequests(ruleResult, operation, ctx);
         }
 
-        // ── Step 7: update event history  ────────────
+        // ── Step 10: update event history  ────────────
         long historyBefore = countHistorySize(state);
         updateEventHistory(state, event);
         long evicted = historyBefore + 1 - countHistorySize(state);
@@ -498,39 +659,54 @@ public class StatefulAgentProcessor
             horizonEvictionsCounter.inc(evicted);
         }
 
-        // ── Step 8: persist state ─────────────────────────────────────────
+        // ── Step 11: persist state ─────────────────────────────────────────
         agentStateHandle.update(state);
 
-        // ── Step 9: emit output events (zero or more) ─────────────────────
-        List<EventEnvelope> outputs = buildOutputEvents(event, ruleResult, operation);
+        if (operation != null) {
+            // ── Step 12: emit output events (zero or more) ─────────────────────
+            List<EventEnvelope> outputs = buildOutputEvents(event, ruleResult, operation);
 
-        if (!outputs.isEmpty()) {
-            for (EventEnvelope output : outputs) {
-                LOG.debug("Send outbound event: [" + output.getEventType() + "," + output.getPayload().toPrettyString() + "]");
+            if (!outputs.isEmpty()) {
+                for (EventEnvelope output : outputs) {
+                    LOG.debug("Send outbound event: [" + output.getEventType() + "," + output.getPayload().toPrettyString() + "]");
 
-                out.collect(output);
-                logOutputEvent(event, output);
-                if ("agent-error".equals(output.getEventType())
-                    && processingErrorsCounter != null) {
-                    processingErrorsCounter.inc();
+                    out.collect(output);
+                    logOutputEvent(event, output);
+                    if ("agent-error".equals(output.getEventType())
+                        && processingErrorsCounter != null) {
+                        processingErrorsCounter.inc();
+                    }
                 }
+            } else {
+                LOG.debug("No outbound events to send");    
             }
-        } else {
-            LOG.debug("No outbound events to send");    
         }
         if (eventsProcessedCounter != null) eventsProcessedCounter.inc();
 
-        // ── Step 10: register cleanup timer for time-based horizons ────────
+        // ── Step 13: register cleanup timer for time-based horizons ────────
         registerCleanupTimer(ctx, state);
+        LOG.debug("[{}] Event processing completed: {}. Current timestamp: {} [Watermark: {}]", agentTag(), event.toString(), ctx.timestamp(), ctx.currentWatermark());
     }
 
     /**
-     * Timer callback: evict time-expired events from idle entities.
+     * Timer callback, shared by two kinds of timer:
+     * <ul>
+     *   <li><b>processing time</b>: evict time-expired events from idle entities (event horizon);</li>
+     *   <li><b>event time</b>: a schedule registered through a {@link ScheduleRequest} is due.
+     *       A {@code Schedule} event is built for every request registered at {@code timestamp}
+     *       and fed to {@link #processElement}.</li>
+     * </ul>
      */
     @Override
     public void onTimer(long timestamp,
                         OnTimerContext ctx,
                         Collector<EventEnvelope> out) throws Exception {
+
+        LOG.debug("Timer triggered at {} [Watermark: {}]", ctx.timestamp(), ctx.currentWatermark() );
+        if (ctx.timeDomain() == TimeDomain.EVENT_TIME) {
+            fireSchedules(timestamp, ctx, out);
+            return;
+        }
         AgentState state = agentStateHandle.value();
         if (state == null) return;
         state.evictExpiredEvents(timestamp);
@@ -538,6 +714,76 @@ public class StatefulAgentProcessor
         LOG.debug("[{}] onTimer eviction entityId={}", agentTag(),
             state.getMetadata().getEntityId());
     }
+
+    // ── Scheduling ─────────────────────────────────────────────────────────────
+
+    /** True when an operation has a {@code schedule} section or a Schedule subscription exists. */
+    private boolean usesScheduling() {
+        boolean opSchedules = descriptor.getRuleset().getOperations() != null
+            && descriptor.getRuleset().getOperations().stream()
+                .anyMatch(op -> op.scheduleRequestsField() != null);
+        boolean scheduleSub = descriptor.getSubscriptions() != null
+            && descriptor.getSubscriptions().stream()
+                .anyMatch(EventSubscription::isScheduleSubscription);
+        return opSchedules || scheduleSub;
+    }
+
+    /**
+     * Reads the {@link ScheduleRequest} list from the rule result (field named by the
+     * operation's {@code scheduleRequestsField}), validates it, and applies each request
+     * to the entity's timers. Invalid requests are logged and skipped.
+     */
+    private void processScheduleRequests(JsonNode ruleResult, String operation,
+                                       ReadOnlyContext ctx) throws Exception {
+        if (scheduleManager == null || ruleResult == null) return;
+        RulesetConfig.OperationConfig opConfig = descriptor.getRuleset().findOperation(operation);
+        String field = opConfig != null ? opConfig.scheduleRequestsField() : null;
+        if (field == null) return;
+
+        List<ScheduleRequest> requests =
+            ScheduleManager.parseRequests(ruleResult.get(field), agentTag());
+        if (!requests.isEmpty()) {
+            scheduleManager.apply(requests, ctx.timerService());
+        }
+    }
+
+    /**
+     * Handles an event-time timer: removes the schedules due at {@code timestamp} from state
+     * and processes one {@code Schedule} event for each of them.
+     */
+    private void fireSchedules(long timestamp, ReadOnlyContext ctx,
+                               Collector<EventEnvelope> out) throws Exception {
+        if (scheduleManager == null) return;
+        List<EventEnvelope> events = scheduleManager.fire(timestamp, ctx.getCurrentKey());
+        LOG.debug("[{}] Schedule timer fired timestamp={} entityId={} schedules={}",
+            agentTag(), timestamp, ctx.getCurrentKey(), events.size());
+        if (!(ctx instanceof OnTimerContext)) {
+            // if not called in the context of a timer, cancel the timer planned for this timestamp
+            // if called in the context of a timer, Flink removes it 
+            ctx.timerService().deleteEventTimeTimer(timestamp);
+        }
+        for (EventEnvelope event : events) {
+            processElement(event, ctx, out);
+        }
+    }
+
+
+    /**
+     * Handle all event-time timers that are due at this {@code timestamp} and before. Schedules are executed 
+     * in time order starting with the oldest. Returns the collection of outbound events generated by the processing 
+     * of the schedules. 
+     */
+    private void fireAllSchedules(long timestamp, ReadOnlyContext ctx,
+                                  Collector<EventEnvelope> out) throws Exception {
+        if (scheduleManager == null) return;
+        List<Long> allTimestamps = scheduleManager.getAllScheduledTimestamps(timestamp, ctx.getCurrentKey());
+        for (Long ts : allTimestamps) {
+            fireSchedules(ts, ctx, out);
+        }
+
+    }
+
+
 
     // ── Runner resolution ──────────────────────────────────────────────────────
 
@@ -835,26 +1081,67 @@ public class StatefulAgentProcessor
 
     /**
      * Applies the updated entity state from the rule result to {@link AgentState#getEntityData()}.
+     *
+     * <p><b>Primary path</b>: reads {@code outboundEntityField} (or {@code entityField} if
+     * {@code outboundEntityField} is not set) from the rule result.  For operations where the
+     * Decision Intelligence archive returns the entity object under the configured field key,
+     * this is the primary path that fires.
+     *
+     * <p><b>Payload fallback</b>: when the rule result does not contain the entity field
+     * (e.g. context-enrichment operations whose archive returns a decision output rather than
+     * the entity), the runtime falls back to reading the same-named field from the inbound
+     * event's payload.  The fallback fires silently — no
+     * warning is emitted — because the absent entity field in the result is the expected
+     * behaviour for these context-accumulation operations.
+     *
+     * @param state      current per-entity state to mutate
+     * @param ruleResult result returned by the Decision Intelligence archive
+     * @param operation  operation name used to locate the {@link RulesetConfig.OperationConfig}
+     * @param event      triggering inbound event whose payload is used for the fallback
      */
-    private void updateEntityState(AgentState state, JsonNode ruleResult, String operation) {
+    private void updateEntityState(AgentState state, JsonNode ruleResult, String operation,
+                                   EventEnvelope event) {
         JsonNode update = null;
+        String entityField = null;
 
-        // OperationConfig.entityField — the domain-specific entity field the rule received
-        // and may return the updated entity under (e.g. "theAccount")
-        if (update == null || update.isNull()) {
-            RulesetConfig.OperationConfig opConfig =
-                descriptor.getRuleset().findOperation(operation);
-            if (opConfig != null) {
-                String entityField = opConfig.getEntityField();
-                if (entityField != null && !entityField.isBlank()) {
-                    update = ruleResult.get(entityField);
-                }
+        // ── Primary path: outboundEntityField / entityField in the rule result ───
+        RulesetConfig.OperationConfig opConfig =
+            descriptor.getRuleset().findOperation(operation);
+        if (opConfig != null) {
+            String outboundEntityField = opConfig.getOutboundEntityField();
+            String resultField = (outboundEntityField != null && !outboundEntityField.isBlank())
+                ? outboundEntityField
+                : opConfig.getEntityField();
+            if (resultField != null && !resultField.isBlank()) {
+                update = ruleResult.get(resultField);
+            }
+            entityField = opConfig.getEntityField();
+        }
+
+        // ── Payload fallback: entityField absent in result → read from payload ─
+        // Fires when the archive returns a decision output rather
+        // than the entity itself.  Context-accumulation operations use this path to
+        // persist the relevant context fragment
+        // from the event payload into entity state without requiring a JAR change.
+        if ((update == null || update.isNull())
+                && entityField != null && !entityField.isBlank()
+                && event != null && event.getPayload() != null) {
+            JsonNode payloadField = event.getPayload().get(entityField);
+            if (payloadField != null && !payloadField.isNull() && payloadField.isObject()) {
+                update = payloadField;
+                LOG.debug("[{}] Entity state fallback: persisting payload.{} for op={}",
+                    agentTag(), entityField, operation);
             }
         }
 
         if (update == null || update.isNull()) return;
         if (!update.isObject()) {
             LOG.warn("[{}] entity state source is not a JSON object — ignoring", agentTag());
+            return;
+        }
+
+        if (update.equals(state.getEntityData())) {
+            LOG.debug("Entity has not been modified. Don't save it.");    
             return;
         }
 
@@ -1221,6 +1508,12 @@ public class StatefulAgentProcessor
     }
 
     /**
+     * Injects a {@link ScheduleManager} for unit tests that exercise the scheduling path.
+     * Allows tests to verify scheduling behaviour without a live Flink state backend.
+     */
+    public void injectScheduleManagerForTest(ScheduleManager mgr) { this.scheduleManager = mgr; }
+
+    /**
      * Injects an {@link ObjectMapper} for unit tests.
      */
     public void injectObjectMapper(ObjectMapper mapper) { this.objectMapper = mapper; }
@@ -1281,8 +1574,9 @@ public class StatefulAgentProcessor
                 LOG.warn("[{}] invokeForTest: rule engine error: {}", agentTag(), e.getMessage());
             }
         }
-        if (ruleResult != null) updateEntityState(state, ruleResult, op);
-        return buildOutputEvents(event, ruleResult, op).getFirst();
+        if (ruleResult != null) updateEntityState(state, ruleResult, op, event);
+        List<EventEnvelope> outs = buildOutputEvents(event, ruleResult, op);
+        return outs.isEmpty() ? null : outs.getFirst();
     }
 
     /**

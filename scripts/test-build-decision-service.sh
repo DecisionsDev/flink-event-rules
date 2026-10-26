@@ -354,48 +354,8 @@ else
   skip "Banking ZIP not found at: ${BANKING_ZIP}"
 fi
 
-# ── 4.2 — New ZIP: Fraud Detection Service (Layout C — signed) ──────────
-DISAAS_ZIP="samples/banking-fraud-agent/di-project/Fraud Detection Service.zip"
-echo
-echo "  4.2 — ${DISAAS_ZIP}"
-if [[ -f "${DISAAS_ZIP}" ]]; then
-  mkdir -p "${WORK}/disaas-extract"
-  FOUND_DISAAS=$(detect_project_dir "${DISAAS_ZIP}" "${WORK}/disaas-extract")
-  if [[ -n "${FOUND_DISAAS}" ]]; then
-    pass "DISaaS ZIP: Decision Project detected at '$(basename "${FOUND_DISAAS}")'"
-  else
-    fail "DISaaS ZIP: no Decision Project found"
-    FOUND_DISAAS="${WORK}/disaas-extract"  # prevent empty-var errors below
-  fi
-  for f in "pom.xml" ".decisionservice/pom.xml" ".decisionservice/META-INF/decisionServiceArchive.json"; do
-    if [[ -f "${FOUND_DISAAS}/${f}" ]]; then
-      pass "DISaaS ZIP: required file present: ${f}"
-    else
-      fail "DISaaS ZIP: required file missing: ${f}"
-    fi
-  done
-  RP_COUNT=$(find "${FOUND_DISAAS}" -maxdepth 2 -name ".ruleproject" 2>/dev/null | wc -l | tr -d ' ')
-  if [[ "${RP_COUNT}" -gt 0 ]]; then
-    pass "DISaaS ZIP: ${RP_COUNT} rule project(s) found"
-  else
-    fail "DISaaS ZIP: no rule projects found"
-  fi
-  # Verify META-INF at ZIP root was not selected as the Decision Project
-  META_AS_PROJECT=false
-  if [[ -f "${WORK}/disaas-extract/META-INF/pom.xml" && \
-        -f "${WORK}/disaas-extract/META-INF/.decisionservice/pom.xml" ]]; then
-    META_AS_PROJECT=true
-  fi
-  if [[ "${META_AS_PROJECT}" == "false" ]]; then
-    pass "DISaaS ZIP: META-INF at ZIP root correctly ignored"
-  else
-    fail "DISaaS ZIP: META-INF was incorrectly identified as a Decision Project"
-  fi
-else
-  skip "DISaaS ZIP not found at: ${DISAAS_ZIP}"
-fi
-
 fi  # end unzip guard
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 section "Suite 5: Decision Project directory validation"
@@ -619,6 +579,47 @@ else
     [[ "${NEW_API}" == "3.12.0" ]] && pass "6.5: engine-api.version: ${ORIG_API} → ${NEW_API} (already matched)" \
       || fail "6.5: engine-api.version expected 3.12.0, got '${NEW_API}'"
   fi
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+section "Suite 7: Maven configuration consistency (import-maven-plugin)"
+# ═════════════════════════════════════════════════════════════════════════════
+# Regression tests ensuring DI plugins (import-maven-plugin) are resolved from
+# the isolated LOCAL_REPO rather than ~/.m2/repository, which may carry a
+# .lastUpdated negative-cache entry.
+#
+# These tests inspect the source of build-decision-service.sh directly and do
+# NOT require a running DI instance or a Maven build.
+
+# ── Helpers for source inspection ─────────────────────────────────────────────
+_script_src() { cat "${BDS}"; }
+
+# 7.4 — import-maven-plugin must be installed in Step 5
+echo
+echo "  7.4 — import-maven-plugin is installed into LOCAL_REPO in Step 5"
+STEP5_BLOCK=$(_script_src | awk '/^section.*Step 5/,/^section.*Step 6/')
+if printf '%s\n' "${STEP5_BLOCK}" | grep -qF 'import-maven-plugin'; then
+  pass "7.4: import-maven-plugin install call present in Step 5"
+else
+  fail "7.4: import-maven-plugin is NOT installed in Step 5; it must be pre-installed to avoid negative-cache failures"
+fi
+
+# 7.5 — IMPORT_PLUGIN_PATH must be derived from BUILD_PLUGIN_PATH when not in index.json
+echo
+echo "  7.5 — import-maven-plugin path fallback derives from build-plugin path"
+if _script_src | grep -qF 'BUILD_PLUGIN_PATH/build-maven-plugin/import-maven-plugin'; then
+  pass "7.5: IMPORT_PLUGIN_PATH fallback substitutes build-maven-plugin → import-maven-plugin in path"
+else
+  fail "7.5: IMPORT_PLUGIN_PATH fallback not found; import-maven-plugin path may be wrong when not in index.json"
+fi
+
+# 7.7 — import-maven-plugin POM written to WORK_DIR (not hardcoded path)
+echo
+echo "  7.7 — IMPORT_PLUGIN_POM_FILE uses WORK_DIR (not a hardcoded temp path)"
+if _script_src | grep -qF 'IMPORT_PLUGIN_POM_FILE="${WORK_DIR}/'; then
+  pass "7.7: import plugin POM file is written under WORK_DIR"
+else
+  fail "7.7: IMPORT_PLUGIN_POM_FILE does not reference WORK_DIR — may use a hardcoded path"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

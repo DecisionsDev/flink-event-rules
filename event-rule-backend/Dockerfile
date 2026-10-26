@@ -6,7 +6,7 @@ ARG FLINK_IMAGE=confluentinc/cp-flink:2.1.3-cp1-java21
 FROM ${FLINK_IMAGE}
 
 # Accept build argument for descriptor path
-ARG DESCRIPTOR_PATH=samples/banking/descriptor.json
+ARG DESCRIPTOR_PATH=samples/banking/agents.json
 
 # Copy the pre-built jar from local target directory
 # Note: Kafka connector is already included in the shaded JAR, no need to download separately

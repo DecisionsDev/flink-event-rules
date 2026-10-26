@@ -96,6 +96,21 @@ function typeColor(type, colorMap) {
   return colorMap.get(type);
 }
 
+/**
+ * Format and limit value text displayed in the timeline tooltip.
+ * Long strings or serialized objects are truncated with an ellipsis
+ * so the tooltip content remains readable and does not push the top
+ * of the tooltip out of view.
+ */
+export function formatTooltipValue(val, maxLength = 80) {
+  if (val === null || val === undefined) return String(val);
+  const str = typeof val === 'object' ? JSON.stringify(val) : String(val);
+  if (str.length > maxLength) {
+    return `${str.slice(0, maxLength)}…`;
+  }
+  return str;
+}
+
 // ── Tooltip component — rendered into document.body via a portal so it is
 //    never clipped by any overflow:hidden ancestor.
 function EventTooltip({ event, anchorRect }) {
@@ -114,9 +129,9 @@ function EventTooltip({ event, anchorRect }) {
     if (left + tip.width > vw - 8) left = anchorRect.left - tip.width - GAP;
     left = Math.max(8, left);
 
-    // Centre vertically on circle; clamp within viewport
+    // Centre vertically on circle; clamp within viewport so the top is never pushed off-screen
     let top = anchorRect.top + anchorRect.height / 2 - tip.height / 2;
-    top = Math.min(Math.max(top, 8), vh - tip.height - 8);
+    top = Math.max(8, Math.min(top, vh - tip.height - 8));
 
     setStyle({ visibility: 'visible', position: 'fixed', top, left });
   }, [anchorRect]);
@@ -139,7 +154,7 @@ function EventTooltip({ event, anchorRect }) {
             <tr key={k}>
               <td className="timeline-tooltip-key">{k}</td>
               <td className="timeline-tooltip-val">
-                {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                {formatTooltipValue(v)}
               </td>
             </tr>
           ))}

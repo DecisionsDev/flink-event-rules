@@ -17,17 +17,17 @@ samples/<id>/agents.json ←→ BFF ←→ Flink REST API (FLINK_URL)
 ```
 
 The BFF service:
-1. Discovers available use cases by scanning the `samples/` directory for `descriptor.json` files
+1. Discovers available use cases by scanning the `samples/` directory for `agents.json` files
 2. On the first WebSocket client for a use case, starts a dedicated Kafka consumer subscribed to all inbound and outbound topics
 3. Maintains a ring-buffer in-memory cache of the last 50 events per topic type
 4. Broadcasts each new Kafka message to all connected WebSocket clients watching that use case
 5. Stops the Kafka consumer automatically when the last client for a use case disconnects
 6. Persists agent job state to `samples/<id>/.job-state.json` so it survives restarts
-7. Auto-creates all Kafka topics declared in every descriptor at startup (idempotent)
+7. Auto-creates all Kafka topics declared in every `agents.json` at startup (idempotent)
 
 ## Features
 
-- **Dynamic use-case discovery**: Any `samples/<name>/descriptor.json` appears automatically
+- **Dynamic use-case discovery**: Any `samples/<name>/agents.json` appears automatically
 - **Real-time event streaming**: Events pushed to the frontend immediately via WebSocket
 - **In-memory ring buffer**: 50-event cap per topic type per use case (no unbounded growth)
 - **Per-use-case Kafka consumers**: Isolated consumer groups (`event-rule-bff-<useCase>`)
@@ -63,7 +63,7 @@ The BFF service:
 | `WS`     | `/`                                             | Real-time event stream; client sends `selectUseCase` to subscribe              |
 | `GET`    | `/health`                                       | Server health, connected clients, active consumers, and per-topic event counts |
 | `GET`    | `/api/use-cases`                                | List all discovered use cases                                                  |
-| `GET`    | `/api/use-cases/:useCase/descriptor`            | Raw `descriptor.json` for a use case                                           |
+| `GET`    | `/api/use-cases/:useCase/descriptor`            | Use-case descriptor (topics, job name, ...) derived from `agents.json`         |
 | `GET`    | `/api/use-cases/:useCase/scenarios`             | Pre-built demo scenarios for a use case                                        |
 | `POST`   | `/api/use-cases/:useCase/events`                | Publish one or more events to a Kafka topic                                    |
 | `POST`   | `/api/use-cases/:useCase/reset-entities`        | Reset Flink entity state for all entities touched by a scenario                |
@@ -74,7 +74,7 @@ The BFF service:
 | `POST`   | `/api/agents/:id/start`              | Submit the Flink job for an agent                                              |
 | `GET`    | `/api/agents/:id/status`             | Poll current Flink job state for an agent                                      |
 | `POST`   | `/api/agents/:id/stop`               | Cancel the running Flink job for an agent                                      |
-| `DELETE` | `/api/agents/:id`                    | Stop job, delete Kafka topics, and remove all descriptor files                 |
+| `DELETE` | `/api/agents/:id`                    | Stop job, delete Kafka topics, and remove the agent files                      |
 | `POST`   | `/api/agents/:id/jar`                | Upload a Decision Intelligence ruleset JAR (multipart `jar` field)             |
 | `GET`    | `/api/agents/:id/sample-input`       | Generate example event payloads from the ruleset archive                       |
 
@@ -129,7 +129,7 @@ Returns all discovered use cases.
 ```
 
 #### `GET /api/use-cases/:useCase/descriptor`
-Returns the raw `descriptor.json` for the use case.
+Returns the use-case descriptor, built from the use case's `agents.json`. Top-level `name`, `flinkJobName`, `consumerGroupId`, `description`, `icon`, `topics` and `outboundTopics` in `agents.json` are used when present; otherwise they are derived from the agents' `subscriptions[].topic` and `outputs[].topic`.
 
 #### `GET /api/use-cases/:useCase/scenarios`
 Returns the pre-built demo scenarios from `samples/<useCase>/demo-scenarios.json`, or `[]` if the file does not exist.
@@ -208,7 +208,7 @@ they appear in server logs only.
 Queries the Flink JobManager for currently running jobs (by name).
 
 ```json
-{ "jobs": ["banking-fraud-agent-job"] }
+{ "jobs": ["Banking Fraud Detection Agent"] }
 ```
 
 Returns `{ "jobs": [] }` when `FLINK_URL` is not configured or Flink is unreachable.
@@ -220,7 +220,7 @@ Returns `{ "jobs": [] }` when `FLINK_URL` is not configured or Flink is unreacha
 Agents are AI-driven pipelines defined by an `agents.json` descriptor. The BFF persists these descriptors under `samples/<id>/` and drives the full Flink job lifecycle via the Flink REST API.
 
 #### `POST /api/agents`
-Creates or replaces the agent descriptor. Writes `agents.json` and a derived `descriptor.json`, and ensures all referenced Kafka topics exist.
+Creates or replaces the agent descriptor. Writes `agents.json` (the topic lists are derived from the agents) and ensures all referenced Kafka topics exist.
 
 **Request body:**
 ```json
@@ -282,7 +282,7 @@ Returns `503` if `FLINK_URL` is not configured, `404` if `agents.json` does not 
 Polls Flink for the current job state.
 
 ```json
-{ "agentId": "banking-fraud-agent", "jobId": "abc123", "state": "RUNNING", "name": "banking-fraud-agent-job", "startedAt": 1700000000000 }
+{ "agentId": "banking-fraud-agent", "jobId": "abc123", "state": "RUNNING", "name": "Banking Fraud Detection Agent", "startedAt": 1700000000000 }
 ```
 
 Returns `{ "state": "NOT_STARTED" }` when no job has been submitted. Returns `{ "state": "UNKNOWN" }` when `FLINK_URL` is not configured. Clears stale state automatically if Flink returns `404` for the stored job ID.
@@ -298,11 +298,11 @@ Cancels the running Flink job. Resolves the job ID from BFF state first; falls b
 Returns `404` if no running job is found.
 
 #### `DELETE /api/agents/:id`
-Cancels any running Flink job (best-effort), deletes owned Kafka topics, removes `agents.json`, `descriptor.json`, `.job-state.json`, and any co-located `.jar` files. Removes the directory if empty.
+Cancels any running Flink job (best-effort), deletes owned Kafka topics, removes `agents.json`, `.job-state.json`, and any co-located `.jar` files. Removes the directory if empty.
 
 **Response:**
 ```json
-{ "deleted": true, "agentId": "banking-fraud-agent", "removed": ["agents.json", "descriptor.json"], "topicsDeleted": ["agent-account-events", "agent-fraud-alerts"] }
+{ "deleted": true, "agentId": "banking-fraud-agent", "removed": ["agents.json"], "topicsDeleted": ["agent-account-events", "agent-fraud-alerts"] }
 ```
 
 Returns `409` if the agent is currently running (protected use cases), `404` if no files were found.
@@ -383,7 +383,7 @@ docker compose up bff
 - Verify `KAFKA_BOOTSTRAP_SERVERS` is correct
 
 ### Event injection returns 400
-- The requested `topic` must be listed in the use case's `descriptor.json`
+- The requested `topic` must be known to the use case (declared in `topics` of `agents.json`, or used by an agent subscription)
 - `events` must be a non-empty JSON array
 
 ### Agent start returns 503

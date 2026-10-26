@@ -258,8 +258,7 @@ watch -n 30 ./scripts/monitor-kafka-health.sh
 ## Use case samples
 
 Event samples are organised by use case in [`../samples/`](../samples/). Each use case directory contains:
-- An `agents.json` descriptor
-- A `descriptor.json` for BFF use-case discovery
+- An `agents.json` descriptor, also used by the BFF for use-case discovery
 - A `demo-scenarios.json` for the UI send-events panel
 - A `scripts/` subdirectory with a `deploy.sh` script for submitting the Flink job
 

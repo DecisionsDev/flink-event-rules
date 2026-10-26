@@ -129,6 +129,7 @@ class AgentModelConfigTest {
             RulesetConfig.OperationConfig op1 = new RulesetConfig.OperationConfig();
             op1.setOperation("EvaluateTxn");
             op1.setEntityField("theAccount");
+            op1.setOutboundEntityField("theUpdatedAccount");
             op1.setCurrentEventField("theTransaction");
 
             RulesetConfig.HistoryFieldMapping h1 = new RulesetConfig.HistoryFieldMapping("Txn", "pastTxns");
@@ -149,6 +150,7 @@ class AgentModelConfigTest {
 
             assertNotNull(config.findOperation("EvaluateTxn"));
             assertEquals("theAccount", config.findOperation("EvaluateTxn").getEntityField());
+            assertEquals("theUpdatedAccount", config.findOperation("EvaluateTxn").getOutboundEntityField());
             assertEquals("theTransaction", config.findOperation("EvaluateTxn").getCurrentEventField());
             assertEquals(1, config.findOperation("EvaluateTxn").getHistory().size());
             assertEquals(1, config.findOperation("EvaluateTxn").getOutbounds().size());
@@ -169,6 +171,7 @@ class AgentModelConfigTest {
             RulesetConfig.OperationConfig op = new RulesetConfig.OperationConfig();
             op.setOperation("Process");
             op.setEntityField("entity");
+            op.setOutboundEntityField("outEntity");
             op.setCurrentEventField("event");
             op.setHistory(List.of(new RulesetConfig.HistoryFieldMapping("E1", "h1")));
             op.setOutbounds(List.of(new RulesetConfig.OutboundConfig("o1", "Out1")));
@@ -182,6 +185,8 @@ class AgentModelConfigTest {
             assertEquals(config.getArchiveControlTopic(), restored.getArchiveControlTopic());
             assertEquals(1, restored.getOperations().size());
             assertEquals("Process", restored.getOperations().get(0).getOperation());
+            assertEquals("entity", restored.getOperations().get(0).getEntityField());
+            assertEquals("outEntity", restored.getOperations().get(0).getOutboundEntityField());
             assertEquals("h1", restored.getOperations().get(0).getHistory().get(0).getField());
             assertEquals("Out1", restored.getOperations().get(0).getOutbounds().get(0).getEventType());
         }
@@ -198,8 +203,11 @@ class AgentModelConfigTest {
             assertNull(sc.ttlDuration());
             assertFalse(sc.hasChangeLogTopic());
 
-            sc.setTtl("30m");
+            sc.setTtl("30mn");
             assertEquals(Duration.ofMinutes(30), sc.ttlDuration());
+
+            sc.setTtl("1m");
+            assertEquals(Duration.ofDays(30), sc.ttlDuration());
 
             sc.setTtl("  ");
             assertNull(sc.ttlDuration());

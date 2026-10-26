@@ -2591,6 +2591,8 @@
   padding: 10px 12px;
   min-width: 200px;
   max-width: 300px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   pointer-events: none;
 }
 

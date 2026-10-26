@@ -93,7 +93,11 @@ docker compose down
 ### Stop and remove volumes (clean slate)
 
 ```bash
+# Docker Compose volume removal
 docker compose down -v
+
+# Or use the project cleanup script for complete teardown including checkpoints and build artifacts
+./run.sh clean
 ```
 
 ### Restart a specific service
@@ -287,6 +291,7 @@ docker compose stop
 # Stop and remove containers (keeps images and volumes)
 docker compose down
 
-# Complete cleanup (removes everything)
-docker compose down -v --rmi all
+# Complete project cleanup (removes containers, volumes, checkpoints, build artifacts, state)
+./run.sh clean
+# (or bypass prompt with ./run.sh clean --force)
 ```

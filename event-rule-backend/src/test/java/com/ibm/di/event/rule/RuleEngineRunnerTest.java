@@ -314,5 +314,63 @@ class RuleEngineRunnerTest {
             }, "OperationNotFoundException must be serializable");
         }
     }
+
+    @Nested
+    @DisplayName("Banking Fraud Decision Archive Integration")
+    class BankingFraudArchiveIntegrationTest {
+
+        @Test
+        @DisplayName("EvaluateTransaction on standard archive processes large transaction without external library")
+        void evaluateStandardBankingFraudArchive() throws Exception {
+            java.io.File archiveFile = new java.io.File("../samples/banking-fraud-agent/FraudDetectionService_1.5.2.jar");
+            if (!archiveFile.exists()) {
+                archiveFile = new java.io.File("samples/banking-fraud-agent/FraudDetectionService_1.5.2.jar");
+            }
+            org.junit.jupiter.api.Assumptions.assumeTrue(archiveFile.exists(), "Standard archive file must exist to run integration test");
+
+            try (RuleEngineRunner runner = new RuleEngineRunner("EvaluateTransaction", archiveFile.toURI())) {
+                runner.initialize();
+
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                String inputJson = """
+                {
+                  "now": "2026-06-12T03:17:00Z",
+                  "theAccount": {
+                    "accountNumber": "111",
+                    "accountType": "CHECKING",
+                    "balance": 10000,
+                    "currency": "DOLLAR",
+                    "overdraftLimit": 15000,
+                    "owner": "John Smith",
+                    "ownerCountry": "USA",
+                    "status": "ACTIVE"
+                  },
+                  "theTransaction": {
+                    "accountNumber": "111",
+                    "amount": 15000,
+                    "channel": "POS",
+                    "country": "FRANCE",
+                    "currency": "DOLLAR",
+                    "merchant": "Hermes",
+                    "merchantCategory": "OTHER",
+                    "timestamp": "2026-06-12T03:17:00Z",
+                    "transactionId": "txn-001",
+                    "type": "DEBIT"
+                  },
+                  "thePastTransactions": [],
+                  "thePastAccountEvents": []
+                }
+                """;
+
+                JsonNode inputNode = mapper.readTree(inputJson);
+                JsonNode outputNode = runner.execute(inputNode);
+
+                assertNotNull(outputNode, "Decision service must not return null");
+                assertTrue(outputNode.has("theFraudAlerts"), "Output should contain theFraudAlerts");
+                JsonNode alerts = outputNode.get("theFraudAlerts");
+                assertTrue(alerts.isArray() && !alerts.isEmpty(), "theFraudAlerts should contain fired alerts for large transaction");
+            }
+        }
+    }
 }
 

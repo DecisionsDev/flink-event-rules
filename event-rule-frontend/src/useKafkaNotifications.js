@@ -100,10 +100,12 @@ export function useKafkaNotifications(
   const topicTypeMapRef = useRef({});
   useEffect(() => {
     if (!descriptor) {
-      // Use case was deselected — clear label/type maps so stale topic labels
-      // from the previous use case do not bleed into the next one.
+      // Use case was deselected — clear label/type maps AND prevCounts so
+      // stale topic labels and counts from the previous use case do not bleed
+      // into the next one, which could suppress legitimate new-event notifications.
       labelMapRef.current     = {};
       topicTypeMapRef.current = {};
+      prevCountsRef.current   = {};
       return;
     }
     const labelMap = {};

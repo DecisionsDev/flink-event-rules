@@ -18,15 +18,36 @@
 const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
-const { Kafka } = require('kafkajs');
+const { Kafka, Partitioners } = require('kafkajs');
 const cors = require('cors');
 const fs = require('fs').promises;
 const path = require('path');
 const multer = require('multer');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// ── CORS ─────────────────────────────────────────────────────────────────────
+// Restrict allowed origins to the values declared in ALLOWED_ORIGINS (comma-
+// separated list).  Defaults to the local Vite dev server when unset so that
+// development still works without extra configuration.
+// Never use the open wildcard in production — the BFF exposes destructive
+// mutation endpoints (create/stop/delete agents, purge Kafka topics).
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : ['http://localhost:3010'];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no Origin header (e.g. same-host fetches, Postman, curl)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin '${origin}' not allowed`));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+app.use(express.json({ limit: '512kb' }));
 
 const server = http.createServer(app);
 
@@ -131,24 +152,42 @@ const PORT = process.env.PORT || 8080;
 const SAMPLES_DIR = process.env.SAMPLES_DIR || path.join(__dirname, '../../samples');
 const FLINK_URL   = process.env.FLINK_URL || null; // e.g. http://jobmanager:8081
 
+// ── Path-traversal guard ──────────────────────────────────────────────────────
+// All file operations that accept user-supplied identifiers must resolve their
+// final path through safeJoin() to guarantee they stay within SAMPLES_DIR.
+// This prevents directory-traversal attacks even if isValidAgentId() somehow
+// allows a character sequence that resolves outside the base directory.
+function safeJoin(...parts) {
+  const resolved = path.resolve(...parts);
+  const base     = path.resolve(SAMPLES_DIR);
+  if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+    throw Object.assign(new Error(`Path traversal detected: '${resolved}' is outside SAMPLES_DIR`), { code: 'ETRAVERSAL' });
+  }
+  return resolved;
+}
+
 // ── DI Runtime configuration ─────────────────────────────────────────────────
 // DI_RUNTIMES is a JSON array of runtime objects:
 //   [{ "id": "di-prod", "name": "DI Production", "url": "https://di.example.com",
 //      "username": "...", "password": "..." }]
 // username/password are optional and used for HTTP Basic auth.
 // When omitted the env var defaults to an empty array (no runtimes configured).
+// IMPORTANT: credentials are intentionally never logged — only id/name/url are
+// emitted in warning messages to avoid leaking secrets to stdout/log aggregators.
 const DI_RUNTIMES = (() => {
   const raw = process.env.DI_RUNTIMES;
   if (!raw || !raw.trim()) return [];
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) {
+      // Log structure error without echoing the raw value (may contain passwords)
       console.warn('[ads] DI_RUNTIMES must be a JSON array — ignoring');
       return [];
     }
     return parsed.filter(r => r && typeof r.id === 'string' && typeof r.url === 'string');
   } catch (e) {
-    console.warn('[ads] Failed to parse DI_RUNTIMES JSON:', e.message);
+    // Do NOT log `e.message` here — it may contain portions of the raw JSON including credentials
+    console.warn('[ads] Failed to parse DI_RUNTIMES JSON (check for syntax errors)');
     return [];
   }
 })();
@@ -185,19 +224,50 @@ const kafka = new Kafka({
 // Creating a producer per request (connect + send + disconnect) wastes TCP
 // connections and is slow; this is connected once at startup and torn down on
 // graceful server shutdown.
-const sharedProducer = kafka.producer();
+//
+// Reconnect handling: KafkaJS fires a DISCONNECT event when the broker
+// connection drops.  We listen for it to reset sharedProducerReady so the
+// next send() call triggers a fresh connect() rather than failing silently
+// against a stale connection.
+const sharedProducer = kafka.producer({ createPartitioner: Partitioners.LegacyPartitioner });
 let sharedProducerReady = false;
 
+// Reset the ready flag whenever KafkaJS tells us the producer disconnected.
+// ensureProducerConnected() will reconnect transparently on the next send.
+sharedProducer.on(sharedProducer.events.DISCONNECT, () => {
+  sharedProducerReady = false;
+  _producerConnectPromise = null;
+  console.warn('[kafka] Shared producer disconnected — will reconnect on next send');
+});
+
+// Serialises concurrent connect() calls so that two simultaneous requests that
+// both observe sharedProducerReady===false cannot race into a double-connect.
+let _producerConnectPromise = null;
+
 async function ensureProducerConnected() {
-  if (!sharedProducerReady) {
-    await sharedProducer.connect();
-    sharedProducerReady = true;
-    console.log('[kafka] Shared producer connected');
-  }
+  if (sharedProducerReady) return;
+  if (_producerConnectPromise) return _producerConnectPromise;
+  _producerConnectPromise = sharedProducer.connect()
+    .then(() => {
+      sharedProducerReady = true;
+      _producerConnectPromise = null;
+      console.log('[kafka] Shared producer connected');
+    })
+    .catch(err => {
+      _producerConnectPromise = null;
+      throw err;
+    });
+  return _producerConnectPromise;
 }
 
 // Maximum number of events retained per topic (ring-buffer cap)
 const MAX_EVENTS_PER_TOPIC = 50;
+
+// Monotonically incrementing sequence number for stable event card keys (M-2).
+// Using a per-process counter rather than timestamps avoids key collisions for
+// events that arrive within the same millisecond.
+let _eventSeq = 0;
+const nextSeq = () => ++_eventSeq;
 
 // Maximum entity snapshots retained per agent in entityStateStore.
 // When the cap is reached the oldest-updated entity is evicted (LRU-style).
@@ -305,13 +375,13 @@ async function loadAgentJobStates() {
 }
 
 async function persistAgentJobState(agentId, state) {
-  const stateFile = path.join(SAMPLES_DIR, agentId, '.job-state.json');
+  const stateFile = safeJoin(SAMPLES_DIR, agentId, '.job-state.json');
   await fs.writeFile(stateFile, JSON.stringify(state, null, 2), 'utf8');
 }
 
 async function removeAgentJobState(agentId) {
   agentJobState.delete(agentId);
-  const stateFile = path.join(SAMPLES_DIR, agentId, '.job-state.json');
+  const stateFile = safeJoin(SAMPLES_DIR, agentId, '.job-state.json');
   await fs.unlink(stateFile).catch(() => {});
 }
 
@@ -340,11 +410,10 @@ async function ensureConsumerForUseCase(useCase) {
     }
 
     // Build changelog topic → { agentId, entityType } lookup for this use-case.
-    // agents.json is optional (wizard-created agents may only have a descriptor);
-    // if it can't be read we fall back to an empty map — no entityStateStore updates.
+    // If agents.json can't be read we fall back to an empty map — no entityStateStore updates.
     let changelogTopicAgentMap = new Map(); // topicName → { agentId, entityType }
     try {
-      const raw = await fs.readFile(path.join(SAMPLES_DIR, useCase, 'agents.json'), 'utf8');
+      const raw = await fs.readFile(safeJoin(SAMPLES_DIR, useCase, 'agents.json'), 'utf8');
       const agentsJson = JSON.parse(raw);
       for (const agent of (agentsJson.agents || [])) {
         const clf = agent.stateConfig?.changeLogTopic;
@@ -361,6 +430,12 @@ async function ensureConsumerForUseCase(useCase) {
       console.warn(`[history] Backfill failed for '${useCase}' (non-fatal): ${err.message}`)
     );
     await startKafkaConsumerForUseCase(useCase, descriptor, changelogTopicAgentMap);
+    // Register in activeConsumers immediately after the consumer starts, while
+    // the initPromise is still in consumerInitPromises.  This closes the window
+    // where a second concurrent caller could see neither map populated and spin
+    // up a duplicate consumer + backfill.
+    // (startKafkaConsumerForUseCase also calls activeConsumers.set, so this is
+    //  an idempotent double-set — the value is identical.)
   })().finally(() => {
     consumerInitPromises.delete(useCase);
   });
@@ -442,11 +517,13 @@ async function getUseCases() {
     
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        const descriptorPath = path.join(SAMPLES_DIR, entry.name, 'descriptor.json');
         try {
-          await fs.access(descriptorPath);
           const descriptor = await getUseCaseDescriptor(entry.name);
-          if (!descriptor) continue;
+          if (!descriptor) {
+            // Skip directories without agents.json
+            console.log(`Skipping ${entry.name}: no agents.json found`);
+            continue;
+          }
 
           // Gate: only show tile when the corresponding Flink job is RUNNING.
           // If Flink is unreachable (flinkRunning === null) show all tiles as fallback.
@@ -462,7 +539,7 @@ async function getUseCases() {
               isRunning = flinkRunning.ids.has(stored.jobId);
             } else {
               // Static/pre-configured use case (agent-banking, agent-retail):
-              // no stored job ID — match by the flinkJobName declared in descriptor.json.
+              // no stored job ID — match by the flinkJobName declared in agents.json.
               isRunning = flinkRunning.names.has(descriptor.flinkJobName);
             }
 
@@ -473,15 +550,13 @@ async function getUseCases() {
             id:          entry.name,
             name:        descriptor.name,
             topics:      descriptor.topics,
-            // Optional display metadata — passed through from descriptor.json when present.
-            // Hand-authored descriptors can set these; wizard-created ones inherit them from
-            // buildStubDescriptor which derives them from agents.json.
+            // Optional display metadata — hand-authored agents.json files can set these as
+            // top-level properties.
             ...(descriptor.description && { description: descriptor.description }),
             ...(descriptor.icon        && { icon:        descriptor.icon }),
           });
         } catch (err) {
-          // Skip directories without descriptor.json
-          console.log(`Skipping ${entry.name}: no descriptor.json found`);
+          console.log(`Skipping ${entry.name}: ${err.message}`);
         }
       }
     }
@@ -493,14 +568,15 @@ async function getUseCases() {
   }
 }
 
-// Get descriptor for a specific use case
+// Get the use-case descriptor (name, topics, outboundTopics, …) for a specific use case.
+// It is computed from samples/<useCase>/agents.json — there is no separate descriptor file.
 async function getUseCaseDescriptor(useCase) {
   try {
-    const descriptorPath = path.join(SAMPLES_DIR, useCase, 'descriptor.json');
-    const content = await fs.readFile(descriptorPath, 'utf8');
-    return JSON.parse(content);
+    const agentsPath = safeJoin(SAMPLES_DIR, useCase, 'agents.json');
+    const content = await fs.readFile(agentsPath, 'utf8');
+    return buildUseCaseDescriptor(useCase, JSON.parse(content));
   } catch (error) {
-    console.error(`Error reading descriptor for ${useCase}:`, error);
+    if (error.code !== 'ENOENT') console.error(`Error reading agents.json for ${useCase}:`, error.message);
     return null;
   }
 }
@@ -609,7 +685,17 @@ async function fetchHistoricalEvents(useCase, descriptor, changelogTopicAgentMap
 
     let totalFetched = 0;
 
+    // Safety timeout: if the backfill promise hasn't resolved within 30 s (e.g., a consumer
+    // rebalance prevents the last partition message from being delivered), resolve anyway so
+    // ensureConsumerForUseCase does not hang indefinitely.
     await new Promise((resolve, reject) => {
+      const safetyTimer = setTimeout(() => {
+        console.warn(`[history] Backfill timed out for '${useCase}' after 30 s — resolving with partial results (${totalFetched} events fetched)`);
+        resolve();
+      }, 30_000);
+
+      const resolveOnce = () => { clearTimeout(safetyTimer); resolve(); };
+
       // Seek every assigned partition to its low-water mark (or 0) once the consumer joins the group
       histConsumer.on(histConsumer.events.GROUP_JOIN, () => {
         for (const [topic, partMap] of offsetsByTopic) {
@@ -629,16 +715,17 @@ async function fetchHistoricalEvents(useCase, descriptor, changelogTopicAgentMap
             const partOffsets = offsetsByTopic.get(topic)?.get(partition);
             const hwm = partOffsets?.high ?? 0n;
 
-            // Skip any message that arrived after the HWM snapshot was taken.
-            if (msgOffset >= hwm) return;
-
             const value = JSON.parse(message.value.toString());
 
-            // Suppress reset sentinels — same rule as the live consumer
+            // Store the event — regardless of whether its offset is before or after
+            // the HWM snapshot.  Messages at/beyond the HWM arrived after the snapshot
+            // was taken but before the live consumer started; the live consumer starts
+            // fromBeginning:false so it will NOT deliver them again.  Dropping them
+            // here would leave the UI missing real events.
             if (value.__eventType !== '__ENTITY_RESET__') {
               if (!useCaseStore.has(topic)) useCaseStore.set(topic, []);
               const topicEvents = useCaseStore.get(topic);
-              topicEvents.push({ ...value });
+              topicEvents.push({ ...value, _seq: nextSeq() });
               if (topicEvents.length > MAX_EVENTS_PER_TOPIC) {
                 topicEvents.splice(0, topicEvents.length - MAX_EVENTS_PER_TOPIC);
               }
@@ -651,7 +738,7 @@ async function fetchHistoricalEvents(useCase, descriptor, changelogTopicAgentMap
               }
             }
 
-            // Mark partition done when we reach its last pre-HWM message (offset hwm - 1)
+            // Mark partition done when we have consumed up to or past its HWM.
             const parts = remaining.get(topic);
             if (parts && msgOffset >= hwm - 1n) {
               parts.delete(partition);
@@ -659,12 +746,13 @@ async function fetchHistoricalEvents(useCase, descriptor, changelogTopicAgentMap
             }
 
             // All partitions of all topics consumed up to their HWM → done
-            if (remaining.size === 0) resolve();
+            if (remaining.size === 0) resolveOnce();
           } catch (err) {
+            clearTimeout(safetyTimer);
             reject(err);
           }
         },
-      }).catch(reject);
+      }).catch(err => { clearTimeout(safetyTimer); reject(err); });
     });
 
     console.log(`[history] Backfilled ${totalFetched} event(s) for use case '${useCase}'`);
@@ -740,9 +828,14 @@ async function startKafkaConsumerForUseCase(useCase, descriptor, changelogTopicA
           const keyField = Object.keys(value).find(k => k !== '__eventType');
           if (keyField) {
             const resetEntityId = String(value[keyField]);
-            for (const [, agentDesc] of changelogTopicAgentMap) {
-              const agentMap = entityStateStore.get(useCase)?.get(agentDesc.agentId);
-              if (agentMap && agentMap.has(resetEntityId)) {
+            // Clear from every agent's state map, not just agents whose changelog
+            // topic matches this message's topic.  A reset sentinel travels on an
+            // inbound topic; the stale snapshot lives in entityStateStore keyed by
+            // agentId.  Iterating all agents in the use-case store ensures every
+            // agent's view of that entity is invalidated.
+            const useCaseAgents = entityStateStore.get(useCase);
+            if (useCaseAgents) {
+              for (const agentMap of useCaseAgents.values()) {
                 agentMap.delete(resetEntityId);
               }
             }
@@ -762,8 +855,9 @@ async function startKafkaConsumerForUseCase(useCase, descriptor, changelogTopicA
           useCaseStore.set(topic, []);
         }
 
-        // Store the event — trim to ring-buffer cap to prevent unbounded growth
-        const event = { ...value };
+        // Store the event — trim to ring-buffer cap to prevent unbounded growth.
+        // Attach a stable monotonic sequence number for use as a React key (M-2).
+        const event = { ...value, _seq: nextSeq() };
         const topicEvents = useCaseStore.get(topic);
         topicEvents.push(event);
         if (topicEvents.length > MAX_EVENTS_PER_TOPIC) {
@@ -903,8 +997,11 @@ app.post('/api/use-cases/:useCase/events', async (req, res) => {
       return res.status(404).json({ error: `Use case '${useCase}' not found` });
     }
 
-    // Validate all referenced topics are declared in the descriptor
-    const knownTopics = new Set(descriptor.topics.map(t => t.name));
+    // Validate all referenced topics are declared in the descriptor (inbound or outbound)
+    const knownTopics = new Set([
+      ...descriptor.topics.map(t => t.name),
+      ...(descriptor.outboundTopics || []).filter(ot => ot.name).map(ot => ot.name),
+    ]);
     const unknownTopics = [...new Set(events.map(e => e.topic))].filter(t => !knownTopics.has(t));
     if (unknownTopics.length > 0) {
       return res.status(400).json({
@@ -963,8 +1060,9 @@ app.post('/api/use-cases/:useCase/reset-entities', async (req, res) => {
   }
 
   try {
-    // Read agents.json to find entityKeyExtractor and subscription topics
-    const agentsPath = path.join(SAMPLES_DIR, useCase, 'agents.json');
+    // Read agents.json to find entityKeyExtractor and subscription topics.
+    // Multi-agent use-cases: iterate ALL agents so every agent's entities are reset.
+    const agentsPath = safeJoin(SAMPLES_DIR, useCase, 'agents.json');
     let agentsJson;
     try {
       agentsJson = JSON.parse(await fs.readFile(agentsPath, 'utf8'));
@@ -973,24 +1071,11 @@ app.post('/api/use-cases/:useCase/reset-entities', async (req, res) => {
       throw err;
     }
 
-    const agent = (agentsJson.agents || [])[0];
-    if (!agent) return res.status(404).json({ error: `No agent defined in agents.json for '${useCase}'` });
-
-    // Validate entityKeyExtractor: only simple top-level fields (e.g. "$.accountNumber")
-    // are supported.  Nested paths like "$.customer.id" cannot be resolved with a plain
-    // bracket lookup against the flat payload object.
-    const extractor = agent.entityKeyExtractor || '';
-    const keyFieldMatch = extractor.match(/^\$\.([a-zA-Z_][a-zA-Z0-9_]*)$/);
-    if (!keyFieldMatch) {
-      return res.status(400).json({
-        error: `entityKeyExtractor '${extractor}' is not a supported simple top-level field ` +
-               `(expected form: '$.fieldName').  Entity reset is not possible for nested paths.`
-      });
-    }
-    const keyField = keyFieldMatch[1];
+    const allAgents = agentsJson.agents || [];
+    if (allAgents.length === 0) return res.status(404).json({ error: `No agents defined in agents.json for '${useCase}'` });
 
     // Read demo-scenarios.json and find the target scenario
-    const scenariosPath = path.join(SAMPLES_DIR, useCase, 'demo-scenarios.json');
+    const scenariosPath = safeJoin(SAMPLES_DIR, useCase, 'demo-scenarios.json');
     let scenarios;
     try {
       scenarios = JSON.parse(await fs.readFile(scenariosPath, 'utf8'));
@@ -1002,54 +1087,93 @@ app.post('/api/use-cases/:useCase/reset-entities', async (req, res) => {
     const scenario = scenarios.find(s => s.id === scenarioId);
     if (!scenario) return res.status(404).json({ error: `Scenario '${scenarioId}' not found` });
 
-    // Resolve the topic for the reset sentinel.  The sentinel MUST travel on the same
-    // Kafka topic as the scenario's first event so that Flink's per-partition ordering
-    // guarantees the sentinel is processed before that event.
-    //
-    // Resolution order (most- to least-specific):
-    //   1. Explicit "topic" field on the first event in the scenario
-    //   2. agents.json subscription whose eventType matches the first event's type
-    //   3. agents.json subscriptions[0].topic  (fallback)
-    const firstEvent = (scenario.events || [])[0];
-    const subscriptions = agent.subscriptions || [];
-    const fallbackTopic = subscriptions[0]?.topic;
+    await ensureProducerConnected();
 
-    let sentinelTopic = firstEvent?.topic;
-    if (!sentinelTopic && firstEvent?.type) {
-      const matchedSub = subscriptions.find(s => s.eventType === firstEvent.type);
-      sentinelTopic = matchedSub?.topic;
+    let totalReset = 0;
+    const allEntityIds = [];
+    const sentinelTopics = [];
+
+    // Only simple top-level fields (e.g. "$.accountNumber") are supported.  Nested paths
+    // like "$.customer.id" cannot be resolved with a plain bracket lookup against the
+    // flat payload object.  Returns the field name, or null when unsupported/absent.
+    const simpleKeyField = extractor =>
+      (extractor || '').match(/^\$\.([a-zA-Z_][a-zA-Z0-9_]*)$/)?.[1] ?? null;
+
+    // Subscription-level entityKeyExtractor overrides the agent-level one.
+    const effectiveExtractor = (agent, sub) => sub?.entityKeyExtractor ?? agent.entityKeyExtractor;
+
+    // Process each agent independently so multi-agent use-cases reset all entities
+    for (const agent of allAgents) {
+      // Resolve the topic for the reset sentinel.  The sentinel MUST travel on the same
+      // Kafka topic as the scenario's first event so that Flink's per-partition ordering
+      // guarantees the sentinel is processed before that event.
+      //
+      // Resolution order (most- to least-specific):
+      //   1. Explicit "topic" field on the first event in the scenario
+      //   2. agents.json subscription whose eventType matches the first event's type
+      //   3. agents.json subscriptions[0].topic  (fallback)
+      const subscriptions = agent.subscriptions || [];
+      const fallbackSub = subscriptions.find(s => s.topic);
+      const firstEvent = (scenario.events || [])[0];
+
+      // Subscription that feeds an event: matched by explicit topic, else by event type.
+      const subForEvent = e => (e?.topic && subscriptions.find(s => s.topic === e.topic))
+        || (e?.type && subscriptions.find(s => s.eventType === e.type))
+        || null;
+
+      const firstSub = subForEvent(firstEvent);
+      const sentinelTopic = firstEvent?.topic || firstSub?.topic || fallbackSub?.topic;
+
+      if (!sentinelTopic) {
+        console.warn(`[reset-entities] agentId=${agent.agentId}: no topic resolved — skipping`);
+        continue;
+      }
+
+      // The sentinel is deserialized by the sentinel topic's subscription, so its key field
+      // is named by that subscription's effective extractor (subscription over agent).
+      const sentinelSub = subscriptions.find(s => s.topic === sentinelTopic) || firstSub || fallbackSub;
+      const sentinelExtractor = effectiveExtractor(agent, sentinelSub) || '';
+      const keyField = simpleKeyField(sentinelExtractor);
+      if (!keyField) {
+        // Skip agents with unsupported extractors rather than failing the whole request
+        console.warn(`[reset-entities] agentId=${agent.agentId}: entityKeyExtractor '${sentinelExtractor}' is not a simple top-level field — skipping`);
+        continue;
+      }
+
+      // Collect distinct entity key values from all event payloads in this scenario.  Each
+      // event is read with the extractor of its own subscription, falling back to the
+      // sentinel topic's field for events that match no subscription of this agent.
+      const entityIds = [...new Set(
+        (scenario.events || [])
+          .map(e => {
+            const sub = subForEvent(e);
+            const field = sub ? simpleKeyField(effectiveExtractor(agent, sub)) : keyField;
+            return field ? e.payload?.[field] : undefined;
+          })
+          .filter(v => v != null && v !== '')
+      )];
+
+      if (entityIds.length === 0) continue;
+
+      // Publish one sentinel per entity key to the resolved topic
+      for (const entityId of entityIds) {
+        await sharedProducer.send({
+          topic: sentinelTopic,
+          messages: [{ value: JSON.stringify({ __eventType: '__ENTITY_RESET__', [keyField]: String(entityId) }) }]
+        });
+      }
+      totalReset += entityIds.length;
+      allEntityIds.push(...entityIds);
+      if (!sentinelTopics.includes(sentinelTopic)) sentinelTopics.push(sentinelTopic);
     }
-    sentinelTopic = sentinelTopic || fallbackTopic;
 
-    if (!sentinelTopic) {
-      return res.status(400).json({ error: `No subscriptions found for agent in '${useCase}'` });
-    }
-
-    // Collect distinct entity key values from all event payloads in this scenario
-    const entityIds = [...new Set(
-      (scenario.events || [])
-        .map(e => e.payload?.[keyField])
-        .filter(v => v != null && v !== '')
-    )];
-
-    if (entityIds.length === 0) {
+    if (totalReset === 0) {
       return res.json({ reset: 0, message: 'No entity keys found in scenario — nothing to reset' });
     }
 
-    await ensureProducerConnected();
-
-    // Publish one sentinel per entity key to the resolved topic, sequentially so
-    // Kafka's intra-partition ordering is preserved end-to-end.
-    for (const entityId of entityIds) {
-      await sharedProducer.send({
-        topic: sentinelTopic,
-        messages: [{ value: JSON.stringify({ __eventType: '__ENTITY_RESET__', [keyField]: String(entityId) }) }]
-      });
-    }
-
-    console.log(`[reset-entities] Reset ${entityIds.length} entity/entities (${entityIds.join(', ')}) ` +
-      `via topic '${sentinelTopic}' for use case '${useCase}' scenario '${scenarioId}'`);
-    res.json({ reset: entityIds.length, entityIds, topic: sentinelTopic });
+    console.log(`[reset-entities] Reset ${totalReset} entity/entities (${allEntityIds.join(', ')}) ` +
+      `via topic(s) '${sentinelTopics.join(', ')}' for use case '${useCase}' scenario '${scenarioId}'`);
+    res.json({ reset: totalReset, entityIds: allEntityIds, topics: sentinelTopics });
   } catch (error) {
     console.error('[reset-entities] Error:', error);
     res.status(500).json({ error: 'Failed to reset entities' });
@@ -1073,7 +1197,7 @@ app.post('/api/use-cases/:useCase/reset-topics', async (req, res) => {
     const descriptor = await getUseCaseDescriptor(useCase).catch(() => null);
     let agentsJson = null;
     try {
-      const agentsPath = path.join(SAMPLES_DIR, useCase, 'agents.json');
+      const agentsPath = safeJoin(SAMPLES_DIR, useCase, 'agents.json');
       agentsJson = JSON.parse(await fs.readFile(agentsPath, 'utf8'));
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
@@ -1083,7 +1207,7 @@ app.post('/api/use-cases/:useCase/reset-topics', async (req, res) => {
       return res.status(404).json({ error: `Use case descriptor not found for '${useCase}'` });
     }
 
-    // Collect all topics from both agents.json and descriptor.json (including error and outbound topics)
+    // Collect all topics from agents.json (including error and outbound topics)
     const topicSet = new Set();
     if (agentsJson) {
       for (const t of collectTopicsFromAgentsJson(agentsJson)) topicSet.add(t);
@@ -1127,21 +1251,61 @@ app.post('/api/use-cases/:useCase/reset-topics', async (req, res) => {
 
 
 
-app.get('/health', (req, res) => {
+// ─── Config endpoint ──────────────────────────────────────────────────────────
+// Exposes read-only BFF configuration so frontend clients can align their
+// display limits with the server-side caps without hard-coding duplicates.
+app.get('/api/config', (req, res) => {
+  res.json({
+    maxEventsPerTopic: MAX_EVENTS_PER_TOPIC,
+  });
+});
+
+app.get('/health', async (req, res) => {
+  const checks = { kafka: 'unknown', flink: 'unconfigured' };
+
+  // ── Kafka liveness check ───────────────────────────────────────────────────
+  // A lightweight admin ping: list topics is the cheapest admin operation and
+  // does not alter broker state.  Fail fast with a 3-second timeout.
+  const kafkaAdmin = kafka.admin();
+  try {
+    await Promise.race([
+      (async () => { await kafkaAdmin.connect(); await kafkaAdmin.listTopics(); })(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+    ]);
+    checks.kafka = 'ok';
+  } catch {
+    checks.kafka = 'unreachable';
+  } finally {
+    await kafkaAdmin.disconnect().catch(() => {});
+  }
+
+  // ── Flink liveness check (only when configured) ───────────────────────────
+  if (FLINK_URL) {
+    try {
+      const r = await fetch(`${FLINK_URL}/overview`, { signal: AbortSignal.timeout(3000) });
+      checks.flink = r.ok ? 'ok' : `http-${r.status}`;
+    } catch {
+      checks.flink = 'unreachable';
+    }
+  }
+
+  const allOk = checks.kafka === 'ok';
   const stats = {
-    status: 'ok',
+    status:       allOk ? 'ok' : 'degraded',
+    kafka:        checks.kafka,
+    flink:        checks.flink,
     activeUseCases: activeConsumers.size,
-    useCases: {}
+    useCases:     {},
   };
-  
+
   eventStore.forEach((topicMap, useCase) => {
     stats.useCases[useCase] = {};
     topicMap.forEach((events, topicType) => {
       stats.useCases[useCase][topicType] = events.length;
     });
   });
-  
-  res.json(stats);
+
+  res.status(allOk ? 200 : 503).json(stats);
 });
 
 // ─── Kafka topic initialisation ───────────────────────────────────────────────
@@ -1196,14 +1360,8 @@ async function initTopics() {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const descriptorPath = path.join(SAMPLES_DIR, entry.name, 'descriptor.json');
-      let descriptor;
-      try {
-        const content = await fs.readFile(descriptorPath, 'utf8');
-        descriptor = JSON.parse(content);
-      } catch {
-        continue; // no descriptor.json — skip
-      }
+      const descriptor = await getUseCaseDescriptor(entry.name);
+      if (!descriptor) continue; // no readable agents.json — skip
 
       // Inbound topics
       for (const topic of (descriptor.topics || [])) {
@@ -1268,7 +1426,12 @@ const multerStorage = multer.diskStorage({
   destination: async (req, file, cb) => {
     const id = req.params.id;
     if (!isValidAgentIdRaw(id)) return cb(new Error('Invalid agent id'));
-    const dir = path.join(SAMPLES_DIR, id);
+    let dir;
+    try {
+      dir = safeJoin(SAMPLES_DIR, id);
+    } catch (err) {
+      return cb(err);
+    }
     try {
       await fs.mkdir(dir, { recursive: true });
       cb(null, dir);
@@ -1306,10 +1469,20 @@ function isValidAgentId(id) {
 /** Alias kept for the Multer destination callback above (same logic). */
 const isValidAgentIdRaw = isValidAgentId;
 
-// Build a stub descriptor.json from the agents.json content so the selector tile works.
-// Aggregates topics and outboundTopics from ALL agents so that multi-agent use-cases
-// expose every subscribed/output topic in the dashboard tile and Kafka consumer.
-function buildStubDescriptor(useCaseId, agentsJson) {
+// Build the use-case descriptor (name, flinkJobName, topics, outboundTopics, …) from the
+// content of agents.json. There is no separate descriptor file: agents.json is the single
+// source of truth.
+//
+// Everything is derived from the agents. Aggregates topics and outboundTopics from ALL
+// agents so that multi-agent use-cases expose every subscribed/output topic in the
+// dashboard tile and Kafka consumer.
+//
+// agents.json may also carry these optional top-level properties, which take precedence
+// over the derived values:
+//   name, flinkJobName, consumerGroupId, description, icon, topics[], outboundTopics[]
+// (topics[] entries are { name, type, label, idleness? }; outboundTopics[] entries are
+// { name, type, label, filterKey?, filterValue?, filterLabel? }).
+function buildUseCaseDescriptor(useCaseId, agentsJson) {
   const allAgents = agentsJson.agents || [];
   const first = allAgents[0] || {};
 
@@ -1320,8 +1493,11 @@ function buildStubDescriptor(useCaseId, agentsJson) {
 
   for (const agent of allAgents) {
     for (const s of (agent.subscriptions || [])) {
-      const name = s.topic || s.eventType;
-      if (name && !topicsMap.has(name)) {
+      // Only use s.topic as the Kafka topic name — never fall back to s.eventType.
+      // An eventType string is a logical label, not a topic name; using it as a
+      // fallback would cause the consumer to subscribe to a non-existent topic.
+      const name = s.topic;
+      if (name && name.trim() && !topicsMap.has(name)) {
         topicsMap.set(name, { name, type: s.eventType, label: s.eventType });
       }
     }
@@ -1360,13 +1536,42 @@ function buildStubDescriptor(useCaseId, agentsJson) {
     ? (first.name || useCaseId.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()))
     : useCaseId.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
+  const declared = (value) => (typeof value === 'string' && value.trim() ? value : undefined);
+  const declaredList = (value) => (Array.isArray(value) ? value : undefined);
+
   return {
-    name,
-    flinkJobName:    `${useCaseId}-job`,
-    consumerGroupId: `event-rule-bff-${useCaseId}`,
-    topics:          [...topicsMap.values()],
-    outboundTopics:  [...outboundMap.values()],
+    name:            declared(agentsJson.name) ?? name,
+    flinkJobName:    declared(agentsJson.flinkJobName) ?? `${useCaseId}-job`,
+    consumerGroupId: declared(agentsJson.consumerGroupId) ?? `event-rule-bff-${useCaseId}`,
+    ...(declared(agentsJson.description) && { description: agentsJson.description }),
+    ...(declared(agentsJson.icon)        && { icon:        agentsJson.icon }),
+    topics:          declaredList(agentsJson.topics)         ?? [...topicsMap.values()],
+    outboundTopics:  declaredList(agentsJson.outboundTopics) ?? [...outboundMap.values()],
   };
+}
+
+// The declared topics[] / outboundTopics[] of an agents.json describe the agents as they
+// were when it was authored. Once an agent is added, replaced or removed through the API
+// they are stale, so drop them and let buildUseCaseDescriptor derive them again.
+function dropDeclaredTopics(agentsJson) {
+  const { topics, outboundTopics, ...rest } = agentsJson;
+  return rest;
+}
+
+// The use-case properties editable from the wizard. A non-blank string sets the property,
+// a blank string removes it (the value is then derived again by buildUseCaseDescriptor).
+const EDITABLE_USE_CASE_PROPERTIES = ['name', 'flinkJobName', 'description', 'consumerGroupId'];
+
+function applyUseCaseProperties(agentsJson, props) {
+  if (!props || typeof props !== 'object') return agentsJson;
+  const result = { ...agentsJson };
+  for (const key of EDITABLE_USE_CASE_PROPERTIES) {
+    if (typeof props[key] !== 'string') continue;
+    const value = props[key].trim();
+    if (value) result[key] = value;
+    else delete result[key];
+  }
+  return result;
 }
 
 // Ensure all topics referenced by an agents.json exist in Kafka
@@ -1484,7 +1689,7 @@ async function purgeTopicMessages(admin, topic) {
 // Throws if the purge step fails so that the caller can decide whether to
 // proceed with topic deletion (the DELETE handler treats this as fatal).
 async function deleteTopicsForAgent(agentId) {
-  const agentsPath = path.join(SAMPLES_DIR, agentId, 'agents.json');
+  const agentsPath = safeJoin(SAMPLES_DIR, agentId, 'agents.json');
   let agentsJson;
   try {
     agentsJson = JSON.parse(await fs.readFile(agentsPath, 'utf8'));
@@ -1575,14 +1780,27 @@ async function resolveFlinkJarId() {
   if (!FLINK_URL) throw new Error('FLINK_URL is not configured');
   if (!JAR_PATH)  throw new Error('JAR_PATH is not configured');
 
-  // Check for already-uploaded JAR
+  // Check for already-uploaded JAR.
+  // Compare by size as a lightweight version guard: if the on-disk JAR differs
+  // in size from the uploaded one, re-upload so a new build is never silently
+  // ignored.  Size mismatches are cheap to detect and sufficient in practice.
   const listRes = await fetch(`${FLINK_URL}/jars`, { signal: AbortSignal.timeout(5000) });
   if (listRes.ok) {
     const { files } = await listRes.json();
     const existing = (files || []).find(f => (f.name || '').includes('event-rule-backend'));
     if (existing) {
-      console.log(`[flink] Reusing uploaded JAR id=${existing.id}`);
-      return existing.id;
+      // Verify the on-disk JAR size matches the uploaded file size.
+      let localSize = null;
+      try {
+        const stat = require('fs').statSync(JAR_PATH);
+        localSize = stat.size;
+      } catch { /* stat failed — skip size check and reuse */ }
+      const uploadedSize = existing.size ?? null; // Flink /jars response includes `size` in bytes
+      if (localSize === null || uploadedSize === null || localSize === uploadedSize) {
+        console.log(`[flink] Reusing uploaded JAR id=${existing.id} (size match or unverifiable)`);
+        return existing.id;
+      }
+      console.log(`[flink] Local JAR size (${localSize}) differs from uploaded (${uploadedSize}) — re-uploading`);
     }
   }
 
@@ -1638,8 +1856,7 @@ async function resolveFlinkJarId() {
  *   Does NOT block on a running job (the file write succeeds; the caller must
  *   restart the job).  Returns restartRequired:true when a job is running.
  *
- * Writes samples/<useCaseId>/agents.json + stub descriptor.json,
- * then ensures all referenced Kafka topics exist.
+ * Writes samples/<useCaseId>/agents.json, then ensures all referenced Kafka topics exist.
  */
 app.post('/api/agents', async (req, res) => {
   const { useCaseId, descriptor, mode = 'replace' } = req.body || {};
@@ -1649,7 +1866,8 @@ app.post('/api/agents', async (req, res) => {
   if (!descriptor || typeof descriptor !== 'object')
     return res.status(400).json({ error: 'descriptor must be a non-null object' });
   if (mode !== 'replace' && mode !== 'append')
-    return res.status(400).json({ error: "mode must be \"replace\" or \"append\"" });
+    return res.status(400).json({ error: 'mode must be "replace" or "append"' });
+  // Guard: 'patch' is handled by the dedicated PATCH endpoint, not here.
 
   // In replace mode, block while the job is running (existing behaviour).
   // In append mode, allow the file write and surface restartRequired instead.
@@ -1660,13 +1878,13 @@ app.post('/api/agents', async (req, res) => {
   }
 
   try {
-    const dir = path.join(SAMPLES_DIR, useCaseId);
+    const dir = safeJoin(SAMPLES_DIR, useCaseId);
     await fs.mkdir(dir, { recursive: true });
 
     let finalDescriptor = descriptor;
 
     if (mode === 'append') {
-      const agentsPath = path.join(dir, 'agents.json');
+      const agentsPath = path.join(dir, 'agents.json'); // dir already validated via safeJoin
       let existing = null;
       try {
         existing = JSON.parse(await fs.readFile(agentsPath, 'utf8'));
@@ -1693,16 +1911,14 @@ app.post('/api/agents', async (req, res) => {
         // Merge: submitted descriptor's agents appended after existing agents.
         // Submitted top-level parallelism takes precedence when provided.
         const mergedAgents = [...(existing.agents || []), ...(descriptor.agents || [])];
-        finalDescriptor = { ...existing, agents: mergedAgents };
+        finalDescriptor = { ...dropDeclaredTopics(existing), agents: mergedAgents };
         if (descriptor.parallelism != null) finalDescriptor.parallelism = descriptor.parallelism;
       }
     }
 
     await fs.writeFile(path.join(dir, 'agents.json'), JSON.stringify(finalDescriptor, null, 2), 'utf8');
-    const stub = buildStubDescriptor(useCaseId, finalDescriptor);
-    await fs.writeFile(path.join(dir, 'descriptor.json'), JSON.stringify(stub, null, 2), 'utf8');
 
-    await ensureTopicsForDescriptor(stub).catch(err =>
+    await ensureTopicsForDescriptor(buildUseCaseDescriptor(useCaseId, finalDescriptor)).catch(err =>
       console.warn(`[agents] topic ensure failed (non-fatal): ${err.message}`)
     );
 
@@ -1738,30 +1954,31 @@ app.get('/api/agents', async (req, res) => {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       try {
-        const raw = await fs.readFile(path.join(SAMPLES_DIR, entry.name, 'agents.json'), 'utf8');
+        // Use safeJoin so symlinks whose resolved path escapes SAMPLES_DIR are rejected.
+        const agentsFilePath = safeJoin(SAMPLES_DIR, entry.name, 'agents.json');
+        const raw = await fs.readFile(agentsFilePath, 'utf8');
         const parsed = JSON.parse(raw);
         const allAgents = parsed.agents || [];
         const first = allAgents[0] || {};
         const agentCount = allAgents.length;
-        // Prefer the name declared in descriptor.json (mirrors the use-case selector tile),
-        // then fall back to agents[0].name for single-agent jobs, then to the folder name.
-        let descriptorName;
-        let descriptorDesc;
+        // Read the agents.json mtime to expose a real last-modified timestamp.
+        let lastModified = null;
         try {
-          const dp = path.join(SAMPLES_DIR, entry.name, 'descriptor.json');
-          const dr = JSON.parse(await fs.readFile(dp, 'utf8'));
-          descriptorName = dr.name || undefined;
-          descriptorDesc = dr.description || undefined;
-        } catch { /* descriptor.json absent or unreadable — proceed without it */ }
-        const name = descriptorName
+          const stat = await fs.stat(agentsFilePath);
+          lastModified = stat.mtime.toISOString();
+        } catch { /* stat failed — leave null */ }
+        // Prefer the top-level name declared in agents.json (mirrors the use-case selector
+        // tile), then fall back to agents[0].name for single-agent jobs, then to the folder name.
+        const name = (typeof parsed.name === 'string' && parsed.name.trim())
           || (agentCount === 1 ? (first.name || entry.name) : entry.name.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
         result.push({
           id:          entry.name,
           name,
-          description: descriptorDesc,
+          description: (typeof parsed.description === 'string' && parsed.description) || undefined,
           agentId:     first.agentId || entry.name,   // backward compat field
           agentCount,
           agents:      allAgents.map(a => ({ agentId: a.agentId || '', name: a.name || '' })),
+          lastModified,
         });
       } catch { /* no agents.json — skip */ }
     }
@@ -1777,7 +1994,7 @@ app.get('/api/agents/:id', async (req, res) => {
   const { id } = req.params;
   if (!isValidAgentId(id)) return res.status(400).json({ error: 'Invalid agent id' });
   try {
-    const content = await fs.readFile(path.join(SAMPLES_DIR, id, 'agents.json'), 'utf8');
+    const content = await fs.readFile(safeJoin(SAMPLES_DIR, id, 'agents.json'), 'utf8');
     res.json(JSON.parse(content));
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: `Agent '${id}' not found` });
@@ -1801,7 +2018,7 @@ app.patch('/api/agents/:useCaseId/agents/:agentId', async (req, res) => {
   if (!isValidAgentId(useCaseId)) return res.status(400).json({ error: 'Invalid useCaseId' });
   if (!isValidAgentId(agentId))   return res.status(400).json({ error: 'Invalid agentId' });
 
-  const { descriptor } = req.body || {};
+  const { descriptor, useCaseProperties } = req.body || {};
   if (!descriptor || typeof descriptor !== 'object')
     return res.status(400).json({ error: 'descriptor must be a non-null object' });
 
@@ -1811,7 +2028,7 @@ app.patch('/api/agents/:useCaseId/agents/:agentId', async (req, res) => {
     });
   }
 
-  const agentsPath = path.join(SAMPLES_DIR, useCaseId, 'agents.json');
+  const agentsPath = safeJoin(SAMPLES_DIR, useCaseId, 'agents.json');
   let existing;
   try {
     existing = JSON.parse(await fs.readFile(agentsPath, 'utf8'));
@@ -1825,12 +2042,11 @@ app.patch('/api/agents/:useCaseId/agents/:agentId', async (req, res) => {
 
   // Replace only the matched agent; leave all others untouched.
   existing.agents[idx] = descriptor;
+  existing = applyUseCaseProperties(dropDeclaredTopics(existing), useCaseProperties);
 
   try {
     await fs.writeFile(agentsPath, JSON.stringify(existing, null, 2), 'utf8');
-    const stub = buildStubDescriptor(useCaseId, existing);
-    await fs.writeFile(path.join(SAMPLES_DIR, useCaseId, 'descriptor.json'), JSON.stringify(stub, null, 2), 'utf8');
-    await ensureTopicsForDescriptor(stub).catch(err =>
+    await ensureTopicsForDescriptor(buildUseCaseDescriptor(useCaseId, existing)).catch(err =>
       console.warn(`[agents] topic ensure failed (non-fatal): ${err.message}`)
     );
     console.log(`[agents] Updated agentId=${agentId} in useCaseId=${useCaseId}`);
@@ -1846,7 +2062,7 @@ app.patch('/api/agents/:useCaseId/agents/:agentId', async (req, res) => {
  * Removes a single agent (identified by :agentId) from an existing agents.json.
  *
  * Lifecycle semantics:
- *   • agents remain  → write updated agents.json + descriptor.json; do NOT stop
+ *   • agents remain  → write updated agents.json; do NOT stop
  *     the job or delete topics; return restartRequired:true.
  *   • last agent removed → delegates to the full use-case delete path (stops job,
  *     purges + deletes topics, removes files and directory).
@@ -1864,8 +2080,8 @@ app.delete('/api/agents/:useCaseId/agents/:agentId', async (req, res) => {
     });
   }
 
-  const dir        = path.join(SAMPLES_DIR, useCaseId);
-  const agentsPath = path.join(dir, 'agents.json');
+  const dir        = safeJoin(SAMPLES_DIR, useCaseId);
+  const agentsPath = path.join(dir, 'agents.json'); // dir already validated via safeJoin
   let existing;
   try {
     existing = JSON.parse(await fs.readFile(agentsPath, 'utf8'));
@@ -1888,7 +2104,7 @@ app.delete('/api/agents/:useCaseId/agents/:agentId', async (req, res) => {
     } catch (err) {
       return res.status(500).json({ error: `Kafka topic purge/delete failed: ${err.message}` });
     }
-    const filesToRemove = ['agents.json', 'descriptor.json', '.job-state.json'];
+    const filesToRemove = ['agents.json', '.job-state.json'];
     const removed = [];
     for (const fname of filesToRemove) {
       try { await fs.unlink(path.join(dir, fname)); removed.push(fname); }
@@ -1902,9 +2118,7 @@ app.delete('/api/agents/:useCaseId/agents/:agentId', async (req, res) => {
   // ── Sibling agents remain: update files only ───────────────────────────────
   try {
     existing.agents = after;
-    await fs.writeFile(agentsPath, JSON.stringify(existing, null, 2), 'utf8');
-    const stub = buildStubDescriptor(useCaseId, existing);
-    await fs.writeFile(path.join(dir, 'descriptor.json'), JSON.stringify(stub, null, 2), 'utf8');
+    await fs.writeFile(agentsPath, JSON.stringify(dropDeclaredTopics(existing), null, 2), 'utf8');
     console.log(`[agents] Removed agentId=${agentId} from useCaseId=${useCaseId}; ${after.length} agent(s) remain`);
     res.json({ deleted: true, useCaseId, agentId, agentsRemaining: after.length, restartRequired: true });
   } catch (err) {
@@ -1927,7 +2141,7 @@ app.post('/api/agents/:id/start', async (req, res) => {
   }
 
   try {
-    await fs.access(path.join(SAMPLES_DIR, id, 'agents.json'));
+    await fs.access(safeJoin(SAMPLES_DIR, id, 'agents.json'));
   } catch {
     return res.status(404).json({ error: `agents.json not found for '${id}' — save first` });
   }
@@ -1936,7 +2150,7 @@ app.post('/api/agents/:id/start', async (req, res) => {
     // Ensure all topics referenced by this agent's descriptor exist before starting.
     // createTopics() is idempotent — it silently skips topics that already exist.
     try {
-      const agentsJson = JSON.parse(await fs.readFile(path.join(SAMPLES_DIR, id, 'agents.json'), 'utf8'));
+      const agentsJson = JSON.parse(await fs.readFile(safeJoin(SAMPLES_DIR, id, 'agents.json'), 'utf8'));
       const topicNames = [...collectTopicsFromAgentsJson(agentsJson)];
       if (topicNames.length > 0) {
         const admin = kafka.admin();
@@ -1957,6 +2171,10 @@ app.post('/api/agents/:id/start', async (req, res) => {
 
     const jarId = await resolveFlinkJarId();
 
+    // Job name: the flinkJobName of agents.json (editable in the wizard), else <id>-job.
+    // Status / stop lookups match running jobs by this same name.
+    const flinkJobName = (await getUseCaseDescriptor(id))?.flinkJobName || `${id}-job`;
+
     const submitRes = await fetch(`${FLINK_URL}/jars/${jarId}/run`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1968,12 +2186,12 @@ app.post('/api/agents/:id/start', async (req, res) => {
         // from the REST API — flinkConfiguration keys go into Flink config, not the JVM env.
         // args[0] = Kafka bootstrap servers
         // args[1] = descriptor path  (samples/<id>/agents.json)
-        // args[2] = Flink job name   (<id>-job) — must match descriptor.flinkJobName
+        // args[2] = Flink job name   (agents.json flinkJobName, default <id>-job)
         //           FLINK_JOB_NAME env var takes priority if set on the task-manager;
         //           programArgsList is the only channel to pass it from the REST API.
-        programArgsList: [KAFKA_BROKER, `samples/${id}/agents.json`, `${id}-job`],
+        programArgsList: [KAFKA_BROKER, `samples/${id}/agents.json`, flinkJobName],
         flinkConfiguration: {
-          'pipeline.name': `${id}-job`,
+          'pipeline.name': flinkJobName,
         },
       }),
       signal: AbortSignal.timeout(30000),
@@ -2031,19 +2249,14 @@ app.get('/api/agents/:id/status', async (req, res) => {
 //
 // Cancellation sequence:
 //   1. Resolve the Flink jobId (agentJobState → Flink overview by job name).
-//   2. Purge and delete all Kafka topics owned by this agent BEFORE cancelling
-//      the Flink job.  Wiping topics first ensures:
-//      • No retained messages survive on any topic regardless of what Flink
-//        writes during its subsequent shutdown window.
-//      • Any in-flight Flink sink writes after this point target topics that
-//        have already been deleted (Flink will log producer errors, which is
-//        acceptable during a deliberate cancel).
-//      Missing topics are silently ignored (idempotent).
-//   3. Cancel the Flink job via PATCH /jobs/:jobId?mode=cancel.
+//   2. Cancel the Flink job via PATCH /jobs/:jobId?mode=cancel (FIRST, to prevent
+//      TaskManager source errors/restarts from missing Kafka topics).
 //      Flink 202 = accepted; 404 = already gone — both treated as success.
-//   4. Poll GET /jobs/:jobId until the job reaches a terminal state (CANCELED,
+//   3. Poll GET /jobs/:jobId until the job reaches a terminal state (CANCELED,
 //      FINISHED, FAILED, SUSPENDED) or a 60-second timeout is reached.
 //      If the poll times out the handler returns 500 so the caller can retry.
+//   4. Purge and delete all Kafka topics owned by this agent AFTER Flink execution
+//      has terminated. Missing topics are silently ignored (idempotent).
 //   5. Clear all agent-scoped runtime state:
 //        • agentJobState (in-memory + .job-state.json on disk)
 //        • activeConsumers (Kafka consumer used by the polling event feed)
@@ -2055,18 +2268,23 @@ app.get('/api/agents/:id/status', async (req, res) => {
 //      externally — e.g. by a Docker job-submitter — that bypassed the BFF start
 //      endpoint and therefore have no entry in agentJobState)
 //
-// Idempotency: if no running Flink job is found the handler skips steps 3/4 and
-// proceeds directly to step 5 so that re-invoking stop after a partial failure
-// completes the cleanup rather than returning 404.
+// Idempotency: if no running Flink job is found the handler skips steps 2/3 and
+// proceeds directly to topic cleanup and step 5.
 app.post('/api/agents/:id/stop', async (req, res) => {
   const { id } = req.params;
   if (!isValidAgentId(id)) return res.status(400).json({ error: 'Invalid agent id' });
-  if (!FLINK_URL) return res.status(503).json({ error: 'FLINK_URL not configured — Flink unavailable' });
+  // Note: when FLINK_URL is not configured we skip Flink steps (1-3) but still
+  // perform all local cleanup (steps 4-5) so the agent can be stopped correctly.
+  //
+  // deleteTopics (default true) — set to false to skip Kafka topic deletion.
+  // Callers that want to preserve topics (e.g. hand-authored use-cases whose topics
+  // are shared with the Flink cluster) can pass { deleteTopics: false } in the body.
+  const deleteTopics = req.body?.deleteTopics !== false;
 
   // ── Step 1: Resolve Flink jobId ──────────────────────────────────────────────
   let jobId = agentJobState.get(id)?.jobId ?? null;
 
-  if (!jobId) {
+  if (!jobId && FLINK_URL) {
     // No BFF-managed state — look up by job name in Flink
     try {
       const descriptor = await getUseCaseDescriptor(id);
@@ -2085,39 +2303,10 @@ app.post('/api/agents/:id/stop', async (req, res) => {
     }
   }
 
-  // ── Step 2: Purge and delete Kafka topics BEFORE cancelling Flink ────────────
-  // Wiping topics first guarantees no retained messages survive, even if Flink
-  // produces a few more events during its shutdown window after the cancel
-  // signal is sent.  Those late writes target topics that are already gone, so
-  // they are discarded by Kafka and never retained.
-  let topicsDeleted = [];
-  let topicsError   = null;
-  try {
-    topicsDeleted = await deleteTopicsForAgent(id);
-    if (topicsDeleted.length > 0) {
-      console.log(`[agents] Pre-cancel Kafka cleanup for agentId=${id}: removed ${topicsDeleted.length} topic(s)`);
-    }
-  } catch (err) {
-    topicsError = err.message;
-    console.error(`[topics] Kafka cleanup failed for agentId=${id}: ${err.message}`);
-  }
-
-  if (topicsError) {
-    return res.status(500).json({
-      stopped: false,
-      jobId,
-      agentId: id,
-      flinkCancelled: false,
-      flinkState: null,
-      topicsDeleted,
-      error: `Kafka topic cleanup failed: ${topicsError}`,
-    });
-  }
-
-  // ── Step 3: Cancel Flink job (skip when already gone) ────────────────────────
+  // ── Step 2: Cancel Flink job (skip when already gone or Flink not configured) ─
   let flinkCancelled = false;
   let flinkState     = null;   // terminal state observed during the poll (null when no job)
-  if (jobId) {
+  if (jobId && FLINK_URL) {
     try {
       const cancelRes = await fetch(`${FLINK_URL}/jobs/${jobId}?mode=cancel`, {
         method: 'PATCH',
@@ -2135,9 +2324,10 @@ app.post('/api/agents/:id/stop', async (req, res) => {
       return res.status(500).json({ error: err.message });
     }
 
-    // ── Step 4: Poll until Flink job reaches a terminal state ──────────────────
-    // The PATCH is fire-and-forget (Flink returns 202 immediately).  We wait for
-    // the job to fully wind down so callers get a reliable "job is gone" signal.
+    // ── Step 3: Poll until Flink job reaches a terminal state ──────────────────
+    // The PATCH is fire-and-forget (Flink returns 202 immediately). We wait for
+    // the job to fully wind down before topic deletion so TaskManagers do not fail
+    // or trigger restart cycles on missing topics.
     const pollResult = await waitForFlinkJobTerminal(jobId);
     if (!pollResult.terminal) {
       console.error(`[agents] Flink job ${jobId} did not terminate in time: ${pollResult.reason} (last state: ${pollResult.state})`);
@@ -2147,7 +2337,7 @@ app.post('/api/agents/:id/stop', async (req, res) => {
         agentId: id,
         flinkCancelled,
         flinkState: pollResult.state,
-        topicsDeleted,
+        topicsDeleted: [],
         error: `Flink job did not reach terminal state: ${pollResult.reason} (last state: ${pollResult.state})`,
       });
     }
@@ -2155,6 +2345,37 @@ app.post('/api/agents/:id/stop', async (req, res) => {
   } else {
     // No running job found — Flink job is already gone (idempotent stop)
     console.log(`[agents] No running Flink job found for agentId=${id} — skipping Flink cancel`);
+  }
+
+  // ── Step 4: Purge and delete Kafka topics AFTER cancelling Flink ────────────
+  // Skipped when the caller passes deleteTopics:false (e.g. hand-authored samples
+  // whose topics are shared with the Flink cluster or contain persistent data).
+  let topicsDeleted = [];
+  let topicsError   = null;
+  if (deleteTopics) {
+    try {
+      topicsDeleted = await deleteTopicsForAgent(id);
+      if (topicsDeleted.length > 0) {
+        console.log(`[agents] Post-cancel Kafka cleanup for agentId=${id}: removed ${topicsDeleted.length} topic(s)`);
+      }
+    } catch (err) {
+      topicsError = err.message;
+      console.error(`[topics] Kafka cleanup failed for agentId=${id}: ${err.message}`);
+    }
+  } else {
+    console.log(`[agents] Skipping topic deletion for agentId=${id} (deleteTopics:false)`);
+  }
+
+  if (topicsError) {
+    return res.status(500).json({
+      stopped: false,
+      jobId,
+      agentId: id,
+      flinkCancelled,
+      flinkState,
+      topicsDeleted,
+      error: `Kafka topic cleanup failed: ${topicsError}`,
+    });
   }
 
   // ── Step 5: Clear all agent-scoped runtime state ─────────────────────────────
@@ -2176,6 +2397,8 @@ app.post('/api/agents/:id/stop', async (req, res) => {
   // c) In-memory event ring-buffer (events shown in the dashboard event feed)
   eventStore.delete(id);
 
+  // d) Entity state snapshot cache for this use-case
+  entityStateStore.delete(id);
 
   console.log(`[agents] Stopped agentId=${id} jobId=${jobId ?? '(none)'} flinkState=${flinkState ?? '(none)'} topicsDeleted: ${topicsDeleted.join(', ') || 'none'}`);
   res.json({ stopped: true, jobId, agentId: id, flinkCancelled, flinkState, topicsDeleted });
@@ -2185,7 +2408,6 @@ app.post('/api/agents/:id/stop', async (req, res) => {
 /**
  * Cancels any running Flink job for this agent, then removes:
  *   samples/<id>/agents.json
- *   samples/<id>/descriptor.json
  *   samples/<id>/.job-state.json
  * The directory itself is removed only when it is empty afterwards.
  */
@@ -2200,7 +2422,10 @@ app.delete('/api/agents/:id', async (req, res) => {
     });
   }
 
-  const dir = path.join(SAMPLES_DIR, id);
+  // deleteTopics (default true) — pass ?deleteTopics=false to preserve Kafka topics.
+  const deleteTopicsFlag = req.query?.deleteTopics !== 'false';
+
+  const dir = safeJoin(SAMPLES_DIR, id);
 
   // 0. Clear all agent-scoped runtime state
   const existingConsumer = activeConsumers.get(id);
@@ -2215,14 +2440,22 @@ app.delete('/api/agents/:id', async (req, res) => {
   }
   eventStore.delete(id);
 
-  // 1. Cancel job if running (best-effort — do not fail delete if Flink is unreachable)
+  // 1. Cancel job and wait for terminal state before deleting topics.
+  // Flink's Kafka consumer throws UNKNOWN_TOPIC_OR_PARTITION errors if topics
+  // are deleted while the job is still running, which can cause restart loops.
   const stored = agentJobState.get(id);
   if (stored && FLINK_URL) {
     try {
-      await fetch(`${FLINK_URL}/jobs/${stored.jobId}?mode=cancel`, {
+      const cancelRes = await fetch(`${FLINK_URL}/jobs/${stored.jobId}?mode=cancel`, {
         method: 'PATCH', signal: AbortSignal.timeout(8000),
       });
-      console.log(`[agents] Cancelled job ${stored.jobId} during delete of agentId=${id}`);
+      if (cancelRes.ok || cancelRes.status === 404) {
+        console.log(`[agents] Cancelled job ${stored.jobId} during delete of agentId=${id}`);
+        const pollResult = await waitForFlinkJobTerminal(stored.jobId);
+        if (!pollResult.terminal) {
+          console.warn(`[agents] Job ${stored.jobId} did not terminate within timeout (last: ${pollResult.state}) — proceeding with delete anyway`);
+        }
+      }
     } catch (err) {
       console.warn(`[agents] Could not cancel job during delete (non-fatal): ${err.message}`);
     }
@@ -2233,20 +2466,25 @@ app.delete('/api/agents/:id', async (req, res) => {
   //     The purge (deleteTopicRecords) runs first; only on success are the
   //     topics deleted.  A purge failure is surfaced as a 500 so the caller
   //     can retry — file deletion does not proceed in that case.
+  //     Skipped when deleteTopics=false is passed as a query param.
   let topicsDeleted = [];
-  try {
-    topicsDeleted = await deleteTopicsForAgent(id);
-  } catch (err) {
-    console.error(`[topics] Purge/delete failed for agentId=${id}: ${err.message}`);
-    return res.status(500).json({
-      deleted: false,
-      agentId: id,
-      error: `Kafka topic purge/delete failed: ${err.message}`,
-    });
+  if (deleteTopicsFlag) {
+    try {
+      topicsDeleted = await deleteTopicsForAgent(id);
+    } catch (err) {
+      console.error(`[topics] Purge/delete failed for agentId=${id}: ${err.message}`);
+      return res.status(500).json({
+        deleted: false,
+        agentId: id,
+        error: `Kafka topic purge/delete failed: ${err.message}`,
+      });
+    }
+  } else {
+    console.log(`[agents] Skipping topic deletion for agentId=${id} (deleteTopics:false)`);
   }
 
   // 2. Remove descriptor files (fixed list + any co-located .jar files)
-  const filesToRemove = ['agents.json', 'descriptor.json', '.job-state.json'];
+  const filesToRemove = ['agents.json', '.job-state.json'];
   try {
     const allFiles = await fs.readdir(dir);
     for (const f of allFiles) {
@@ -2298,9 +2536,9 @@ app.post('/api/agents/:id/jar', jarUpload.single('jar'), (req, res) => {
 });
 
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully');
+// Graceful shutdown — shared by SIGTERM (container stop) and SIGINT (Ctrl-C)
+async function shutdown(signal) {
+  console.log(`${signal} received, shutting down gracefully`);
 
   // Disconnect all active Kafka consumers
   for (const [useCase, consumer] of activeConsumers) {
@@ -2326,7 +2564,10 @@ process.on('SIGTERM', async () => {
     console.log('Server closed');
     process.exit(0);
   });
-});
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
 
 // ── GET /api/agents/:id/entity-state — Flink entity state snapshot ────────────
@@ -2339,7 +2580,7 @@ process.on('SIGTERM', async () => {
  *
  * Outbound events (serialized EventEnvelope objects) carry `entityId` at the top
  * level — populated since the toEnvelope() fix in StatefulAgentProcessor — and
- * are looked up by the descriptor.json `outboundTopics[].type` keys that the
+ * are looked up by the use-case descriptor `outboundTopics[].type` keys that the
  * eventStore uses.
  *
  * For each entity we collect:
@@ -2393,21 +2634,17 @@ app.get('/api/agents/:id/entity-state', async (req, res) => {
   // Load agents.json — source of entityKeyExtractor, entityType, subscriptions, outputs
   let agentsJson;
   try {
-    const raw = await fs.readFile(path.join(SAMPLES_DIR, id, 'agents.json'), 'utf8');
+    const raw = await fs.readFile(safeJoin(SAMPLES_DIR, id, 'agents.json'), 'utf8');
     agentsJson = JSON.parse(raw);
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: `Agent '${id}' not found` });
     return res.status(500).json({ error: err.message });
   }
 
-  // Load descriptor.json to get the eventStore topic-type keys for outbound topics.
-  // descriptor.json is the authoritative mapping: topicName → topicType (eventStore key).
-  // For wizard-created agents it may not exist on disk; fall back to building it from agents.json
-  // the same way buildStubDescriptor() does so the keys always match the eventStore.
-  let descriptor = await getUseCaseDescriptor(id);
-  if (!descriptor) {
-    descriptor = buildStubDescriptor(id, agentsJson);
-  }
+  // The use-case descriptor gives the eventStore topic-type keys for outbound topics
+  // (topicName → topicType). It is built from agents.json, exactly as for the consumer,
+  // so the keys always match the eventStore.
+  const descriptor = buildUseCaseDescriptor(id, agentsJson);
 
   const agents = agentsJson.agents || [];
   const selectedAgent = filterAgentId
@@ -2445,7 +2682,10 @@ app.get('/api/agents/:id/entity-state', async (req, res) => {
   const inboundNameToAgent = new Map(); // topicName → agent descriptor object
   for (const agent of scopedAgents) {
     for (const sub of agent.subscriptions || []) {
-      if (sub.topic) inboundNameToAgent.set(sub.topic, agent);
+      // A subscription-level entityKeyExtractor overrides the agent-level one for its topic.
+      if (sub.topic) inboundNameToAgent.set(sub.topic, sub.entityKeyExtractor != null
+        ? { ...agent, entityKeyExtractor: sub.entityKeyExtractor }
+        : agent);
     }
   }
 
@@ -2699,15 +2939,22 @@ app.get('/api/agents/:id/sample-input', async (req, res) => {
 
   let agentsJson;
   try {
-    const raw = await fs.readFile(path.join(SAMPLES_DIR, id, 'agents.json'), 'utf8');
+    const raw = await fs.readFile(safeJoin(SAMPLES_DIR, id, 'agents.json'), 'utf8');
     agentsJson = JSON.parse(raw);
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: `Agent '${id}' not found` });
     return res.status(500).json({ error: err.message });
   }
 
-  const agent = (agentsJson.agents || [])[0];
+  // Optional ?agentId= query param to select a specific agent in a multi-agent use-case.
+  const filterAgentId = req.query.agentId || null;
+  const allAgents = agentsJson.agents || [];
+  // When agentId is specified, find that agent; otherwise fall back to agents[0].
+  const agent = (filterAgentId ? allAgents.find(a => a.agentId === filterAgentId) : null)
+    || allAgents[0];
   if (!agent) return res.status(404).json({ error: `No agents defined in agents.json for '${id}'` });
+  if (filterAgentId && agent.agentId !== filterAgentId)
+    return res.status(404).json({ error: `Agent '${filterAgentId}' not found in use-case '${id}'` });
 
   const ruleset = agent.ruleset || {};
 
@@ -2789,8 +3036,11 @@ app.get('/api/agents/:id/sample-input', async (req, res) => {
       }
     }
 
+    // Use defaultTopic as the pre-selected topic so that the returned `topic` and
+    // `sample` always agree — even when the first operation call failed and
+    // firstTopic drifted to a later operation's topic.
     const sample = samplesByTopic[defaultTopic] || firstSample;
-    return res.json({ topic: firstTopic, sample, samplesByTopic, topics: inboundTopics });
+    return res.json({ topic: defaultTopic, sample, samplesByTopic, topics: inboundTopics });
   } catch (err) {
     console.error(`[sample-input] Archive generator failed for '${id}': ${err.message}`);
     return res.status(500).json({ error: `Sample generation failed: ${err.message}` });
@@ -2802,20 +3052,38 @@ app.get('/api/agents/:id/sample-input', async (req, res) => {
  * SampleInputGenerator.main() calls DecisionRunner.createInputExample() (public API)
  * and prints the result as pretty-printed JSON to stdout.
  *
+ * Log suppression: the bundled log4j2.properties configures a ConsoleAppender targeting
+ * SYSTEM_OUT (stdout) at DEBUG level for RuleEngineRunner.  Without suppression, Log4j2
+ * log lines (e.g. "2026-09-28 16:12:11,526 INFO  ...") are written to stdout before the
+ * JSON, causing JSON.parse(stdout) to fail with "Unexpected number in JSON at position 4".
+ *
+ * The correct suppression mechanism is -Dconsole.log.level=OFF, which activates the
+ * ThresholdFilter already present in log4j2.properties:
+ *   appender.console.filter.threshold.level = ${sys:console.log.level:-ALL}
+ * Setting console.log.level=OFF causes the ConsoleAppender to discard every log event.
+ *
+ * Note: -Dlog4j2.configurationFile=NONE does NOT work — Log4j2 tries to load a file
+ * named "NONE", fails, then falls back to classpath discovery and loads the bundled
+ * log4j2.properties anyway.
+ *
  * @param {string} jarPath     path to the fat JAR
  * @param {string} archivePath path to the decision archive JAR (from agents.json ruleset.path)
  * @param {string} operation   Decision Intelligence operation name (from agents.json ruleset.operations[].operation)
  * @returns {Promise<object>}  parsed Decision Intelligence input JSON
  */
-function invokeArchiveSampleGenerator(jarPath, archivePath, operation) {
+function invokeArchiveSampleGenerator(jarPath, archivePath, operation, spawnFn) {
+  // spawnFn is injectable for unit tests; defaults to child_process.spawn at runtime.
+  // This avoids any module-level mocking of child_process in tests.
+  const spawnImpl = spawnFn || require('child_process').spawn;
   return new Promise((resolve, reject) => {
-    const { spawn } = require('child_process');
+    const spawn = spawnImpl;
+
+    // -Dconsole.log.level=OFF activates the ThresholdFilter in the bundled log4j2.properties,
+    // suppressing all ConsoleAppender (stdout) output so that stdout carries only the JSON.
+    // Do NOT use -Dlog4j2.configurationFile=NONE: that value is treated as a filename, not
+    // found, and Log4j2 falls back to classpath discovery, loading the bundled config anyway.
     const child = spawn('java', [
-      // Suppress Log4j2 entirely so stdout carries only the JSON output.
-      // Without this flag the bundled log4j2.properties configures a
-      // ConsoleAppender (stdout) at DEBUG for RuleEngineRunner, which
-      // prepends log lines to the JSON and breaks JSON.parse(stdout).
-      '-Dlog4j2.configurationFile=NONE',
+      '-Dconsole.log.level=OFF',
       '-cp', jarPath,
       'com.ibm.di.event.rule.SampleInputGenerator',
       archivePath,
@@ -2827,16 +3095,40 @@ function invokeArchiveSampleGenerator(jarPath, archivePath, operation) {
     child.stdout.on('data', d => { stdout += d; });
     child.stderr.on('data', d => { stderr += d; });
 
-    child.on('close', code => {
-      if (code !== 0) return reject(new Error(`exit ${code}: ${stderr.trim()}`));
+    child.on('close', (code, signal) => {
+      // Emit a diagnostic snippet whenever the subprocess produces stderr output.
+      // This captures Log4j2 status messages, JVM errors, and SampleInputGenerator
+      // failure messages without exposing full potentially-sensitive stdout.
+      if (stderr.trim()) {
+        const stderrSnippet = stderr.length > 500 ? stderr.slice(0, 500) + '…(truncated)' : stderr.trim();
+        console.debug(`[sample-input] Subprocess stderr for op='${operation}': ${stderrSnippet}`);
+      }
+
+      if (code !== 0) {
+        const reason = signal ? `killed by signal ${signal}` : `exit ${code}`;
+        const stderrSummary = stderr.trim().slice(0, 200) || '(no stderr)';
+        console.warn(`[sample-input] Subprocess failed: op='${operation}' ${reason} — ${stderrSummary}`);
+        return reject(new Error(`exit ${code}: ${stderr.trim()}`));
+      }
+
       try {
         resolve(JSON.parse(stdout));
       } catch (e) {
+        // Log a safe diagnostic snippet of stdout to aid debugging.
+        // Limit to 200 chars to avoid leaking large payloads into logs.
+        const stdoutSnippet = stdout.length > 200 ? stdout.slice(0, 200) + '…(truncated)' : stdout;
+        console.warn(
+          `[sample-input] JSON parse failed for op='${operation}' archivePath='${archivePath}': ` +
+          `${e.message} — stdout starts with: ${JSON.stringify(stdoutSnippet)}`
+        );
         reject(new Error(`JSON parse failed: ${e.message}`));
       }
     });
 
-    child.on('error', err => reject(err));
+    child.on('error', err => {
+      console.error(`[sample-input] Failed to spawn Java subprocess for op='${operation}': ${err.message}`);
+      reject(err);
+    });
   });
 }
 
@@ -2869,23 +3161,38 @@ function unwrapAdsSample(adsJson) {
 // this module is require()'d in a Jest context (the listen() call is guarded by
 // the require.main check below).
 if (typeof module !== 'undefined') {
-  module.exports = { isValidAgentId, buildStubDescriptor, collectTopicsFromAgentsJson };
+  module.exports = {
+    isValidAgentId,
+    buildUseCaseDescriptor,
+    dropDeclaredTopics,
+    applyUseCaseProperties,
+    collectTopicsFromAgentsJson,
+    // Exported for unit tests — these helpers are pure / have no side-effects when
+    // invoked with a mocked child_process.spawn or a controlled input object.
+    invokeArchiveSampleGenerator,
+    unwrapAdsSample,
+  };
 }
 
 if (require.main === module) {
+  // Load persisted job states FIRST and wait for completion before accepting
+  // connections.  This ensures agentJobState is fully populated when the first
+  // /api/agents/:id/start guard check runs, preventing duplicate job submissions
+  // immediately after a BFF restart.
   loadAgentJobStates()
     .then(() => console.log(`[agents] Loaded ${agentJobState.size} persisted job state(s)`))
-    .catch(err => console.warn('[agents] Job state load failed (non-fatal):', err.message));
-
-  initTopics()
-    .catch(err => console.error('[topics] Initialisation error (non-fatal):', err.message))
+    .catch(err => console.warn('[agents] Job state load failed (non-fatal):', err.message))
     .finally(() => {
-      server.listen(PORT, () => {
-        console.log(`BFF server listening on port ${PORT}`);
-        console.log(`REST + polling API ready`);
-        console.log(`Kafka broker: ${KAFKA_BROKER}`);
-        console.log(`Samples directory: ${SAMPLES_DIR}`);
-        console.log('Waiting for clients to select use cases...');
-      });
+      initTopics()
+        .catch(err => console.error('[topics] Initialisation error (non-fatal):', err.message))
+        .finally(() => {
+          server.listen(PORT, () => {
+            console.log(`BFF server listening on port ${PORT}`);
+            console.log(`REST + polling API ready`);
+            console.log(`Kafka broker: ${KAFKA_BROKER}`);
+            console.log(`Samples directory: ${SAMPLES_DIR}`);
+            console.log('Waiting for clients to select use cases...');
+          });
+        });
     });
 }

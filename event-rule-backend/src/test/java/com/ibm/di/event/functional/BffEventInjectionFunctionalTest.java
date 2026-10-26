@@ -69,11 +69,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class BffEventInjectionFunctionalTest {
 
-    // Banking topics from descriptor.json
+    // Banking topics from agents.json
     private static final String TOPIC_TRANSACTIONS    = "agent-transactions";
     private static final String TOPIC_ACCOUNT_CREATED = "agent-account-created-events";
 
-    // Retail topics from descriptor.json
+    // Retail topics from agents.json
     private static final String TOPIC_ORDERS          = "agent-orders";
     private static final String TOPIC_PRODUCT_VIEWS   = "agent-product-views";
 

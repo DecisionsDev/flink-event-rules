@@ -72,18 +72,20 @@ USE_CASE="${1:-all}"
 # Plain function instead of associative array — compatible with bash 3.2 (macOS default).
 deploy_script_for() {
     case "$1" in
-        banking)  echo "${REPO_ROOT}/samples/banking-fraud-agent/scripts/deploy.sh" ;;
-        aircraft) echo "${REPO_ROOT}/samples/airtraffic-agent/scripts/deploy.sh" ;;
-        *)        echo "" ;;
+        banking)    echo "${REPO_ROOT}/samples/banking-fraud-agent/scripts/deploy.sh" ;;
+        aircraft)   echo "${REPO_ROOT}/samples/airtraffic-agent/scripts/deploy.sh" ;;
+        retail)     echo "${REPO_ROOT}/samples/retail-agent/scripts/deploy.sh" ;;
+        *)          echo "" ;;
     esac
 }
 
 # Return the E2E test script path for a given use-case name.
 test_script_for() {
     case "$1" in
-        banking)  echo "${FUNCTIONAL_TEST_ROOT}/bin/use_cases/banking/banking-fraud-e2e.sh" ;;
-        aircraft) echo "${FUNCTIONAL_TEST_ROOT}/bin/use_cases/aircraft/aircraft-e2e.sh" ;;
-        *)        echo "" ;;
+        banking)    echo "${FUNCTIONAL_TEST_ROOT}/bin/use_cases/banking/banking-fraud-e2e.sh" ;;
+        aircraft)   echo "${FUNCTIONAL_TEST_ROOT}/bin/use_cases/aircraft/aircraft-e2e.sh" ;;
+        retail)     echo "${FUNCTIONAL_TEST_ROOT}/bin/use_cases/retail/retail-agent-e2e.sh" ;;
+        *)          echo "" ;;
     esac
 }
 
@@ -187,7 +189,7 @@ run_use_case() {
 
     if [[ -z "$test_script" ]]; then
         log_error "No test script registered for use case '$use_case'."
-        log_error "Available use cases: banking, aircraft"
+        log_error "Available use cases: banking, aircraft, retail"
         return 1
     fi
     if [[ ! -f "$test_script" ]]; then
@@ -218,11 +220,12 @@ run_use_case() {
 resolve_use_cases() {
     local selection="$1"
     case "$selection" in
-        all)     echo "banking aircraft" ;;
-        banking) echo "banking" ;;
+        all)      echo "banking aircraft retail" ;;
+        banking)  echo "banking" ;;
         aircraft) echo "aircraft" ;;
+        retail)   echo "retail" ;;
         *)
-            log_error "Unknown use case: '$selection'. Valid values: all, banking, aircraft"
+            log_error "Unknown use case: '$selection'. Valid values: all, banking, aircraft, retail"
             exit 1
             ;;
     esac

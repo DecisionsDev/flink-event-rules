@@ -31,7 +31,7 @@ import java.io.Serializable;
 public class EventSubscription implements Serializable {
 
     @Serial
-    private static final long serialVersionUID = 3L;
+    private static final long serialVersionUID = 4L;
 
     /** Logical event-type label — used as the history-map key. */
     private String eventType;
@@ -51,6 +51,15 @@ public class EventSubscription implements Serializable {
      * is emitted.  This supports the "subscribe for context, skip processing" pattern.
      */
     private String operation;
+
+    /**
+     * Optional JSONPath expression overriding the agent-level {@code entityKeyExtractor}
+     * for events of this subscription.  {@code null} means inherit the agent-level value;
+     * {@code ""} is the explicit single-partition opt-in.  All subscriptions of an agent
+     * must resolve to the same entity ID for the same real-world entity, because events
+     * are keyed after the subscription streams are unioned.
+     */
+    private String entityKeyExtractor;
 
     /** Controls how many historical events are retained per entity for this type. */
     private HorizonConfig horizon = HorizonConfig.count(0); // default: no history
@@ -104,9 +113,22 @@ public class EventSubscription implements Serializable {
     public String getOperation()              { return operation; }
     public void   setOperation(String op)     { this.operation = op; }
 
+    public String getEntityKeyExtractor()           { return entityKeyExtractor; }
+    public void   setEntityKeyExtractor(String eke) { this.entityKeyExtractor = eke; }
+
     /** Returns {@code true} when this subscription has a non-blank operation name. */
     public boolean hasOperation() {
         return operation != null && !operation.isBlank();
+    }
+
+    /**
+     * Returns {@code true} when this subscription declares the {@code Schedule} event type,
+     * i.e. the events the agent synthesises when a schedule fires (see {@link ScheduleManager}).
+     * Such a subscription has no Kafka topic and no horizon: no source is wired for it.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isScheduleSubscription() {
+        return ScheduleManager.SCHEDULE_EVENT_TYPE.equals(eventType);
     }
 
     public HorizonConfig getHorizon()             { return horizon; }

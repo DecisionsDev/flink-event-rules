@@ -128,6 +128,8 @@ Click any scenario button in the **Send Events** panel. A fraud-detection result
 second.
 
 > **Stop everything:** `./run.sh down`
+>
+> **Full environment reset:** `./run.sh clean` (or `make clean`)
 
 ### Services started
 
@@ -244,18 +246,19 @@ sequenceDiagram
 7. **The dashboard shows the result.** The BFF forwards the result to the React dashboard in
    real time via WebSocket.
 
-### Configuring Agents: `agents.json` and `descriptor.json`
+### Configuring Agents: `agents.json`
 
-Every use case is defined by two JSON files — no application code required:
+Every use case is defined by a single JSON file — no application code required:
 
-- **`agents.json`** — the execution contract: which entity the Agent tracks, which Kafka topics
+- **`agents`** — the execution contract: which entity the Agent tracks, which Kafka topics
   it subscribes to, how much history it keeps, which Decision Intelligence operation it invokes,
   and where it publishes results.
-- **`descriptor.json`** — the presentation contract: which of those topics the dashboard displays
-  and how they are labeled.
+- **Top-level use-case properties** (`name`, `flinkJobName`, `topics`, `outboundTopics`, …) — the
+  presentation contract: which of those topics the dashboard displays and how they are labeled.
+  They are optional; the BFF derives them from the agents when they are missing.
 
 **[`docs/AGENT_PATTERN_DESIGN.md`](docs/AGENT_PATTERN_DESIGN.md) is the authoritative reference**
-for both file formats, the generic rule-execution context, state management, and the Flink DAG
+for the file format, the generic rule-execution context, state management, and the Flink DAG
 architecture.
 
 For agent chaining, multi-input agents, parallel processing, and other patterns beyond a single
@@ -276,7 +279,7 @@ existing card).
 
 | Step | Name               | What you configure                                                                        |
 |------|--------------------|-------------------------------------------------------------------------------------------|
-| 1    | Job & Identity     | Agent ID, display name, entity type, entity key extractor, parallelism, agent chaining    |
+| 1    | Job & Identity     | Use-case name, Flink job name, description and consumer group ID (optional, stored at the top level of `agents.json`; the use case is stored in `samples/<slug of the use-case name>/`, or `samples/<agent ID>/` when no name is given), agent ID, display name, entity type, entity key extractor, parallelism, agent chaining |
 | 2    | Subscriptions      | Kafka input topics, event types, operations, event-history horizon                        |
 | 3    | Ruleset            | Decision archive source, archive-control topic, operation field mappings                  |
 | 4    | Outputs            | Output event types and Kafka topics                                                       |
@@ -391,24 +394,24 @@ The build produces:
 - `event-rule-backend/target/event-rule-backend-1.0-SNAPSHOT.jar` — fat JAR with all dependencies
 - `event-rule-frontend/build/` — static React app served by nginx
 
-### Run tests
+### Run unit and integration tests
 
 ```bash
-# All backend tests
-cd event-rule-backend && mvn test
+# All backend unit tests (Java / Flink)
+cd event-rule-backend && mvn test -DskipTests=false
 
 # Specific test class
-mvn test -Dtest=StatefulAgentProcessorTest
+cd event-rule-backend && mvn test -DskipTests=false -Dtest=StatefulAgentProcessorTest
 
-# Frontend tests
-cd event-rule-frontend && npm test
+# All frontend tests (React / BFF)
+cd event-rule-frontend && npm test -- --run
 ```
 
-**Backend test classes:**
+**Backend test classes (1,188 tests):**
 
 | Class                          | What it tests                                                                                                          |
 |--------------------------------|------------------------------------------------------------------------------------------------------------------------|
-| `AgentBasedDataStreamJobTest`  | DAG construction, descriptor loading, entity ID extraction, `__eventType` override, per-agent `chainingEnabled` flag, `CHAINING_ENABLED` env var parsing and kill-switch semantics |
+| `AgentBasedDataStreamJobTest`  | DAG construction, descriptor loading, entity ID extraction, `__eventType` override, per-agent `chainingEnabled` flag, `CHAINING_ENABLED` env var parsing, duplicate-operation warn behaviour |
 | `AgentChainBuilderTest`        | Chain detection, self-loop guard, null-stream safety                                                                   |
 | `StatefulAgentProcessorTest`   | State management, horizon eviction, context formatting, error handling, per-entity and global reset                    |
 | `AgentDescriptorTest`          | Descriptor JSON parsing and validation                                                                                 |
@@ -416,14 +419,71 @@ cd event-rule-frontend && npm test
 | `ArchiveDownloaderTest`        | Download, SHA-256 verification, cache behaviour                                                                        |
 | `DeploymentAuditLogTest`       | Audit log entry recording                                                                                              |
 
-**Frontend test files:**
+**Frontend test files (432 tests):**
 
 | File                            | What it tests                                                                                                                         |
 |---------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| `AgentWizard.test.js`           | `descriptorToForm`, `buildDescriptor`, round-trips, step validation, edit-agent URL, `jarState` derivation, `chainingEnabled` mapping |
-| `DIRuntimeFetch.test.js`        | BFF DI routes (runtime list, decision list, archive download), error paths, agentId validation, pipeline integration                  |
-| `AgentManagementPanel.test.js`  | Stop/delete fetch URL, `useCaseId` vs `agentId` prop separation                                                                       |
-| `KafkaNotifications.test.js`    | WebSocket notification hook                                                                                                           |
+| `AgentWizard.test.jsx`          | `descriptorToForm`, `buildDescriptor`, round-trips, step validation, edit-agent URL, `jarState` derivation, `chainingEnabled` mapping |
+| `DIRuntimeFetch.test.jsx`       | BFF DI routes (runtime list, decision list, archive download), error paths, agentId validation, pipeline integration                  |
+| `AgentManagementPanel.test.jsx` | Stop/delete fetch URL, `useCaseId` vs `agentId` prop separation                                                                       |
+| `KafkaNotifications.test.jsx`   | WebSocket notification hook, `prevCountsRef` reset on use-case switch                                                                 |
+| `BFFMultiAgent.test.jsx`        | Multi-agent BFF routes (create, patch, delete, per-agent entity state)                                                                |
+| `EntityState.test.jsx`          | Entity state upsert, LRU eviction, snapshot serialisation                                                                             |
+| `ComponentRegression.test.jsx`  | Smoke-test rendering for all dashboard card components                                                                                |
+| `ScenarioTimeline.test.jsx`     | Scenario timeline animation helpers                                                                                                   |
+
+### Run functional (end-to-end) tests
+
+The functional test suite starts a full Docker Compose stack (Kafka + Flink + BFF), deploys one
+or more Flink jobs, injects scenario events, and asserts the output on Kafka topics.
+
+**Prerequisites:** Docker, `curl`, `jq`, and a pre-built fat JAR (`./build.sh`).
+
+```bash
+# Run ALL use-case functional tests (banking + aircraft + retail)
+make functional-tests
+
+# Run a single use case
+make functional-test-banking
+make functional-test-aircraft
+make functional-test-retail
+
+# Run all tests against an already-running stack (no Compose start/stop)
+make functional-test-skip-compose
+
+# Remove test report files
+make functional-test-clean
+
+# Complete project cleanup (containers, volumes, checkpoints, build artifacts, state)
+make clean
+```
+
+You can also invoke the runner directly and pass optional timeout overrides:
+
+```bash
+# All use cases, custom Kafka wait timeout
+ALERT_WAIT_TIMEOUT=120 make functional-tests
+
+# Retail only, custom output-event wait
+OUTPUT_WAIT_TIMEOUT=60 bash functional-tests/run-functional-tests.sh retail
+
+# Reuse a running stack (skip docker compose up/down and Flink deploy)
+SKIP_COMPOSE=true SKIP_FLINK_DEPLOY=true bash functional-tests/run-functional-tests.sh retail
+```
+
+**Environment variables accepted by the functional test runner:**
+
+| Variable                    | Default              | Description                                            |
+|-----------------------------|----------------------|--------------------------------------------------------|
+| `BFF_URL`                   | `http://127.0.0.1:8080` | BFF base URL                                        |
+| `SKIP_COMPOSE`              | `false`              | Skip `docker compose up/down` (stack already running) |
+| `SKIP_FLINK_DEPLOY`         | `false`              | Skip Flink job deployment                              |
+| `COMPOSE_CLEAN_VOLUMES`     | `false`              | Pass `-v` to `docker compose down` (clean Kafka data) |
+| `CONTAINER_HEALTHY_TIMEOUT` | `180`                | Seconds to wait for containers to become healthy       |
+| `FLINK_JOB_TIMEOUT`         | `180`                | Seconds to wait for a Flink job to reach RUNNING       |
+| `ALERT_WAIT_TIMEOUT`        | `90`                 | Seconds to wait for a fraud alert on Kafka (banking)   |
+| `OUTPUT_WAIT_TIMEOUT`       | `30`                 | Seconds to wait for a NextBestOffer event (retail)     |
+| `ALLOWED_ORIGINS`           | `http://localhost:3010` | Comma-separated list of allowed CORS origins for the BFF |
 
 ### IBM Decision Intelligence Maven dependencies
 
@@ -490,13 +550,56 @@ for the full walkthrough, version cross-check details, and TLS options.
 
 ## 8. Running with Docker
 
-The full stack — Kafka, Flink, the BFF, and the dashboard — runs via Docker Compose:
+The full stack — Kafka, Flink, the BFF, and the dashboard — runs via Docker Compose managed by [`run.sh`](run.sh):
 
 ```bash
-./run.sh up      # start all services
-./run.sh logs    # follow logs
-./run.sh down    # stop all services
+./run.sh up              # start all infrastructure services (Kafka, Flink, BFF, Frontend)
+./run.sh down            # stop and remove all services
+./run.sh restart         # restart all services
+./run.sh logs            # follow logs from all services
+./run.sh log             # follow Flink TaskManager logs only
+./run.sh status          # show container status
+./run.sh build           # build or rebuild Docker images
+./run.sh clean           # full reset: stops services, deletes volumes, checkpoints, state, and artifacts
+./run.sh clean --force   # non-interactive full cleanup (bypasses confirmation prompt)
 ```
+
+### Complete Environment Reset (`clean`)
+
+Running `./run.sh clean` (or `make clean`) performs an irreversible, idempotent reset returning the environment to a pristine state:
+
+1. **Containers & Networks:** Stops and removes all project Docker containers (`kafka`, `event-rule-backend-jobmanager`, `event-rule-backend-taskmanager`, `event-rule-bff`, `event-rule-frontend`) and network.
+2. **Persistent Volumes:** Destroys all project-managed persistent volumes (`kafka-data`, `kafka-dev-data`).
+3. **Flink Checkpoints & Savepoints:** Purges all recovery state, snapshots, and metadata in `checkpoints/` and `savepoints/`, resetting directories with proper `0775` permissions.
+4. **Application & Agent State:** Clears all persisted BFF job state files (`samples/**/.job-state.json`).
+5. **Build Outputs & Reports:** Removes all Maven `target/` directories, frontend build bundles (`build/`, `dist/`), and functional test reports.
+6. **Caches & Logs:** Purges Python caches (`.pytest_cache`, `__pycache__`, `*.pyc`), test coverage files, and generated log files.
+
+### Deploying on a non-localhost host
+
+The nginx dashboard container sets a
+[Content-Security-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP) header that
+tells the browser which origins the frontend may connect to for the BFF WebSocket and REST API.
+By default the values are `ws://localhost:8080` and `http://localhost:8080`.
+
+When the BFF is reachable at a different address (e.g. a VM IP or a public hostname), set these
+two environment variables before starting the stack:
+
+```bash
+export BFF_URL_WS=ws://myhost:8080
+export BFF_URL_HTTP=http://myhost:8080
+export ALLOWED_ORIGINS=http://myhost:3010   # BFF CORS: the origin the browser loads the UI from
+./run.sh up
+```
+
+If `VITE_API_URL` is not set at build time, the UI calls the BFF at `<protocol>//<page-host>:8080`,
+so no rebuild is needed when the host changes. When the UI is served over HTTPS (TLS terminated by
+an external reverse proxy / load balancer — the nginx container only listens on HTTP port 80), the
+BFF must also be reachable over HTTPS/WSS to avoid mixed-content blocking; set `VITE_API_URL`,
+`BFF_URL_WS`, `BFF_URL_HTTP` and `ALLOWED_ORIGINS` to the `https://` / `wss://` URLs.
+
+The `docker-compose.yml` frontend service reads both variables and passes them to the nginx
+template at container start time via `envsubst`.
 
 For image configuration, resource limits, rebuilding after code changes, and troubleshooting
 Docker-specific issues, see **[`DOCKER.md`](DOCKER.md)**.
@@ -525,10 +628,12 @@ Agent descriptor, Decision Intelligence archive, and set of demo scenarios.
 **See [`samples/README.md`](samples/README.md)** for the full list of available use cases and
 how to run them.
 
-| Use case                                                              | Description                                                                     |
-|--------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
-| [Banking Fraud Agent](samples/banking-fraud-agent/README.md)         | Evaluates transactions against an account's full history; flags fraud in real time |
-| [Air Traffic Control](samples/airtraffic-agent/README.md)            | Cross-domain agent chaining: Aircraft Agent feeds Airport Agent directly in-process |
+| Use case                                                              | Description                                                                                           | Functional test              |
+|--------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|-------------------------------|
+| [Banking Fraud Agent](samples/banking-fraud-agent/README.md)         | Evaluates transactions against an account's full history; flags fraud in real time                     | `make functional-test-banking`  |
+| [Air Traffic Control](samples/airtraffic-agent/README.md)            | Cross-domain agent chaining: Aircraft Agent feeds Airport Agent directly in-process                     | `make functional-test-aircraft` |
+| [Retail — Promotion Agent](samples/retail-agent/README.md)           | Real-time promotion decisioning: evaluates customer interactions against accumulated eligibility and active promotions to surface the most appropriate offer | `make functional-test-retail`   |
+| [Transport — Airline Agent](samples/airline-agent/README.md)         | Stateful airline operations pipeline: correlates flight, passenger, and catering events per flight; raises notifications and schedules timers (check-in open 48 h before departure) | — |
 
 Want to build your own use case? Follow **[`TUTORIAL.md`](TUTORIAL.md)** for a complete
 step-by-step guide, from creating the use-case directory through running and validating it.
@@ -543,8 +648,7 @@ assistant — such as [Claude](https://claude.ai) or [IBM Bob](https://ibm.com) 
 the complete application configuration from that description.
 
 The AI reads your specification, studies the existing sample applications as worked examples,
-and produces the two configuration files that every Event Rule application requires:
-`descriptor.json` and `agents.json`.
+and produces the configuration file that every Event Rule application requires: `agents.json`.
 
 ---
 
@@ -637,21 +741,20 @@ The prompt instructs the AI to:
 - Read your Event Rule Application specification.
 - Read the existing sample applications as worked examples.
 - Understand what files need to be generated and how they should be structured.
-- Generate `descriptor.json` and `agents.json` for your application under a new directory inside `samples/`.
+- Generate `agents.json` for your application under a new directory inside `samples/`.
 - Follow all naming conventions and structural patterns already used by the project.
 
 **Ready-to-copy prompt:**
 
 ````
-From samples/<YOUR-DIRECTORY>/<Your Application>.md, generate an Event Rule descriptor JSON
-file and an agents JSON file in samples/<YOUR-DIRECTORY>/.
+From samples/<YOUR-DIRECTORY>/<Your Application>.md, generate an Event Rule agents JSON
+file in samples/<YOUR-DIRECTORY>/.
 
 Use the following existing samples as worked examples showing exactly how a Markdown
 specification maps to the generated JSON files:
   - samples/airtraffic-agent/Air Traffic Control Application.md
-    → samples/airtraffic-agent/descriptor.json
     → samples/airtraffic-agent/agents.json
-  - samples/banking-fraud-agent/descriptor.json  (reference for field structure and conventions)
+  - samples/banking-fraud-agent/agents.json  (reference for field structure and conventions)
 
 Follow the same structure, field names, naming conventions, and patterns used in those
 examples. Do not invent fields or configuration that is not described in the specification
@@ -666,17 +769,17 @@ Replace `<YOUR-DIRECTORY>` with the folder name you chose (e.g. `my-app-agent`) 
 ### 11.3 Reference examples
 
 Two completed specifications are included in the repository. The Air Traffic Control example
-is paired with its fully generated output files:
+is paired with its fully generated output file:
 
-| Specification | Generated files |
+| Specification | Generated file |
 |---------------|----------------|
-| [`samples/airtraffic-agent/Air Traffic Control Application.md`](samples/airtraffic-agent/Air%20Traffic%20Control%20Application.md) | [`descriptor.json`](samples/airtraffic-agent/descriptor.json), [`agents.json`](samples/airtraffic-agent/agents.json) |
+| [`samples/airtraffic-agent/Air Traffic Control Application.md`](samples/airtraffic-agent/Air%20Traffic%20Control%20Application.md) | [`agents.json`](samples/airtraffic-agent/agents.json) |
 | [`samples/retail-agent/Retail Event Rule Application.md`](samples/retail-agent/Retail%20Event%20Rule%20Application.md) | *(specification only — useful as a second domain example)* |
 
 The **Air Traffic Control** example is the most complete reference: it contains two agents
 (`Aircraft Agent` and `Airport Agent`) that chain their output, uses multiple event horizons,
-and demonstrates every field that can appear in `agents.json` and `descriptor.json`. Comparing
-the `.md` specification with the two generated JSON files side by side is the fastest way to
+and demonstrates every field that can appear in `agents.json`. Comparing
+the `.md` specification with the generated JSON file side by side is the fastest way to
 understand exactly how each section of the specification maps to the generated configuration.
 
 The **Retail Event Rule Application** specification illustrates a simpler single-agent application
@@ -704,13 +807,12 @@ example to confirm the AI generalises correctly to a different domain.
    sample applications (airtraffic-agent, banking-fraud-agent).
 
 6. The AI generates:
-     samples/<your-app-agent>/descriptor.json
      samples/<your-app-agent>/agents.json
 
 7. Review the generated files against your specification:
-     - Every inbound topic  → entry in descriptor.json "topics"
-     - Every outbound topic → entry in "outboundTopics"
-     - Every agent          → entry in agents.json "agents"
+     - Every inbound topic  → entry in the top-level "topics"
+     - Every outbound topic → entry in the top-level "outboundTopics"
+     - Every agent          → entry in "agents"
      - Every subscription horizon → correct "horizon" block
      - Every operation input/output → "history" / "outbounds" arrays
 
@@ -823,17 +925,30 @@ event-rule/
 ├── samples/
 │   ├── banking-fraud-agent/             # Banking fraud detection — chainingEnabled: false
 │   │   ├── README.md                    # Use-case documentation
-│   │   ├── agents.json                  # Agent descriptor
-│   │   ├── descriptor.json              # BFF use-case descriptor
+│   │   ├── agents.json                  # Agent descriptor + use-case properties
 │   │   ├── demo-scenarios.json          # Pre-built demo scenarios
 │   │   ├── FraudDetectionService_1.5.2.jar  # Pre-built Decision Intelligence archive
 │   │   ├── di-project/                  # IBM Decision Intelligence project source
 │   │   └── scripts/
 │   │       └── deploy.sh               # Submit the Flink job for this use case
-│   └── airtraffic-agent/               # Air Traffic Control — cross-domain agent chaining (chainingEnabled: true)
+│   ├── airtraffic-agent/               # Air Traffic Control — cross-domain agent chaining (chainingEnabled: true)
+│   │   ├── README.md                    # Use-case documentation
+│   │   └── agents.json                  # Agent descriptor (Aircraft + Airport agents) + use-case properties
+│   ├── retail-agent/                   # Retail — Promotion Agent — real-time promotion decisioning
+│   │   ├── README.md                    # Use-case documentation
+│   │   ├── agents.json                  # Agent descriptor + use-case properties
+│   │   ├── demo-scenarios.json          # Pre-built demo scenarios
+│   │   └── scripts/
+│   │       └── deploy.sh               # Submit the Flink job for this use case
+│   └── airline-agent/                  # Transport — Airline Agent — scheduling and multi-event correlation
 │       ├── README.md                    # Use-case documentation
-│       ├── agents.json                  # Agent descriptor (Aircraft + Airport agents)
-│       └── descriptor.json             # BFF use-case descriptor
+│       ├── agents.json                  # Agent descriptor + use-case properties
+│       ├── demo-scenarios.json          # Pre-built demo scenarios
+│       ├── AirlineDecisionService_1.1.0.jar  # Pre-built Decision Intelligence archive
+│       ├── di-project/                  # IBM Decision Intelligence project source
+│       └── scripts/
+│           ├── deploy.sh               # Submit the Flink job for this use case
+│           └── get-dsa.sh              # Download a new archive version from a DI runtime
 │
 ├── docs/
 │   ├── AGENT_PATTERN_DESIGN.md          # Authoritative reference: descriptor schemas, DAG architecture
@@ -843,7 +958,7 @@ event-rule/
 │
 ├── docker-compose.yml                   # All services (Kafka, Flink, BFF, Frontend)
 ├── build.sh                             # Build all components
-├── run.sh                               # Start/stop infrastructure
+├── run.sh                               # Lifecycle management & full project reset
 ├── pom.xml                              # Maven parent POM
 │
 ├── README.md                            # This file
@@ -889,7 +1004,7 @@ archive hot-swap internals, see [`event-rule-frontend/bff/README.md`](event-rule
 
 | Document                                                                                      | Contents                                                                                            |
 |--------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
-| [`docs/AGENT_PATTERN_DESIGN.md`](docs/AGENT_PATTERN_DESIGN.md)                                | Authoritative reference: `agents.json`, `descriptor.json`, state management, Flink DAG architecture |
+| [`docs/AGENT_PATTERN_DESIGN.md`](docs/AGENT_PATTERN_DESIGN.md)                                | Authoritative reference: `agents.json`, state management, Flink DAG architecture |
 | [`docs/ADVANCED_PATTERNS.md`](docs/ADVANCED_PATTERNS.md)                                      | Agent chaining, multi-input agents, parallel processing, worked examples                            |
 | [`TUTORIAL.md`](TUTORIAL.md)                                                                   | Step-by-step guide to building a new use case                                                       |
 | [`samples/README.md`](samples/README.md)                                                       | Overview of all available use cases                                                                 |

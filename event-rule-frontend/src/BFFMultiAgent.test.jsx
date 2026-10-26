@@ -23,7 +23,7 @@
  * verify correctness without any network, Kafka, or file-system dependencies.
  *
  * Tested functions:
- *   - buildStubDescriptor(useCaseId, agentsJson)
+ *   - buildUseCaseDescriptor(useCaseId, agentsJson)
  *   - collectTopicsFromAgentsJson(agentsJson)
  *   - POST /api/agents append-mode logic (merge + duplicate guard)
  *   - PATCH /api/agents/:useCaseId/agents/:agentId logic
@@ -39,7 +39,7 @@ function isValidAgentId(id) {
   return typeof id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(id);
 }
 
-function buildStubDescriptor(useCaseId, agentsJson) {
+function buildUseCaseDescriptor(useCaseId, agentsJson) {
   const allAgents = agentsJson.agents || [];
   const first = allAgents[0] || {};
 
@@ -216,11 +216,11 @@ describe('isValidAgentId', () => {
   test('rejects null', () => { expect(isValidAgentId(null)).toBe(false); });
 });
 
-// ─── buildStubDescriptor: single-agent ───────────────────────────────────────
+// ─── buildUseCaseDescriptor: single-agent ───────────────────────────────────────
 
-describe('buildStubDescriptor — single-agent use-case', () => {
+describe('buildUseCaseDescriptor — single-agent use-case', () => {
   let stub;
-  beforeEach(() => { stub = buildStubDescriptor('banking-fraud-agent', BANKING_AGENTS_JSON); });
+  beforeEach(() => { stub = buildUseCaseDescriptor('banking-fraud-agent', BANKING_AGENTS_JSON); });
 
   test('flinkJobName is useCaseId + "-job"', () => {
     expect(stub.flinkJobName).toBe('banking-fraud-agent-job');
@@ -236,7 +236,7 @@ describe('buildStubDescriptor — single-agent use-case', () => {
 
   test('name falls back to title-cased useCaseId when agent has no name', () => {
     const json = { agents: [{ agentId: 'x', subscriptions: [], outputs: [] }] };
-    const s = buildStubDescriptor('my-use-case', json);
+    const s = buildUseCaseDescriptor('my-use-case', json);
     expect(s.name).toBe('My Use Case');
   });
 
@@ -264,11 +264,11 @@ describe('buildStubDescriptor — single-agent use-case', () => {
   });
 });
 
-// ─── buildStubDescriptor: multi-agent ────────────────────────────────────────
+// ─── buildUseCaseDescriptor: multi-agent ────────────────────────────────────────
 
-describe('buildStubDescriptor — multi-agent use-case (deduplication)', () => {
+describe('buildUseCaseDescriptor — multi-agent use-case (deduplication)', () => {
   let stub;
-  beforeEach(() => { stub = buildStubDescriptor('airtraffic-agent', AIRTRAFFIC_AGENTS_JSON); });
+  beforeEach(() => { stub = buildUseCaseDescriptor('airtraffic-agent', AIRTRAFFIC_AGENTS_JSON); });
 
   test('name is title-cased useCaseId for multi-agent (not a single agent name)', () => {
     expect(stub.name).toBe('Airtraffic Agent');
@@ -308,31 +308,31 @@ describe('buildStubDescriptor — multi-agent use-case (deduplication)', () => {
   });
 });
 
-// ─── buildStubDescriptor: edge cases ─────────────────────────────────────────
+// ─── buildUseCaseDescriptor: edge cases ─────────────────────────────────────────
 
-describe('buildStubDescriptor — edge cases', () => {
+describe('buildUseCaseDescriptor — edge cases', () => {
   test('empty agents array produces empty topics and outboundTopics', () => {
-    const stub = buildStubDescriptor('empty-job', { agents: [] });
+    const stub = buildUseCaseDescriptor('empty-job', { agents: [] });
     expect(stub.topics).toEqual([]);
     expect(stub.outboundTopics).toEqual([]);
   });
 
   test('agent with no outputs produces empty outboundTopics', () => {
     const json = { agents: [{ agentId: 'x', subscriptions: [{ eventType: 'e', topic: 't', operation: 'op' }], outputs: [] }] };
-    const stub = buildStubDescriptor('minimal-job', json);
+    const stub = buildUseCaseDescriptor('minimal-job', json);
     expect(stub.outboundTopics).toEqual([]);
     expect(stub.topics).toHaveLength(1);
   });
 
   test('agent with no subscriptions produces empty topics', () => {
     const json = { agents: [{ agentId: 'x', subscriptions: [], outputs: [{ eventType: 'out', topic: 'out-t', description: 'Out' }] }] };
-    const stub = buildStubDescriptor('out-only-job', json);
+    const stub = buildUseCaseDescriptor('out-only-job', json);
     expect(stub.topics).toEqual([]);
     expect(stub.outboundTopics).toHaveLength(1);
   });
 
   test('useCaseId with underscores is title-cased correctly in multi-agent name', () => {
-    const stub = buildStubDescriptor('my_use_case', {
+    const stub = buildUseCaseDescriptor('my_use_case', {
       agents: [{ agentId: 'a1', name: 'A1', subscriptions: [], outputs: [] }, { agentId: 'a2', name: 'A2', subscriptions: [], outputs: [] }],
     });
     expect(stub.name).toBe('My Use Case');
@@ -562,8 +562,8 @@ describe('Backward compatibility — single-agent use-cases continue to work', (
     expect(topics.has('agent-transactions')).toBe(true);
   });
 
-  test('buildStubDescriptor for single-agent uses agent name, not title-cased id', () => {
-    const stub = buildStubDescriptor('banking-fraud-agent', BANKING_AGENTS_JSON);
+  test('buildUseCaseDescriptor for single-agent uses agent name, not title-cased id', () => {
+    const stub = buildUseCaseDescriptor('banking-fraud-agent', BANKING_AGENTS_JSON);
     expect(stub.name).toBe('Banking Fraud Detection Agent');
   });
 

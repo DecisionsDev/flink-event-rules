@@ -69,10 +69,31 @@ class HorizonConfigEdgeCaseTest {
         }
 
         @Test
-        @DisplayName("'m' unit: '60m' → 3 600 000 ms (1 hour)")
+        @DisplayName("'mn' unit: '60mn' → 3 600 000 ms (1 hour)")
         void minutesUnit60() {
-            HorizonConfig h = HorizonConfig.time("60m");
+            HorizonConfig h = HorizonConfig.time("60mn");
             assertEquals(3_600_000L, h.timeLimitMs());
+        }
+
+        @Test
+        @DisplayName("'mn' unit: '1mn' → 60 000 ms")
+        void minutesUnitOne() {
+            HorizonConfig h = HorizonConfig.time("1mn");
+            assertEquals(60_000L, h.timeLimitMs());
+        }
+
+        @Test
+        @DisplayName("'m' unit: '1m' → 2 592 000 000 ms (30 days / 1 month)")
+        void monthsUnitOne() {
+            HorizonConfig h = HorizonConfig.time("1m");
+            assertEquals(2_592_000_000L, h.timeLimitMs());
+        }
+
+        @Test
+        @DisplayName("'m' unit: '7m' → 7 × 30 × 86 400 000 ms (7 months)")
+        void monthsUnitSeven() {
+            HorizonConfig h = HorizonConfig.time("7m");
+            assertEquals(7L * 30L * 86_400_000L, h.timeLimitMs());
         }
 
         @Test
@@ -127,11 +148,19 @@ class HorizonConfigEdgeCaseTest {
         }
 
         @Test
-        @DisplayName("'30M' (uppercase) → same as '30m'")
+        @DisplayName("'30MN' (uppercase) → same as '30mn'")
+        void upperCaseMN() {
+            assertEquals(
+                HorizonConfig.time("30mn").timeLimitMs(),
+                HorizonConfig.time("30MN").timeLimitMs());
+        }
+
+        @Test
+        @DisplayName("'6M' (uppercase) → same as '6m'")
         void upperCaseM() {
             assertEquals(
-                HorizonConfig.time("30m").timeLimitMs(),
-                HorizonConfig.time("30M").timeLimitMs());
+                HorizonConfig.time("6m").timeLimitMs(),
+                HorizonConfig.time("6M").timeLimitMs());
         }
 
         @Test

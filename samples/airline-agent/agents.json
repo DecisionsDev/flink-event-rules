@@ -109,10 +109,6 @@
               {
                 "field": "passengerNotifications",
                 "eventType": "PassengerNotification"
-              },
-              {
-                "field": "cateringStatusNotifications",
-                "eventType": "CateringStatusNotification"
               }
             ],
             "scheduleRequestsField": "scheduleRequests"
@@ -135,10 +131,6 @@
               {
                 "field": "passengerNotifications",
                 "eventType": "PassengerNotification"
-              },
-              {
-                "field": "cateringStatusNotifications",
-                "eventType": "CateringStatusNotification"
               }
             ],
             "scheduleRequestsField": "scheduleRequests"
@@ -157,10 +149,6 @@
               {
                 "field": "flightNotifications",
                 "eventType": "FlightNotification"
-              },
-              {
-                "field": "cateringStatusNotifications",
-                "eventType": "CateringStatusNotification"
               }
             ],
             "scheduleRequestsField": "scheduleRequests"
@@ -183,10 +171,6 @@
               {
                 "field": "passengerNotifications",
                 "eventType": "PassengerNotification"
-              },
-              {
-                "field": "cateringStatusNotifications",
-                "eventType": "CateringStatusNotification"
               }
             ],
             "scheduleRequestsField": "scheduleRequests"
@@ -203,11 +187,6 @@
           "eventType": "PassengerNotification",
           "topic": "agent-passenger-notifications",
           "description": "Real-time passenger notification"
-        },
-        {
-          "eventType": "CateringStatusNotification",
-          "topic": "agent-catering-status-notifications",
-          "description": "Real-time catering status notification"
         },
         {
           "eventType": "agent-error",

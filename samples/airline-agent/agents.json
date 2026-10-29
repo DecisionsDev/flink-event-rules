@@ -7,7 +7,8 @@
     {
       "name": "agent-flight-events",
       "type": "FlightEvent",
-      "label": "Flight Events"
+      "label": "Flight Events",
+      "schema": "samples/airline-agent/schemas/flight-event.schema.json"
     },
     {
       "name": "agent-catering-events",
@@ -59,6 +60,11 @@
             "type": "time",
             "timeLimit": "96h",
             "description": "Keep 96 hours of Flight Events per flight"
+          },
+          "sqlEnrichment": {
+            "sqlFile": "samples/airline-agent/enrichment/enrich_flight_events.sql",
+            "inputViewName": "raw_flight_events",
+            "outputViewName": "enriched_flight_events"
           }
         },
         {
@@ -88,7 +94,7 @@
         }
       ],
       "ruleset": {
-        "path": "samples/airline-agent/AirlineDecisionService_1.1.0.jar",
+        "path": "samples/airline-agent/AirlineDecisionService_1.2.5.jar",
         "archiveControlTopic": "agent-airline-archive-control",
         "operations": [
           {
@@ -186,7 +192,13 @@
         {
           "eventType": "PassengerNotification",
           "topic": "agent-passenger-notifications",
-          "description": "Real-time passenger notification"
+          "description": "Real-time passenger notification",
+          "schema": "samples/airline-agent/schemas/passenger-notification.schema.json",
+          "sqlEnrichment": {
+            "sqlFile": "samples/airline-agent/enrichment/enrich_passenger_notifications.sql",
+            "inputViewName": "raw_passenger_notifications",
+            "outputViewName": "enriched_passenger_notifications"
+          }
         },
         {
           "eventType": "agent-error",

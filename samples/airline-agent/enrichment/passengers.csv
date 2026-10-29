@@ -1,0 +1,11 @@
+passengerId,name,birthdate,citizenship,residenceCountry,loyaltyStatus,email,phone,contactPreference
+JS,John Smith,1980-10-19T20:29:16Z,USA,USA,Gold,js@dummy.com,+1-567-987-4567,SMS
+LW,Lisa Williams,1977-07-23T20:29:16Z,USA,USA,Silver,lw@dummy.com,+1-567-987-4568,EMAIL
+BG,Bruno Good,1972-07-23T20:29:16Z,USA,USA,Silver,bg@dummy.com,+1-567-987-4569,PHONE
+JH,Jack Henry,1973-07-23T20:29:16Z,USA,USA,Silver,jh@dummy.com,+1-567-987-4570,SMS
+PW,Paul Watson,1979-07-23T20:29:16Z,USA,USA,Silver,pw@dummy.com,+1-567-987-4571,SMS
+KP,Kathy Perry,1975-07-23T20:29:16Z,USA,USA,Silver,kp@dummy.com,+1-567-987-4572,PHONE
+JW,Jules Wayne,1977-07-23T20:29:16Z,USA,USA,Silver,jw@dummy.com,+1-567-987-4573,WHATSAPP
+RG,Robert Guy,1965-07-23T20:29:16Z,USA,USA,Silver,rg@dummy.com,+1-567-987-4574,WHATSAPP
+BC,Billy Cash,1971-07-23T20:29:16Z,USA,USA,Silver,bc@dummy.com,+1-567-987-4575,SMS
+CR,Carlos Rodriguez,1982-07-23T20:29:16Z,USA,USA,Silver,cr@dummy.com,+1-567-987-4576,WHATSAPP

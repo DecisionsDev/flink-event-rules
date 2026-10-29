@@ -48,8 +48,10 @@ state.backend.type: rocksdb
 state.backend.rocksdb.localdir: /tmp/flink-rocksdb
 
 # Classloading
-# Prefer cluster-provided Flink libraries over user-jar classes to avoid mixed Flink classpaths
-classloader.resolve-order: parent-first
+# child-first (Flink default): the fat JAR's bundled connectors/formats take precedence
+# over anything in the cluster's lib/ directory. Required so that flink-connector-files,
+# flink-csv, and flink-json are resolved from the user JAR rather than the cluster image.
+classloader.resolve-order: child-first
 
 # Logging
 # Log files will be in /opt/flink/log/

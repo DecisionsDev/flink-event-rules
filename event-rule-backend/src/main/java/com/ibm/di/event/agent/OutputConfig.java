@@ -17,6 +17,8 @@
  */
 package com.ibm.di.event.agent;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import java.io.Serial;
 import java.io.Serializable;
 
@@ -27,11 +29,20 @@ import java.io.Serializable;
  * {@link com.ibm.di.event.agent.EventEnvelope} objects tagged with a logical
  * {@code eventType}.  The downstream routing step filters by this type and
  * writes matching envelopes to the configured {@link #topic}.
+ *
+ * <p>When {@link #sqlEnrichment} is set, emitted envelopes are passed through a
+ * Flink SQL transform before reaching the Kafka sink.  The SQL file receives the
+ * outbound stream as a temporary view named {@link SqlEnrichmentConfig#getInputViewName()}
+ * and reads the enriched result from {@link SqlEnrichmentConfig#getOutputViewName()}.
+ * The output view must expose the three conventional columns expected by
+ * {@link com.ibm.di.event.sql.SqlEnrichmentRunner}: {@code timestamp}, {@code entity_id},
+ * and {@code payload_json}.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class OutputConfig implements Serializable {
 
     @Serial
-    private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 2L;
 
     /** Logical output event type (e.g. {@code "fraud-alert"}, {@code "approved-transaction"}). */
     private String eventType;
@@ -41,6 +52,20 @@ public class OutputConfig implements Serializable {
 
     /** Optional human-readable description used in logging and monitoring. */
     private String description;
+
+    /**
+     * Path to a JSON Schema file describing the payload shape of outbound events of this type.
+     * Required when {@link #sqlEnrichment} is set: the schema is used to map each
+     * {@link com.ibm.di.event.agent.EventEnvelope} payload into a typed Flink {@code Row}
+     * so that SQL can reference individual fields by name.
+     */
+    private String schema;
+
+    /**
+     * Optional SQL enrichment applied to outbound events of this type before they
+     * reach the Kafka sink.  {@code null} means no enrichment (default behaviour).
+     */
+    private SqlEnrichmentConfig sqlEnrichment;
 
     // ── Constructors ──────────────────────────────────────────────────────────
 
@@ -62,9 +87,21 @@ public class OutputConfig implements Serializable {
     public String getDescription()            { return description; }
     public void   setDescription(String d)    { this.description = d; }
 
+    public String getSchema()              { return schema; }
+    public void   setSchema(String s)      { this.schema = s; }
+
+    public SqlEnrichmentConfig getSqlEnrichment()                      { return sqlEnrichment; }
+    public void                setSqlEnrichment(SqlEnrichmentConfig se) { this.sqlEnrichment = se; }
+
+    /** Returns {@code true} when this output has an active SQL enrichment configuration. */
+    public boolean hasSqlEnrichment() {
+        return sqlEnrichment != null && sqlEnrichment.hasSqlFile();
+    }
+
     @Override
     public String toString() {
-        return "OutputConfig{eventType='" + eventType + "', topic='" + topic + "'}";
+        return "OutputConfig{eventType='" + eventType + "', topic='" + topic
+            + "', sqlEnrichment=" + (hasSqlEnrichment() ? sqlEnrichment.getSqlFile() : "none") + "'}";
     }
 }
 

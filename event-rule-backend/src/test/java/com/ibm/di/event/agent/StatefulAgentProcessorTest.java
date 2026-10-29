@@ -2270,6 +2270,27 @@ class StatefulAgentProcessorTest {
         }
 
         @Test
+        @DisplayName("Reset sentinel with __eventType in payload is recognized even if envelope eventType is subscription default")
+        void sentinelRecognizedViaPayloadEventType() {
+            StatefulAgentProcessor p = new StatefulAgentProcessor(baseDescriptor());
+
+            AgentState state = AgentState.init("ENT-PAYLOAD", "entity", 1000L);
+            ObjectNode entityData = MAPPER.createObjectNode();
+            entityData.put("balance", 5000);
+            state.setEntityData(entityData);
+
+            ObjectNode resetPayload = MAPPER.createObjectNode();
+            resetPayload.put("__eventType", "__ENTITY_RESET__");
+            resetPayload.put("accountId", "ENT-PAYLOAD");
+            EventEnvelope env = EventEnvelope.from("domain-event", "domain-events", 1000L, resetPayload, "ENT-PAYLOAD");
+
+            EventEnvelope out = p.invokeForTest(env, state);
+
+            assertNull(out, "Reset event must return null output without invoking rules");
+            assertNull(state.getEntityData(), "entityData must be cleared when __eventType is __ENTITY_RESET__ in payload");
+        }
+
+        @Test
         @DisplayName("Reset sentinel clears histories accumulated across multiple event types")
         void sentinelClearsMultipleEventTypeHistories() {
             // Descriptor with two subscriptions → two event-type history buckets

@@ -2,7 +2,7 @@
 # IMPORTANT: Build the JAR locally first with: mvn clean install -DskipTests
 # This Dockerfile assumes the application has been built and the JAR exists in target/
 
-ARG FLINK_IMAGE=confluentinc/cp-flink:2.1.3-cp1-java21
+ARG FLINK_IMAGE=flink:2.2.0-scala_2.12-java21
 FROM ${FLINK_IMAGE}
 
 # Accept build argument for descriptor path

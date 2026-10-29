@@ -146,7 +146,11 @@ public class AgentBasedDataStreamJob {
 
         // Per-topic source idleness from the top-level "topics" section of the agents file
         Map<String, Long> topicIdlenessMs = loadTopicIdleness(descriptorPath);
+        Map<String, String> topicSchemas = loadTopicSchemas(descriptorPath);
         LOG.info("  Source idleness    : {} (default {} ms)", topicIdlenessMs, DEFAULT_IDLENESS_MS);
+        if (!topicSchemas.isEmpty()) {
+            LOG.info("  Topic schemas      : {}", topicSchemas);
+        }
 
         // Job-level parallelism: descriptor field takes priority over env var
         int jobParallelism = fileDescriptor.parallelism();
@@ -210,7 +214,7 @@ public class AgentBasedDataStreamJob {
             }
             DataStream<EventEnvelope> processed =
                 wireAgent(env, agent, bootstrapServers, outOfOrderMs, chainedIn, chainedTypes,
-                    topicIdlenessMs);
+                    topicIdlenessMs, topicSchemas);
             // Register this agent's output so downstream agents wired later can receive it.
             // When chaining is globally disabled chainedInputs is the empty no-op sentinel
             // and registerOutput is a no-op too, so there is no overhead.
@@ -261,6 +265,17 @@ public class AgentBasedDataStreamJob {
                                                DataStream<EventEnvelope> chainedInbound,
                                                java.util.Set<String> chainedEventTypes,
                                                Map<String, Long> topicIdlenessMs) {
+        return wireAgent(env, agent, bootstrapServers, outOfOrderMs, chainedInbound, chainedEventTypes, topicIdlenessMs, null);
+    }
+
+    static DataStream<EventEnvelope> wireAgent(StreamExecutionEnvironment env,
+                                               AgentDescriptor agent,
+                                               String bootstrapServers,
+                                               long outOfOrderMs,
+                                               DataStream<EventEnvelope> chainedInbound,
+                                               java.util.Set<String> chainedEventTypes,
+                                               Map<String, Long> topicIdlenessMs,
+                                               Map<String, String> topicSchemas) {
 
         validate(agent);
 
@@ -300,13 +315,29 @@ public class AgentBasedDataStreamJob {
                 long idlenessMs = topicIdlenessMs != null
                     ? topicIdlenessMs.getOrDefault(sub.getTopic(), DEFAULT_IDLENESS_MS)
                     : DEFAULT_IDLENESS_MS;
-                DataStream<EventEnvelope> topicStream =
-                    buildTopicStream(env, sub.getTopic(), sub.getEventType(),
+                DataStream<EventEnvelope> topicStream;
+                if (sub.hasSqlEnrichment()) {
+                    String topicSchemaPath = sub.getSchema() != null && !sub.getSchema().isBlank()
+                        ? sub.getSchema()
+                        : (topicSchemas != null ? topicSchemas.get(sub.getTopic()) : null);
+                    try {
+                        topicStream = com.ibm.di.event.sql.SqlEnrichmentRunner.buildSqlEnrichedStream(
+                            env, sub, topicSchemaPath, consumerGrp, bootstrapServers,
+                            outOfOrderMs, idlenessMs, agent, agent.entityKeyExtractorFor(sub)
+                        );
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to configure SQL enrichment for subscription on topic: " + sub.getTopic(), e);
+                    }
+                    LOG.info("[{}] Wired SQL-enriched Kafka source: topic={} eventType={} (sqlFile={})",
+                        agentId, sub.getTopic(), sub.getEventType(), sub.getSqlEnrichment().getSqlFile());
+                } else {
+                    topicStream = buildTopicStream(env, sub.getTopic(), sub.getEventType(),
                         consumerGrp, bootstrapServers, outOfOrderMs, idlenessMs, agent,
                         agent.entityKeyExtractorFor(sub));
+                    LOG.info("[{}] Wired Kafka source: topic={} eventType={}",
+                        agentId, sub.getTopic(), sub.getEventType());
+                }
                 subscriptionStreams.add(topicStream);
-                LOG.info("[{}] Wired Kafka source: topic={} eventType={}",
-                    agentId, sub.getTopic(), sub.getEventType());
             }
         }
 
@@ -380,6 +411,24 @@ public class AgentBasedDataStreamJob {
                 if (outEventType == null || outEventType.isBlank()) return true; // wildcard
                 return outEventType.equals(env2.getEventType());
             }).name("Filter[" + agentId + "/" + outEventType + "]");
+
+            // ── Optional outbound SQL enrichment ─────────────────────────────
+            if (output.hasSqlEnrichment()) {
+                try {
+                    filtered = com.ibm.di.event.sql.SqlEnrichmentRunner.buildSqlEnrichedOutboundStream(
+                        env, filtered, output, outOfOrderMs,
+                        topicIdlenessMs != null
+                            ? topicIdlenessMs.getOrDefault(outTopic, DEFAULT_IDLENESS_MS)
+                            : DEFAULT_IDLENESS_MS,
+                        agent.getEntityKeyExtractor()
+                    );
+                    LOG.info("[{}] Wired outbound SQL enrichment: eventType={} (sqlFile={})",
+                        agentId, outEventType, output.getSqlEnrichment().getSqlFile());
+                } catch (IOException e) {
+                    throw new RuntimeException(
+                        "Failed to configure outbound SQL enrichment for eventType: " + outEventType, e);
+                }
+            }
 
             // Unique transactional ID prefix per sink instance — required by flink-connector-kafka
             // 4.0.0-2.0 BackchannelFactory which rejects duplicate (including null) prefixes.
@@ -617,6 +666,26 @@ public class AgentBasedDataStreamJob {
     }
 
     /**
+     * Reads declared JSON Schema paths from the top-level {@code topics[]} section of the agents file.
+     *
+     * @return topic name → schema file path
+     */
+    static Map<String, String> loadTopicSchemas(String agentDescriptorPath) throws IOException {
+        Map<String, String> result = new HashMap<>();
+
+        JsonNode topics = new ObjectMapper().readTree(readFile(agentDescriptorPath)).get("topics");
+        if (topics == null || !topics.isArray()) return result;
+        for (JsonNode topic : topics) {
+            JsonNode name = topic.get("name");
+            JsonNode schema = topic.get("schema");
+            if (name != null && name.isTextual() && schema != null && schema.isTextual() && !schema.asText().isBlank()) {
+                result.put(name.asText(), schema.asText());
+            }
+        }
+        return result;
+    }
+
+    /**
      * Loads the agent descriptor file and returns an {@link AgentFileDescriptor}.
      * Accepts:
      * <ul>
@@ -673,6 +742,13 @@ public class AgentBasedDataStreamJob {
         // Then filesystem
         File f = new File(path);
         if (!f.exists()) f = new File(System.getProperty("user.dir"), path);
+        if (!f.exists()) f = new File("..", path);
+        if (!f.exists() && System.getProperty("user.dir") != null) {
+            File userDir = new File(System.getProperty("user.dir"));
+            if (userDir.getParentFile() != null) {
+                f = new File(userDir.getParentFile(), path);
+            }
+        }
         if (!f.exists()) {
             throw new IllegalArgumentException("Agent descriptor not found: " + path
                 + " (working dir: " + System.getProperty("user.dir") + ")");

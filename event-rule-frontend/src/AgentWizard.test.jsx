@@ -2304,3 +2304,111 @@ describe('subscription-level entityKeyExtractor', () => {
     expect(_validateStep(2, form)).toBeNull();
   });
 });
+
+describe('SQL enrichment on subscriptions and outputs', () => {
+  const baseForm = () => {
+    const form = descriptorToForm(null);
+    form.agentId = 'a';
+    form.ruleset.path = '/tmp/x.jar';
+    return form;
+  };
+  const sub = (over = {}) => ({
+    _key: 'k', eventType: 'txn', topic: 'txn-topic', operation: 'op',
+    horizonType: 'hybrid', horizonValue: 10, horizonCountLimit: 100,
+    horizonTimeLimit: '24h', horizonDescription: '', ...over,
+  });
+  const out = (over = {}) => ({ _key: 'o', eventType: 'alert', topic: 'alert-topic', description: '', ...over });
+
+  test('no SQL file: neither schema nor sqlEnrichment is emitted', () => {
+    const form = baseForm();
+    form.subscriptions = [sub({ schema: 'x.schema.json' })];
+    form.outputs = [out({ schema: 'y.schema.json' })];
+    const agent = buildDescriptor(form).agents[0];
+    expect(agent.subscriptions[0]).not.toHaveProperty('sqlEnrichment');
+    expect(agent.subscriptions[0]).not.toHaveProperty('schema');
+    expect(agent.outputs[0]).not.toHaveProperty('sqlEnrichment');
+    expect(agent.outputs[0]).not.toHaveProperty('schema');
+  });
+
+  test('subscription with SQL file emits schema and sqlEnrichment; blank view names are omitted', () => {
+    const form = baseForm();
+    form.subscriptions = [
+      sub({ schema: ' s.json ', sqlFile: ' e.sql ', sqlInputView: 'raw_in', sqlOutputView: '' }),
+    ];
+    const s = buildDescriptor(form).agents[0].subscriptions[0];
+    expect(s.schema).toBe('s.json');
+    expect(s.sqlEnrichment).toEqual({ sqlFile: 'e.sql', inputViewName: 'raw_in' });
+  });
+
+  test('output with SQL file emits schema and sqlEnrichment', () => {
+    const form = baseForm();
+    form.outputs = [out({ schema: 's.json', sqlFile: 'e.sql', sqlInputView: 'a', sqlOutputView: 'b' })];
+    const o = buildDescriptor(form).agents[0].outputs[0];
+    expect(o.schema).toBe('s.json');
+    expect(o.sqlEnrichment).toEqual({ sqlFile: 'e.sql', inputViewName: 'a', outputViewName: 'b' });
+  });
+
+  test('descriptorToForm loads subscription and output enrichment; absent fields default to blank', () => {
+    const form = descriptorToForm({ agents: [{
+      agentId: 'a',
+      subscriptions: [
+        { eventType: 'e1', topic: 't1', operation: 'op', schema: 's.json',
+          sqlEnrichment: { sqlFile: 'e.sql', inputViewName: 'in', outputViewName: 'outv' } },
+        { eventType: 'e2', topic: 't2', operation: 'op' },
+      ],
+      outputs: [{ eventType: 'o1', topic: 'ot', schema: 'os.json', sqlEnrichment: { sqlFile: 'o.sql' } }],
+    }] });
+    expect(form.subscriptions[0]).toEqual(expect.objectContaining({
+      schema: 's.json', sqlFile: 'e.sql', sqlInputView: 'in', sqlOutputView: 'outv' }));
+    expect(form.subscriptions[1]).toEqual(expect.objectContaining({
+      schema: '', sqlFile: '', sqlInputView: '', sqlOutputView: '' }));
+    expect(form.outputs[0]).toEqual(expect.objectContaining({
+      schema: 'os.json', sqlFile: 'o.sql', sqlInputView: '', sqlOutputView: '' }));
+  });
+
+  test('descriptorToForm falls back to the schema declared on the topic in topics[]', () => {
+    const form = descriptorToForm({
+      topics: [{ name: 't1', schema: 'topic.schema.json' }],
+      agents: [{ agentId: 'a', subscriptions: [
+        { eventType: 'e1', topic: 't1', operation: 'op', sqlEnrichment: { sqlFile: 'e.sql' } },
+      ] }],
+    });
+    expect(form.subscriptions[0].schema).toBe('topic.schema.json');
+    const rebuilt = buildDescriptor(form).agents[0].subscriptions[0];
+    expect(rebuilt.schema).toBe('topic.schema.json');
+    expect(rebuilt.sqlEnrichment).toEqual({ sqlFile: 'e.sql' });
+  });
+
+  test('round-trip preserves subscription and output enrichment', () => {
+    const original = { agents: [{
+      agentId: 'a', ruleset: { path: '/tmp/x.jar' },
+      subscriptions: [{ eventType: 'e1', topic: 't1', operation: 'op', horizon: { type: 'count', value: 3 },
+        schema: 's.json', sqlEnrichment: { sqlFile: 'e.sql', inputViewName: 'in', outputViewName: 'outv' } }],
+      outputs: [{ eventType: 'o1', topic: 'ot', schema: 'os.json', sqlEnrichment: { sqlFile: 'o.sql' } }],
+    }] };
+    const rebuilt = buildDescriptor(descriptorToForm(original)).agents[0];
+    expect(rebuilt.subscriptions[0].schema).toBe('s.json');
+    expect(rebuilt.subscriptions[0].sqlEnrichment).toEqual(original.agents[0].subscriptions[0].sqlEnrichment);
+    expect(rebuilt.outputs[0].schema).toBe('os.json');
+    expect(rebuilt.outputs[0].sqlEnrichment).toEqual({ sqlFile: 'o.sql' });
+  });
+
+  test('validateStep(2) requires a schema (and a topic) when a subscription has an SQL file', () => {
+    const form = baseForm();
+    form.subscriptions = [sub({ sqlFile: 'e.sql', schema: '' })];
+    expect(_validateStep(2, form)).toMatch(/requires the JSON Schema/i);
+    form.subscriptions = [sub({ sqlFile: 'e.sql', schema: 's.json', topic: '' })];
+    expect(_validateStep(2, form)).toMatch(/requires a Kafka topic/i);
+    form.subscriptions = [sub({ sqlFile: 'e.sql', schema: 's.json' })];
+    expect(_validateStep(2, form)).toBeNull();
+  });
+
+  test('validateStep(3) requires a schema when an output has an SQL file', () => {
+    const form = baseForm();
+    form.outputs = [out({ sqlFile: 'e.sql', schema: '' })];
+    expect(_validateStep(3, form)).toMatch(/requires the JSON Schema/i);
+    form.outputs = [out({ sqlFile: 'e.sql', schema: 's.json' })];
+    expect(_validateStep(3, form)).toBeNull();
+  });
+});
+

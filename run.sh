@@ -328,6 +328,7 @@ usage() {
     echo "  restart     Restart all services"
     echo "  logs        Follow logs from all services"
     echo "  log         Follow Flink TaskManager logs only"
+    echo "  log-jobmanager         Follow Flink JobkManager logs only"
     echo "  build       Build or rebuild Docker images"
     echo "  clean       Completely and irreversibly clean all project artifacts, state, checkpoints, volumes, and caches"
     echo "  clean-state Reset runtime state: stop services, remove volumes/checkpoints, and reset job state (steps 1-4)"
@@ -340,6 +341,7 @@ usage() {
     echo "Examples:"
     echo "  $0 up                        # Start all infrastructure services"
     echo "  $0 logs                      # Follow all service logs"
+    echo "  $0 log                       # Follow taskmanager service logs"
     echo "  $0 down                      # Stop all services"
     echo "  $0 clean                     # Clean all project resources (interactive confirmation)"
     echo "  $0 clean --force             # Clean all project resources without confirmation"
@@ -363,7 +365,7 @@ for arg in "$@"; do
         --force|-f|--yes|-y)
             FORCE=true
             ;;
-        up|down|restart|logs|log|build|clean|clean-state|status)
+        up|down|restart|logs|log|log-jobmanager|build|clean|clean-state|status)
             COMMAND="$arg"
             ;;
     esac
@@ -415,6 +417,10 @@ case $COMMAND in
     log)
         print_info "Following Flink TaskManager logs (Ctrl+C to exit)..."
         $DOCKER_COMPOSE_CMD -f $COMPOSE_FILE logs -f taskmanager
+        ;;
+    log-jobmanager)
+        print_info "Following Flink JobManager logs (Ctrl+C to exit)..."
+        $DOCKER_COMPOSE_CMD -f $COMPOSE_FILE logs -f jobmanager
         ;;
     build)
         print_info "Building Docker images..."

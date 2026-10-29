@@ -101,10 +101,28 @@ public class EventEnvelope implements Serializable {
                                      String sourceTopic,
                                      long   timestamp,
                                      JsonNode payload) {
+        return from(eventType, sourceTopic, timestamp, payload, null);
+    }
+
+    /**
+     * Creates an envelope with an already-extracted entity ID.
+     *
+     * @param eventType   logical event-type label
+     * @param sourceTopic Kafka topic the event arrived on
+     * @param timestamp   event timestamp (epoch ms)
+     * @param payload     parsed JSON payload — stored as both live node and string
+     * @param entityId    pre-extracted entity ID (or null)
+     */
+    public static EventEnvelope from(String eventType,
+                                     String sourceTopic,
+                                     long   timestamp,
+                                     JsonNode payload,
+                                     String entityId) {
         EventEnvelope env = new EventEnvelope();
         env.eventType   = eventType;
         env.sourceTopic = sourceTopic;
         env.timestamp   = timestamp;
+        env.entityId    = entityId;
         env.setPayload(payload);
         return env;
     }

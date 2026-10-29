@@ -560,7 +560,7 @@ public class StatefulAgentProcessor
         // Clear this entity's keyed state and return without rule execution.
         // The event is routed here by keyBy(entityId), so only this partition
         // is affected — all other entities are completely untouched.
-        if (ENTITY_RESET_EVENT_TYPE.equals(event.getEventType())) {
+        if (isEntityResetEvent(event)) {
             agentStateHandle.clear();
             // A reset entity must not receive Schedule events registered before the reset.
             if (scheduleManager != null) scheduleManager.cancelAll(ctx.timerService());
@@ -1535,7 +1535,7 @@ public class StatefulAgentProcessor
 
         // Mirror the sentinel path from processElement: clear the state and return null
         // (no output is emitted for a reset event, and no state is created when null).
-        if (ENTITY_RESET_EVENT_TYPE.equals(event.getEventType())) {
+        if (isEntityResetEvent(event)) {
             if (currentState != null) {
                 currentState.setEntityData(null);
                 currentState.setEventHistories(new java.util.HashMap<>());
@@ -1600,6 +1600,16 @@ public class StatefulAgentProcessor
     }
 
     // ── Utility ────────────────────────────────────────────────────────────────
+
+    private boolean isEntityResetEvent(EventEnvelope event) {
+        if (event == null) return false;
+        if (ENTITY_RESET_EVENT_TYPE.equals(event.getEventType())) return true;
+        if (event.getPayload() != null && event.getPayload().has("__eventType")) {
+            String override = event.getPayload().get("__eventType").asText(null);
+            return ENTITY_RESET_EVENT_TYPE.equals(override);
+        }
+        return false;
+    }
 
     private String agentTag() {
         return "StatefulAgentProcessor[" + descriptor.getAgentId() + "]";

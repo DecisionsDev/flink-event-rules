@@ -1,0 +1,17 @@
+flightNumber,passengerId,checkInStatus,travelClass
+EY082,JS,Pending,Economy
+EY082,LW,Pending,Economy
+AF077,JS,Pending,Economy
+AF077,LW,Pending,Economy
+AF099,JS,Pending,Economy
+AF099,LW,Pending,Economy
+AF021,JS,CheckedIn,Economy
+AF021,LW,CheckedIn,Economy
+AF021,BG,CheckedIn,Economy
+AF021,JH,CheckedIn,Economy
+AF021,PW,CheckedIn,Economy
+AF021,KP,Pending,Economy
+AF021,JW,Pending,Economy
+AF021,RG,Pending,Economy
+AF021,BC,Pending,Economy
+AF021,CR,Pending,Economy

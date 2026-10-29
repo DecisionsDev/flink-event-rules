@@ -64,6 +64,16 @@ public class EventSubscription implements Serializable {
     /** Controls how many historical events are retained per entity for this type. */
     private HorizonConfig horizon = HorizonConfig.count(0); // default: no history
 
+    /**
+     * Optional path to a JSON Schema file describing the payload of this subscription's topic.
+     * Used by {@link #sqlEnrichment}; takes precedence over the {@code schema} declared for the
+     * topic in the top-level {@code topics[]} section of {@code agents.json}.
+     */
+    private String schema;
+
+    /** Optional SQL enrichment configuration for pre-processing events via Flink SQL. */
+    private SqlEnrichmentConfig sqlEnrichment;
+
     // ── Constructors ──────────────────────────────────────────────────────────
 
     public EventSubscription() {}
@@ -115,6 +125,17 @@ public class EventSubscription implements Serializable {
 
     public String getEntityKeyExtractor()           { return entityKeyExtractor; }
     public void   setEntityKeyExtractor(String eke) { this.entityKeyExtractor = eke; }
+
+    public String getSchema()                 { return schema; }
+    public void   setSchema(String s)         { this.schema = s; }
+
+    public SqlEnrichmentConfig getSqlEnrichment()                  { return sqlEnrichment; }
+    public void                setSqlEnrichment(SqlEnrichmentConfig se) { this.sqlEnrichment = se; }
+
+    /** Returns {@code true} when this subscription has an active SQL enrichment configuration. */
+    public boolean hasSqlEnrichment() {
+        return sqlEnrichment != null && sqlEnrichment.hasSqlFile();
+    }
 
     /** Returns {@code true} when this subscription has a non-blank operation name. */
     public boolean hasOperation() {

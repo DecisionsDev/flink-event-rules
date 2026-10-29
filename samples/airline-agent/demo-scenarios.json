@@ -10,39 +10,7 @@
         "payload": {
           "timestamp": "2026-10-01T20:29:16Z",
           "flightNumber": "EY082",
-          "type": "FLIGHTOPEN",
-          "flight": {
-            "flightNumber": "EY082",
-            "aircraftId": "AF-343-TY",
-            "aircraftType": "A380",
-            "date": "2026-10-15T20:29:16Z",
-            "expectedDate": "2026-10-15T20:29:16Z",
-            "origin": "CDG",
-            "destination": "LHR",
-            "duration": "PT1H",
-            "passengers": [
-              {
-                "passengerId": "JS",
-                "name": "John Smith",
-                "birthdate": "1980-10-19T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Gold",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "LW",
-                "name": "Lisa Williams",
-                "birthdate": "1977-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              }
-            ]
-          }
+          "type": "FLIGHTOPEN"
         }
       },
       {
@@ -54,7 +22,7 @@
           "type": "FLIGHTINFO",
           "flight": {
             "flightNumber": "EY082",
-            "aircraftId": "AF-343-TZ"
+            "aircraftId": "AF-000-TZ"
           }
         }
       }
@@ -71,39 +39,7 @@
         "payload": {
           "timestamp": "2026-10-01T20:29:16Z",
           "flightNumber": "AF077",
-          "type": "FLIGHTOPEN",
-          "flight": {
-            "flightNumber": "AF077",
-            "aircraftId": "AF-343-TY",
-            "aircraftType": "A380",
-            "date": "2026-10-15T20:29:16Z",
-            "expectedDate": "2026-10-15T20:29:16Z",
-            "origin": "CDG",
-            "destination": "LHR",
-            "duration": "PT1H",
-            "passengers": [
-              {
-                "passengerId": "JS",
-                "name": "John Smith",
-                "birthdate": "1980-10-19T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Gold",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "LW",
-                "name": "Lisa Williams",
-                "birthdate": "1977-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              }
-            ]
-          }
+          "type": "FLIGHTOPEN"
         }
       },
       {
@@ -159,44 +95,7 @@
         "payload": {
           "timestamp": "2026-10-01T20:29:16Z",
           "flightNumber": "AF099",
-          "type": "FLIGHTOPEN",
-          "flight": {
-            "flightNumber": "AF099",
-            "aircraftId": "AF-343-TY",
-            "aircraftType": "A380",
-            "date": "2026-10-15T20:29:16Z",
-            "expectedDate": "2026-10-15T20:29:16Z",
-            "origin": "SFO",
-            "destination": "AMS",
-            "duration": "PT9H",
-            "cateringInformation": {
-              "economyTotalMealCount": 10,
-              "businessTotalMealCount": 10,
-              "firstTotalMealCount": 10
-            },
-            "passengers": [
-              {
-                "passengerId": "JS",
-                "name": "John Smith",
-                "birthdate": "1980-10-19T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Gold",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "LW",
-                "name": "Lisa Williams",
-                "birthdate": "1977-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              }
-            ]
-          }
+          "type": "FLIGHTOPEN"
         }
       },
       {
@@ -232,124 +131,7 @@
         "payload": {
           "timestamp": "2026-10-01T20:29:16Z",
           "flightNumber": "AF021",
-          "type": "FLIGHTOPEN",
-          "flight": {
-            "flightNumber": "AF021",
-            "aircraftId": "AF-343-TY",
-            "aircraftType": "A380",
-            "date": "2026-10-15T20:29:16Z",
-            "expectedDate": "2026-10-15T20:29:16Z",
-            "origin": "CDG",
-            "destination": "SIN",
-            "duration": "PT13H",
-            "checkinCounter" : {
-              "businessCheckinCounter" : 0,
-              "economyCheckinCounter" : 5,
-              "firstCheckinCounter" : 0
-            },
-            "passengers": [
-              {
-                "passengerId": "JS",
-                "name": "John Smith",
-                "birthdate": "1980-10-19T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Gold",
-                "check-inStatus": "CheckedIn",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "LW",
-                "name": "Lisa Williams",
-                "birthdate": "1977-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "CheckedIn",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "BG",
-                "name": "Bruno Good",
-                "birthdate": "1972-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "CheckedIn",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "JH",
-                "name": "Jack Henry",
-                "birthdate": "1973-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "CheckedIn",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "PW",
-                "name": "Paul Watson",
-                "birthdate": "1979-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "CheckedIn",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "KP",
-                "name": "Kathy Perry",
-                "birthdate": "1975-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "JW",
-                "name": "Jules Wayne",
-                "birthdate": "1977-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "RG",
-                "name": "Robert Guy",
-                "birthdate": "1965-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "BC",
-                "name": "Billy Cash",
-                "birthdate": "1971-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              },
-              {
-                "passengerId": "CR",
-                "name": "Carlos Rodriguez",
-                "birthdate": "1982-07-23T20:29:16Z",
-                "citizenship": "USA",
-                "residenceCountry": "USA",
-                "loyaltyStatus": "Silver",
-                "check-inStatus": "Pending",
-                "travelClass": "Economy"
-              }
-            ]
-          }
+          "type": "FLIGHTOPEN"
         }
       },
       {

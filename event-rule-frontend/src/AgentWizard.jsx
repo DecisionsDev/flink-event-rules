@@ -58,6 +58,10 @@ const DEFAULT_AGENT = {
       horizonCountLimit: 100,
       horizonTimeLimit: '24h',
       horizonDescription: '',
+      schema: '',            // JSON Schema path of the topic payload (needed for SQL enrichment)
+      sqlFile: '',           // blank = no SQL enrichment
+      sqlInputView: '',      // blank = backend default (raw_events)
+      sqlOutputView: '',     // blank = backend default (enriched_events)
     },
   ],
   ruleset: {
@@ -67,7 +71,7 @@ const DEFAULT_AGENT = {
     operations: [],
   },
   outputs: [
-    { _key: newKey(), eventType: '', topic: '', description: '' },
+    { _key: newKey(), eventType: '', topic: '', description: '', schema: '', sqlFile: '', sqlInputView: '', sqlOutputView: '' },
   ],
   stateConfig: {
     ttl: '30d',
@@ -137,6 +141,7 @@ export function buildDescriptor(form) {
           // Optional per-subscription override of the agent-level entityKeyExtractor.
           ...(s.entityKeyExtractor?.trim() && { entityKeyExtractor: s.entityKeyExtractor.trim() }),
           horizon,
+          ...buildSqlEnrichmentFields(s),
         };
       }),
     ruleset: buildRuleset(form.ruleset),
@@ -146,6 +151,7 @@ export function buildDescriptor(form) {
         eventType: o.eventType.trim(),
         topic: o.topic.trim(),
         ...(o.description.trim() && { description: o.description.trim() }),
+        ...buildSqlEnrichmentFields(o),
       })),
     stateConfig: {
       ...(form.stateConfig.ttl?.trim()  && { ttl:     form.stateConfig.ttl.trim()  }),
@@ -166,6 +172,39 @@ export function buildDescriptor(form) {
   wrapper.agents = [agent];
   if (form.parallelism > 0) wrapper.parallelism = form.parallelism;
   return { descriptor: wrapper, useCaseId: resolveUseCaseId(form) };
+}
+
+// Optional SQL enrichment of a subscription or an output: { schema?, sqlEnrichment? }.
+// The sqlEnrichment object is emitted only when an SQL file is given; blank view names are
+// omitted so the backend defaults (raw_events / enriched_events) apply. The schema is kept
+// only alongside an SQL file, since it is not used for anything else.
+function buildSqlEnrichmentFields(item) {
+  const sqlFile = (item.sqlFile || '').trim();
+  if (!sqlFile) return {};
+  const schema = (item.schema || '').trim();
+  const inputViewName = (item.sqlInputView || '').trim();
+  const outputViewName = (item.sqlOutputView || '').trim();
+  return {
+    ...(schema && { schema }),
+    sqlEnrichment: {
+      sqlFile,
+      ...(inputViewName && { inputViewName }),
+      ...(outputViewName && { outputViewName }),
+    },
+  };
+}
+
+// Inverse of buildSqlEnrichmentFields, for descriptorToForm. `fallbackSchema` is the schema
+// declared for the topic in the top-level topics[] (the BFF drops topics[] when an agent is
+// saved, so it is carried over onto the subscription).
+function sqlEnrichmentToForm(item, fallbackSchema = '') {
+  const se = item.sqlEnrichment || {};
+  return {
+    schema: item.schema || fallbackSchema || '',
+    sqlFile: se.sqlFile || '',
+    sqlInputView: se.inputViewName || '',
+    sqlOutputView: se.outputViewName || '',
+  };
 }
 
 function buildHorizon(s) {
@@ -556,6 +595,12 @@ export function validateStep(step, form) {
         if (!TIME_LIMIT_RE.test(s.horizonTimeLimit.trim()))
           return `Subscription "${s.eventType}": time limit must be a number followed by s, mn, h, d, or m (e.g. 24h, 30mn, 7m).`;
       }
+      if ((s.sqlFile || '').trim()) {
+        if (!(s.topic || '').trim())
+          return `Subscription "${s.eventType}": SQL enrichment requires a Kafka topic.`;
+        if (!(s.schema || '').trim())
+          return `Subscription "${s.eventType}": SQL enrichment requires the JSON Schema file of the topic payload.`;
+      }
     }
   }
   if (step === 3) {
@@ -567,6 +612,11 @@ export function validateStep(step, form) {
     if (hasActiveOutput) {
       const valid = form.outputs.filter(o => o.eventType.trim() && o.topic.trim());
       if (valid.length === 0) return 'At least one output with event type and topic is required.';
+    }
+    for (const o of form.outputs) {
+      if (!o.eventType.trim() || !o.topic.trim()) continue;
+      if ((o.sqlFile || '').trim() && !(o.schema || '').trim())
+        return `Output "${o.eventType}": SQL enrichment requires the JSON Schema file of the output payload.`;
     }
   }
   return null;
@@ -616,6 +666,52 @@ function Select({ value, onChange, options }) {
         <option key={o.value} value={o.value}>{o.label}</option>
       ))}
     </select>
+  );
+}
+
+// Optional SQL enrichment fields shared by subscription and output cards.
+// `kind` is "subscription" (events are enriched before the agent) or "output"
+// (emitted events are enriched before the Kafka sink).
+function SqlEnrichmentFields({ item, update, kind }) {
+  const inbound = kind === 'subscription';
+  const enabled = !!(item.sqlFile || '').trim();
+  return (
+    <>
+      <div className="wz-section-divider">
+        <span className="wz-section-label">SQL Enrichment (optional)</span>
+        <span className="wz-hint">
+          {inbound
+            ? 'Run a Flink SQL script on incoming events of this subscription before they reach the agent.'
+            : 'Run a Flink SQL script on emitted events of this type before they are written to the Kafka topic.'}
+        </span>
+      </div>
+      <Field
+        label="SQL File"
+        hint="Path to the .sql file holding the DDL (e.g. reference tables) and the enrichment view. Leave blank for no enrichment."
+      >
+        <TextInput value={item.sqlFile ?? ''} onChange={v => update('sqlFile', v)} placeholder="samples/my-app/enrichment/enrich_events.sql" mono />
+      </Field>
+      {enabled && (
+        <>
+          <Field
+            label="JSON Schema *"
+            hint={inbound
+              ? 'Path to the JSON Schema file describing the payload of the topic. It types the columns of the input view.'
+              : 'Path to the JSON Schema file describing the payload of this output. It types the columns of the input view.'}
+          >
+            <TextInput value={item.schema ?? ''} onChange={v => update('schema', v)} placeholder="samples/my-app/schemas/event.schema.json" mono />
+          </Field>
+          <div className="wz-row">
+            <Field label="Input View Name" hint={`View exposing the ${inbound ? 'incoming' : 'emitted'} events to the script. Default: raw_events.`}>
+              <TextInput value={item.sqlInputView ?? ''} onChange={v => update('sqlInputView', v)} placeholder="raw_events" mono />
+            </Field>
+            <Field label="Output View Name" hint="View the script must define with the enriched rows. Default: enriched_events.">
+              <TextInput value={item.sqlOutputView ?? ''} onChange={v => update('sqlOutputView', v)} placeholder="enriched_events" mono />
+            </Field>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
@@ -773,6 +869,7 @@ function SubscriptionRow({ sub, onChange, onRemove, index, total }) {
       <Field label="Horizon Description" hint="Optional note for logs and monitoring (e.g. Keep last 100 events or 24 hours of history).">
         <TextInput value={sub.horizonDescription} onChange={v => update('horizonDescription', v)} placeholder="Keep last 100 transactions or 24 hours of history" />
       </Field>
+      <SqlEnrichmentFields item={sub} update={update} kind="subscription" />
     </div>
   );
 }
@@ -782,6 +879,7 @@ function StepSubscriptions({ form, setSubscriptions }) {
     _key: newKey(),
     eventType: '', topic: '', operation: '', entityKeyExtractor: '', horizonType: 'hybrid',
     horizonValue: 10, horizonCountLimit: 100, horizonTimeLimit: '24h', horizonDescription: '',
+    schema: '', sqlFile: '', sqlInputView: '', sqlOutputView: '',
   }]);
   const remove = i => setSubscriptions(form.subscriptions.filter((_, idx) => idx !== i));
   const change = (i, val) => setSubscriptions(form.subscriptions.map((s, idx) => idx === i ? val : s));
@@ -1242,12 +1340,16 @@ function OutputRow({ out, onChange, onRemove, index, total }) {
       <Field label="Description" hint="Optional label shown in Flink operator names and logs.">
         <TextInput value={out.description} onChange={v => update('description', v)} placeholder="Rule engine decisions" />
       </Field>
+      <SqlEnrichmentFields item={out} update={update} kind="output" />
     </div>
   );
 }
 
 function StepOutputs({ form, setOutputs }) {
-  const add = () => setOutputs([...form.outputs, { _key: newKey(), eventType: '', topic: '', description: '' }]);
+  const add = () => setOutputs([...form.outputs, {
+    _key: newKey(), eventType: '', topic: '', description: '',
+    schema: '', sqlFile: '', sqlInputView: '', sqlOutputView: '',
+  }]);
   const remove = i => setOutputs(form.outputs.filter((_, idx) => idx !== i));
   const change = (i, val) => setOutputs(form.outputs.map((o, idx) => idx === i ? val : o));
 
@@ -1362,6 +1464,7 @@ export function descriptorToForm(descriptor, targetAgentId, useCaseId) {
       horizonCountLimit: h.countLimit ?? 100,
       horizonTimeLimit: h.timeLimit || '24h',
       horizonDescription: h.description || '',
+      ...sqlEnrichmentToForm(s, (descriptor.topics || []).find(t => t.name === s.topic)?.schema),
     };
   });
 
@@ -1407,6 +1510,7 @@ export function descriptorToForm(descriptor, targetAgentId, useCaseId) {
       eventType: o.eventType || '',
       topic: o.topic || '',
       description: o.description || '',
+      ...sqlEnrichmentToForm(o),
     })),
     stateConfig: {
       ttl: sc.ttl || '30d',

@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FlightEvent",
+  "description": "Schema for incoming flight events on agent-flight-events topic",
+  "type": "object",
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp of the event"
+    },
+    "flightNumber": {
+      "type": "string",
+      "description": "Unique flight identifier and entity key"
+    },
+    "type": {
+      "type": "string",
+      "description": "Event subtype: FLIGHTOPEN, FLIGHTDELAYED, FLIGHTCANCELLED, FLIGHTINFO, etc."
+    },
+    "flight": {
+      "type": "object",
+      "description": "Flight payload data",
+      "properties": {
+        "flightNumber": { "type": "string" },
+        "aircraftId": { "type": "string" },
+        "aircraftType": { "type": "string" },
+        "date": { "type": "string" },
+        "expectedDate": { "type": "string" },
+        "origin": { "type": "string" },
+        "destination": { "type": "string" },
+        "duration": { "type": "string" }
+      }
+    }
+  },
+  "required": ["timestamp", "flightNumber", "type"]
+}

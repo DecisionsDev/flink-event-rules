@@ -134,6 +134,13 @@ class SqlEnrichmentRunnerTest {
         assertEquals("LHR", flightNode1.path("destination").asText());
         assertEquals("PT1H", flightNode1.path("duration").asText());
 
+        // Enriched catering fields from catering.csv
+        JsonNode cateringNode = flightNode1.path("cateringInformation");
+        assertTrue(cateringNode.isObject(), "cateringInformation should be a JSON object");
+        assertEquals(120, cateringNode.path("economyTotalMealCount").asInt());
+        assertEquals(30,  cateringNode.path("businessTotalMealCount").asInt());
+        assertEquals(10,  cateringNode.path("firstTotalMealCount").asInt());
+
         // Event 2: FLIGHTDELAYED -> Pass-through
         EventEnvelope env2 = results.stream()
             .filter(e -> "FLIGHTDELAYED".equals(e.getPayload().path("type").asText()))
@@ -163,11 +170,40 @@ class SqlEnrichmentRunnerTest {
         JsonNode passengersNode = flightNode1.path("passengers");
         assertTrue(passengersNode.isArray(),
             "passengers should be a JSON array but was: " + passengersNode.getNodeType() + " -> " + passengersNode);
-        assertTrue(passengersNode.size() > 0, "passengers array should not be empty");
-        JsonNode firstPassenger = passengersNode.get(0);
-        assertTrue(firstPassenger.isObject(), "each passenger entry should be a JSON object");
-        assertNotNull(firstPassenger.get("passengerId"), "passenger should have passengerId field");
-        assertNotNull(firstPassenger.get("name"),        "passenger should have name field");
+        assertEquals(2, passengersNode.size(), "flight EY082 should have exactly 2 enriched passengers");
+
+        // Verify each passenger object has all required fields enriched from flight_passengers.csv and passengers.csv
+        JsonNode jsPax = null;
+        JsonNode lwPax = null;
+        for (JsonNode p : passengersNode) {
+            assertTrue(p.isObject(), "each passenger entry should be a JSON object");
+            String pid = p.path("passengerId").asText();
+            if ("JS".equals(pid)) {
+                jsPax = p;
+            } else if ("LW".equals(pid)) {
+                lwPax = p;
+            }
+        }
+
+        assertNotNull(jsPax, "Passenger JS should be present in enriched flight passengers");
+        assertEquals("JS", jsPax.path("passengerId").asText());
+        assertEquals("John Smith", jsPax.path("name").asText());
+        assertEquals("1980-10-19T20:29:16Z", jsPax.path("birthdate").asText());
+        assertEquals("USA", jsPax.path("citizenship").asText());
+        assertEquals("USA", jsPax.path("residenceCountry").asText());
+        assertEquals("Gold", jsPax.path("loyaltyStatus").asText());
+        assertEquals("Pending", jsPax.path("check-inStatus").asText());
+        assertEquals("Economy", jsPax.path("travelClass").asText());
+
+        assertNotNull(lwPax, "Passenger LW should be present in enriched flight passengers");
+        assertEquals("LW", lwPax.path("passengerId").asText());
+        assertEquals("Lisa Williams", lwPax.path("name").asText());
+        assertEquals("1977-07-23T20:29:16Z", lwPax.path("birthdate").asText());
+        assertEquals("USA", lwPax.path("citizenship").asText());
+        assertEquals("USA", lwPax.path("residenceCountry").asText());
+        assertEquals("Silver", lwPax.path("loyaltyStatus").asText());
+        assertEquals("Pending", lwPax.path("check-inStatus").asText());
+        assertEquals("Economy", lwPax.path("travelClass").asText());
     }
 
     // -------------------------------------------------------------------------

@@ -94,7 +94,7 @@
         }
       ],
       "ruleset": {
-        "path": "samples/airline-agent/AirlineDecisionService_1.2.5.jar",
+        "path": "samples/airline-agent/AirlineDecisionService_1.2.6.jar",
         "archiveControlTopic": "agent-airline-archive-control",
         "operations": [
           {

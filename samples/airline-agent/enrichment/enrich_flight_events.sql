@@ -26,13 +26,19 @@ CREATE TABLE csv_flights (
 
 -- 1b. Reference Table: Global passenger registry — one row per passenger.
 --     Identity data that does not change per flight.
+--     NOTE: the column list MUST match every column in passengers.csv (9). With
+--     'csv.ignore-parse-errors' = 'true', Flink silently drops any row whose field
+--     count differs from the declared schema, yielding an empty table and NULL joins.
 CREATE TABLE csv_passengers (
-    passengerId      STRING,
-    `name`           STRING,
-    birthdate        STRING,
-    citizenship      STRING,
-    residenceCountry STRING,
-    loyaltyStatus    STRING,
+    passengerId       STRING,
+    `name`            STRING,
+    birthdate         STRING,
+    citizenship       STRING,
+    residenceCountry  STRING,
+    loyaltyStatus     STRING,
+    email             STRING,
+    phone             STRING,
+    contactPreference STRING,
     PRIMARY KEY (passengerId) NOT ENFORCED
 ) WITH (
     'connector' = 'filesystem',

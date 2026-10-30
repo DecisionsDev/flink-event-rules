@@ -27,6 +27,7 @@ import { renderCard, OutboundEmptyState } from './eventCardRegistry';
 import { useKafkaNotifications } from './useKafkaNotifications';
 import { useEventStream } from './useEventStream';
 import NotificationContainer from './NotificationContainer';
+import LiveExecutionTimeline from './LiveExecutionTimeline';
 
 // Configuration constants
 // MAX_EVENTS_DISPLAY is initialised from the BFF /api/config endpoint so it
@@ -590,7 +591,11 @@ function App() {
                 onNavigateBack={handleChangeUseCase}
                 agentsJson={agentsJson}
               />
-              <SendEventsPanel useCase={selectedUseCase} descriptor={descriptor} />
+              <SendEventsPanel
+                useCase={selectedUseCase}
+                descriptor={descriptor}
+                onBeforeRun={() => setEventsByType({})}
+              />
             </div>
 
             {/* ── Splitter ─────────────────────────────────────────────── */}
@@ -644,6 +649,12 @@ function App() {
                   )}
                 </div>
               </div>
+
+              {/* ── Live Execution Timeline — above Kafka topic panels ──────────── */}
+              <LiveExecutionTimeline
+                eventsByType={eventsByType}
+                descriptor={descriptor}
+              />
 
               {/* ── Build topic role map: which topics are input-only, output-only, or both ── */}
               {(() => {

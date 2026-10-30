@@ -187,7 +187,7 @@ function NewScenarioForm({ onSave, onCancel, existingIds }) {
  *                                   used to determine inbound topics and whether
  *                                   sample generation is available.
  */
-function SendEventsPanel({ useCase, descriptor }) {
+function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
   const [scenarios, setScenarios]   = useState([]);
   const [sending, setSending]       = useState(null);  // scenarioId currently sending
   const [lastResult, setLastResult] = useState(null);  // { id, ok, message }
@@ -371,23 +371,37 @@ function SendEventsPanel({ useCase, descriptor }) {
     // Clear any leftover animation from a previous run before starting.
     clearStepAnimation();
 
+    // Notify the parent so it can clear the live timeline before new events arrive.
+    onBeforeRun?.();
+
     setSending(scenario.id);
     setLastResult(null);
 
     try {
-      // Always reset entity state for the entities this scenario will touch before
-      // publishing its events.  Using the current scenario ID (not the previous one)
-      // ensures the sentinel travels on the same topic as the scenario's first event,
-      // which guarantees Kafka per-partition ordering: the sentinel is processed by
-      // Flink before the first real event, regardless of any previous run state.
-      const resetResp = await fetch(
-        `${API_URL}/api/use-cases/${useCase}/reset-entities`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scenarioId: scenario.id }),
-        }
-      );
+      // Reset both topic history and entity state before publishing new events so
+      // that the live timeline and topic panels show only this scenario's events.
+      //
+      // reset-topics  — purges Kafka message history, clears the BFF ring buffer,
+      //                 and broadcasts an empty snapshot to all WebSocket clients.
+      // reset-entities — sends a sentinel event so Flink resets entity state before
+      //                  the first real event of this scenario arrives.
+      //
+      // Both calls are fired in parallel; a failure in either is only warned (not
+      // fatal) so a Kafka hiccup does not prevent the scenario from running.
+      const [topicsResp, resetResp] = await Promise.all([
+        fetch(`${API_URL}/api/use-cases/${useCase}/reset-topics`, { method: 'POST' }),
+        fetch(
+          `${API_URL}/api/use-cases/${useCase}/reset-entities`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scenarioId: scenario.id }),
+          }
+        ),
+      ]);
+      if (!topicsResp.ok) {
+        console.warn(`[reset-topics] Reset failed for scenario '${scenario.id}': HTTP ${topicsResp.status}`);
+      }
       if (!resetResp.ok) {
         console.warn(`[reset-entities] Reset failed for scenario '${scenario.id}': HTTP ${resetResp.status}`);
       }

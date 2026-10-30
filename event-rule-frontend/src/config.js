@@ -37,3 +37,17 @@ const defaultApiUrl = () => {
 };
 
 export const API_URL = import.meta.env.VITE_API_URL || defaultApiUrl();
+
+/**
+ * FLINK_DASHBOARD_URL — browser-reachable URL of the Flink web dashboard.
+ * Override at build time with VITE_FLINK_DASHBOARD_URL; otherwise assumes the
+ * JobManager REST/UI port (8081) on the host that served the UI.
+ */
+const defaultFlinkDashboardUrl = () => {
+  const loc = typeof window !== 'undefined' ? window.location : null;
+  return loc && loc.hostname ? `${loc.protocol}//${loc.hostname}:8081` : 'http://localhost:8081';
+};
+
+export const FLINK_DASHBOARD_URL =
+  import.meta.env.VITE_FLINK_DASHBOARD_URL || defaultFlinkDashboardUrl();
+

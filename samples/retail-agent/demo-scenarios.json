@@ -244,7 +244,7 @@
         "type": "CustomerEvent",
         "topic": "agent-customer-events",
         "payload": {
-          "timestamp": "2026-10-19T20:29:16Z",
+          "timestamp": "2026-10-05T20:29:16Z",
           "customerId": "EC",
           "type": "ONBOARD",
           "onboardingInfo": 

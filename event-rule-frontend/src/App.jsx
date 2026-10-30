@@ -18,7 +18,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import './UseCaseSelector.css';
-import { API_URL as API_URL_APP } from './config.js';
+import { API_URL as API_URL_APP, FLINK_DASHBOARD_URL } from './config.js';
 import UseCaseSelector from './UseCaseSelector';
 import AgentWizard from './AgentWizard';
 import SendEventsPanel from './SendEventsPanel';
@@ -558,6 +558,20 @@ function App() {
           )}
         </div>
         <div className="di-header-right">
+          <a
+            className="di-header-action"
+            href={FLINK_DASHBOARD_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open Flink Dashboard"
+            aria-label="Open Flink Dashboard in a new tab"
+          >
+            <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
+              <path d="M26 28H6a2 2 0 01-2-2V6a2 2 0 012-2h10v2H6v20h20V16h2v10a2 2 0 01-2 2z"/>
+              <path d="M20 2v2h6.586L18 12.586 19.414 14 28 5.414V12h2V2H20z"/>
+            </svg>
+          </a>
+
           <button className="di-header-action" title="Back to applications" aria-label="Back to applications" onClick={handleChangeUseCase}>            
             <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
               <path d="M19 26l-10-10 10-10 1.414 1.414L11.828 16l8.586 8.586L19 26z"/>

@@ -17,6 +17,7 @@
  */
 import React, { useState } from 'react';
 import './UseCaseSelector.css';
+import { FLINK_DASHBOARD_URL } from './config';
 import AgentScenariosPanel from './AgentScenariosPanel';
 
 function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onEditAgent, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, refreshToken }) {
@@ -35,6 +36,19 @@ function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onEditAgent, onE
           </div>
         </div>
         <div className="di-header-right">
+          <a
+            className="di-header-action"
+            href={FLINK_DASHBOARD_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open Flink Dashboard"
+            aria-label="Open Flink Dashboard in a new tab"
+          >
+            <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
+              <path d="M26 28H6a2 2 0 01-2-2V6a2 2 0 012-2h10v2H6v20h20V16h2v10a2 2 0 01-2 2z"/>
+              <path d="M20 2v2h6.586L18 12.586 19.414 14 28 5.414V12h2V2H20z"/>
+            </svg>
+          </a>
           <button className="di-header-action" title="Connections" aria-label="Connections">
             <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
               <path d="M26 14v-4h-4V8h4V4h2v4h4v2h-4v4h-2zm-8 4v-4h-4v-2h4V8h2v4h4v2h-4v4h-2zM4 28v-4h4v-2H4v-4H2v4H0v2h2v4h2zM12 28v-4h4v-2h-4v-4h-2v4H8v2h2v4h2z"/>

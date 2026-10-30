@@ -683,19 +683,21 @@ public class StatefulAgentProcessor
         }
         if (eventsProcessedCounter != null) eventsProcessedCounter.inc();
 
-        // ── Step 13: register cleanup timer for time-based horizons ────────
-        registerCleanupTimer(ctx, state);
+        // ── Step 13: register (event-time) cleanup timer for time-based horizons ──
+        registerCleanupTimer(ctx, state, event.getTimestamp());
         LOG.debug("[{}] Event processing completed: {}. Current timestamp: {} [Watermark: {}]", agentTag(), event.toString(), ctx.timestamp(), ctx.currentWatermark());
     }
 
     /**
      * Timer callback, shared by two kinds of timer:
      * <ul>
-     *   <li><b>processing time</b>: evict time-expired events from idle entities (event horizon);</li>
-     *   <li><b>event time</b>: a schedule registered through a {@link ScheduleRequest} is due.
-     *       A {@code Schedule} event is built for every request registered at {@code timestamp}
-     *       and fed to {@link #processElement}.</li>
+     *   <li>a schedule registered through a {@link ScheduleRequest} is due: a {@code Schedule}
+     *       event is built for every request registered at {@code timestamp} and fed to
+     *       {@link #processElement};</li>
+     *   <li>the horizon cleanup timer: time-expired events of an idle entity are evicted, using
+     *       the timer's event-time {@code timestamp} as the reference time.</li>
      * </ul>
+     * Both are event-time timers and may share a timestamp, so both actions are always performed.
      */
     @Override
     public void onTimer(long timestamp,
@@ -703,10 +705,10 @@ public class StatefulAgentProcessor
                         Collector<EventEnvelope> out) throws Exception {
 
         LOG.debug("Timer triggered at {} [Watermark: {}]", ctx.timestamp(), ctx.currentWatermark() );
-        if (ctx.timeDomain() == TimeDomain.EVENT_TIME) {
-            fireSchedules(timestamp, ctx, out);
+        if (ctx.timeDomain() != TimeDomain.EVENT_TIME) {
             return;
         }
+        fireSchedules(timestamp, ctx, out);
         AgentState state = agentStateHandle.value();
         if (state == null) return;
         state.evictExpiredEvents(timestamp);
@@ -1264,7 +1266,14 @@ public class StatefulAgentProcessor
             inbound.getSourceTopic());
     }
 
-    private void registerCleanupTimer(ReadOnlyContext ctx, AgentState state) {
+    /**
+     * Registers an <b>event-time</b> timer for idle-entity horizon eviction. The timer fires once
+     * the watermark passes {@code eventTimestamp + minTimeLimit + 1}, i.e. when the newest event
+     * seen has itself fallen out of the shortest time horizon. Using event time keeps eviction
+     * consistent with the event-time cutoff applied in {@link #processElement}, and makes it
+     * deterministic on replays and backfills.
+     */
+    private void registerCleanupTimer(ReadOnlyContext ctx, AgentState state, long eventTimestamp) {
         long minTimeLimitMs = Long.MAX_VALUE;
         if (descriptor.getSubscriptions() == null) return;
         for (EventSubscription sub : descriptor.getSubscriptions()) {
@@ -1274,8 +1283,8 @@ public class StatefulAgentProcessor
             if (tlMs > 0 && tlMs < minTimeLimitMs) minTimeLimitMs = tlMs;
         }
         if (minTimeLimitMs == Long.MAX_VALUE) return;
-        long timerTs = ctx.timerService().currentProcessingTime() + minTimeLimitMs;
-        ctx.timerService().registerProcessingTimeTimer(timerTs);
+        long timerTs = eventTimestamp + minTimeLimitMs + 1;
+        ctx.timerService().registerEventTimeTimer(timerTs);
         LOG.debug("[{}] Cleanup timer registered entityId={} fireAt={}",
             agentTag(), state.getMetadata().getEntityId(), timerTs);
     }

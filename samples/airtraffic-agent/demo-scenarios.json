@@ -276,7 +276,7 @@
             "elevation": 230
           },
           "groundSpeed": 344,
-          "type": "INFLIGHT"
+          "type": "IN_FLIGHT"
         }
       },
       {
@@ -292,7 +292,7 @@
             "elevation": 230
           },
           "groundSpeed": 350,
-          "type": "INFLIGHT"
+          "type": "IN_FLIGHT"
         }
       },
       {
@@ -308,7 +308,7 @@
             "elevation": 300
           },
           "groundSpeed": 350,
-          "type": "INFLIGHT"
+          "type": "IN_FLIGHT"
         }
       }
     ]

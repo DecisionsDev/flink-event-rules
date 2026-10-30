@@ -7,8 +7,9 @@ import { formatTooltipValue, extractTimestampMs, formatDuration } from './Scenar
  *
  * Displays a real-time horizontal timeline of Kafka events as they arrive.
  *
- * • Input events  → filled circle   (●)  colour keyed by event type
- * • Output events → upward triangle (▲)  colour keyed by event type
+ * • Input-only events  → filled circle   (●)  colour keyed by event type
+ * • Output-only events → upward triangle (▲)  colour keyed by event type
+ * • Input+Output events (chained topics) → filled square (■) colour keyed by event type
  *
  * Changelog / agent-error topics are always excluded.
  * Events are ordered left-to-right by timestamp.
@@ -146,8 +147,8 @@ export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEve
     const isOutput = outputNames.has(topicName);
     if (!isInput && !isOutput) continue;
 
-    // Shared topic (input & output): treat as input for visualisation
-    const role = isOutput && !isInput ? 'output' : 'input';
+    // Shared topic (input & output): mark as 'both' for square rendering
+    const role = (isInput && isOutput) ? 'both' : isOutput ? 'output' : 'input';
 
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
@@ -245,12 +246,17 @@ export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEve
             {legend.map(({ colorKey, color, label, role }) => (
               <span key={colorKey} className="timeline-legend-item">
                 {role === 'output' ? (
-                  /* Triangle for output — no CSS equivalent, use inline SVG */
+                  /* Triangle for output-only */
                   <svg width="12" height="12" viewBox="0 0 12 12" style={{ flexShrink: 0 }}>
                     <polygon points="6,1 0,11 12,11" fill={color} />
                   </svg>
+                ) : role === 'both' ? (
+                  /* Square for input+output (chained) */
+                  <svg width="12" height="12" viewBox="0 0 12 12" style={{ flexShrink: 0 }}>
+                    <rect x="1" y="1" width="10" height="10" fill={color} />
+                  </svg>
                 ) : (
-                  /* Dot for input — matches the ScenarioTimeline legend dot */
+                  /* Dot for input-only — matches the ScenarioTimeline legend dot */
                   <span className="timeline-legend-dot" style={{ background: color }} />
                 )}
                 <span className="timeline-legend-label">{label}</span>
@@ -315,13 +321,14 @@ export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEve
                 const colorKey = evt.payload?.type || evt.schemaType || evt.topic || 'Event';
                 const color    = typeColor(colorKey, colorMap);
                 const isHov    = hovered?.index === i;
+                const s        = isHov ? R + 3 : R;
 
                 return (
                   <g
                     key={i}
                     className="timeline-event-group"
                     onMouseEnter={(e) => {
-                      const shape = e.currentTarget.querySelector('circle, polygon');
+                      const shape = e.currentTarget.querySelector('circle, polygon, rect');
                       const anchorRect = shape
                         ? shape.getBoundingClientRect()
                         : e.currentTarget.getBoundingClientRect();
@@ -349,9 +356,18 @@ export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEve
                         strokeWidth={isHov ? 1.5 : 0}
                         style={{ transition: 'stroke 0.12s' }}
                       />
+                    ) : evt.role === 'both' ? (
+                      /* Square for input+output (chained) topics */
+                      <rect
+                        x={cx - s} y={CY - s} width={s * 2} height={s * 2}
+                        fill={color}
+                        stroke={isHov ? 'var(--text)' : color}
+                        strokeWidth={isHov ? 1.5 : 0}
+                        style={{ transition: 'stroke 0.12s' }}
+                      />
                     ) : (
                       <circle
-                        cx={cx} cy={CY} r={isHov ? R + 3 : R}
+                        cx={cx} cy={CY} r={s}
                         fill={color}
                         stroke={isHov ? 'var(--text)' : color}
                         strokeWidth={isHov ? 2 : 0}

@@ -15,29 +15,13 @@
       "label": "Account Events"
     }
   ],
-  "outboundTopics": [
-    {
-      "name": "agent-fraud-alerts",
-      "type": "Alert",
-      "label": "Alerts - Transactions flagged as fraudulent"
-    },
-    {
-      "name": "agent-banking-errors",
-      "type": "agent-error",
-      "label": "Processing errors for investigation"
-    },
-    {
-      "name": "agent-account-entity-changelog",
-      "type": "entity-changelog",
-      "label": "Entity Changelog (Account)"
-    }
-  ],
   "agents": [
     {
       "agentId": "banking-fraud-agent",
       "name": "Banking Fraud Detection Agent",
       "entityType": "Account",
       "entityKeyExtractor": "$.accountNumber",
+      "parallelism": 1,
       "subscriptions": [
         {
           "eventType": "Transaction",
@@ -63,6 +47,7 @@
       ],
       "ruleset": {
         "path": "samples/banking-fraud-agent/FraudDetectionService_1.5.2.jar",
+        "project": "samples/banking-fraud-agent/di-project/Fraud Detection Service.zip",
         "archiveControlTopic": "agent-banking-archive-control",
         "operations": [
           {
@@ -103,11 +88,13 @@
         {
           "eventType": "Alert",
           "topic": "agent-fraud-alerts",
+          "label": "Alerts - Transactions flagged as fraudulent",
           "description": "Transactions flagged as fraudulent"
         },
         {
           "eventType": "agent-error",
           "topic": "agent-banking-errors",
+          "label": "Processing errors for investigation",
           "description": "Processing errors for investigation"
         }
       ],
@@ -115,8 +102,7 @@
         "ttl": "30d",
         "backend": "rocksdb",
         "changeLogTopic": "agent-account-entity-changelog"
-      },
-      "parallelism": 1
+      }
     }
   ]
 }

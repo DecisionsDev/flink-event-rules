@@ -37,7 +37,7 @@ import com.ibm.di.event.agent.EventEnvelope;
  *   <li>Registering the implementation in {@link ContextBuilderRegistry#register}.</li>
  * </ol>
  *
- * No changes to {@link com.ibm.di.event.agent.StatefulAgentProcessor} are needed.
+ * No changes to {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor} are needed.
  */
 @FunctionalInterface
 public interface ContextBuilder {

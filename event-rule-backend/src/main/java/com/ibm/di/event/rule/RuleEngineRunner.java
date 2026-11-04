@@ -57,7 +57,7 @@ import java.util.ServiceLoader;
  * {@link #initializeEagerly()}) and is retried up to three times with linear back-off to
  * tolerate transient filesystem delays after an atomic archive rename.
  *
- * <p>Instances are obtained and lifecycle-managed by {@link com.ibm.di.event.agent.StatefulAgentProcessor};
+ * <p>Instances are obtained and lifecycle-managed by {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor};
  * callers should not share instances across threads.  After {@link #close()}, the instance
  * must not be reused — create a new one for the replacement archive.
  */

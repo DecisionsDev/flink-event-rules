@@ -21,23 +21,6 @@
       "idleness": "30s"
     }
   ],
-  "outboundTopics": [
-    {
-      "name": "agent-promotions",
-      "type": "Promotion",
-      "label": "Generated Promotions"
-    },
-    {
-      "name": "agent-retail-errors",
-      "type": "agent-error",
-      "label": "Agent Errors"
-    },
-    {
-      "name": "agent-customer-entity-changelog",
-      "type": "entity-changelog",
-      "label": "Customer Entity Changelog"
-    }
-  ],
   "agents": [
     {
       "agentId": "retail-promotion-agent",
@@ -85,13 +68,41 @@
       ],
       "ruleset": {
         "path": "samples/retail-agent/RetailDecisionService_1.2.0.jar",
+        "project": "samples/retail-agent/di-project/RetailPromotionService.zip",
         "archiveControlTopic": "agent-retail-archive-control",
         "operations": [
           {
+            "operation": "ProcessCustomerEvent",
+            "entityField": "customer",
+            "currentEventField": "customerEvent",
+            "scheduleRequestsField": "schedules",
+            "history": [
+              {
+                "eventType": "Purchase",
+                "field": "pastPurchases"
+              },
+              {
+                "eventType": "BrowseEvent",
+                "field": "pastBrowseEvents"
+              },
+              {
+                "eventType": "CustomerEvent",
+                "field": "pastCustomerEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "promotions",
+                "eventType": "Promotion"
+              }
+            ]
+          },
+          {
             "operation": "ProcessPurchaseEvent",
             "entityField": "theCustomer",
-            "outboundEntityField": "customer",
             "currentEventField": "thePurchase",
+            "scheduleRequestsField": "schedules",
+            "outboundEntityField": "customer",
             "history": [
               {
                 "eventType": "Purchase",
@@ -107,39 +118,13 @@
                 "field": "promotions",
                 "eventType": "Promotion"
               }
-            ],
-            "scheduleRequestsField": "schedules"
-          },
-          {
-            "operation": "ProcessCustomerEvent",
-            "entityField": "customer",
-            "currentEventField": "customerEvent",
-            "history": [
-              {
-                "eventType": "Purchase",
-                "field": "pastPurchases"
-              },
-              {
-                "eventType": "BrowseEvent",
-                "field": "pastBrowseEvents"
-              },
-              {
-                "eventType": "CustomerEvent",
-                "field": "pastCustomerEvents"
-              }
-            ],
-            "outbounds": [
-              {
-                "field": "promotions",
-                "eventType": "Promotion"
-              }
-            ],
-            "scheduleRequestsField": "schedules"
+            ]
           },
           {
             "operation": "ProcessScheduleEvent",
             "entityField": "customer",
             "currentEventField": "schedule",
+            "scheduleRequestsField": "schedules",
             "history": [
               {
                 "eventType": "Purchase",
@@ -159,8 +144,7 @@
                 "field": "promotions",
                 "eventType": "Promotion"
               }
-            ],
-            "scheduleRequestsField": "schedules"
+            ]
           }
         ]
       },
@@ -168,11 +152,13 @@
         {
           "eventType": "Promotion",
           "topic": "agent-promotions",
+          "label": "Generated Promotions",
           "description": "Real-time promotions for the customer"
         },
         {
           "eventType": "agent-error",
           "topic": "agent-retail-errors",
+          "label": "Agent Errors",
           "description": "Processing errors and unparseable events"
         }
       ],

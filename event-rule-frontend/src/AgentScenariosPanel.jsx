@@ -17,6 +17,8 @@
  */
 import React, { useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import { API_URL } from './config.js';
+import RuntimeBadge from './RuntimeBadge';
+import { resolveDeploymentMode } from './deploymentMode.js';
 
 /**
  * AgentScenariosPanel
@@ -53,11 +55,12 @@ const STATUS_POLL_MS = 3000; // per-agent status poll while job is starting
 // that its state outlives individual AgentScenarioCard renders.
 
 function useAgentRunState(agentId) {
-  const [phase, setPhase]   = useState('probing');  // probing | idle | starting | polling | running | error
-  const [jobId, setJobId]   = useState(null);
-  const [errMsg, setErrMsg] = useState(null);
-  const pollRef             = useRef(null);
-  const mountedRef          = useRef(true);
+  const [phase, setPhase]     = useState('probing');  // probing | idle | starting | polling | running | error
+  const [jobId, setJobId]     = useState(null);
+  const [runtime, setRuntime] = useState(null);
+  const [errMsg, setErrMsg]   = useState(null);
+  const pollRef               = useRef(null);
+  const mountedRef            = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -76,6 +79,8 @@ function useAgentRunState(agentId) {
       if (!mountedRef.current) return;
       const status = r.ok ? await r.json() : null;
       if (!mountedRef.current) return;
+      // Only a registered job has a deployment mode (NOT_STARTED echoes the global toggle).
+      setRuntime(resolveDeploymentMode(status));
       if (status?.state && RUNNING_STATES.has(status.state)) {
         setJobId(status.jobId);
         setPhase('running');
@@ -97,6 +102,8 @@ function useAgentRunState(agentId) {
         if (!r.ok || !mountedRef.current) return;
         const status = await r.json();
         if (!mountedRef.current) return;
+        const mode = resolveDeploymentMode(status);
+        if (mode) setRuntime(mode);
         if (status.state && RUNNING_STATES.has(status.state)) {
           setJobId(status.jobId || initialJobId);
           setPhase('running');
@@ -119,6 +126,7 @@ function useAgentRunState(agentId) {
       if (!r.ok) throw new Error(body.error || r.statusText);
       if (!mountedRef.current) return;
       setJobId(body.jobId);
+      if (body.runtime) setRuntime(body.runtime);
       setPhase('polling');
       startPoll(body.jobId);
     } catch (err) {
@@ -130,7 +138,26 @@ function useAgentRunState(agentId) {
     }
   }, [agentId, startPoll]);
 
-  return { phase, jobId, errMsg, probe, run };
+  const stop = useCallback(async () => {
+    setPhase('starting'); // reuse 'starting' to disable UI while stopping
+    setErrMsg(null);
+    try {
+      const r = await fetch(`${API_URL}/api/agents/${agentId}/stop`, { method: 'POST' });
+      const body = await r.json();
+      if (!mountedRef.current) return;
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      clearInterval(pollRef.current);
+      setJobId(null);
+      setPhase('idle');
+    } catch (err) {
+      if (!mountedRef.current) return;
+      console.error(`[AgentScenariosPanel] Undeploy failed for agentId=${agentId}:`, err.message);
+      setPhase('error');
+      setErrMsg('Undeploy failed.');
+    }
+  }, [agentId]);
+
+  return { phase, jobId, runtime, errMsg, probe, run, stop };
 }
 
 // ── Shared SVG icons (module-level to avoid per-render recreation) ────────────
@@ -162,8 +189,8 @@ const IconTrash = () => (
 // For multi-agent use-cases the tile shows a sub-list of individual agents,
 // each with its own Edit button that opens the wizard pre-filled for that agent.
 // For single-agent use-cases the edit button edits the use-case as a whole.
-function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase }) {
-  const { phase, jobId, errMsg, run } = runState;
+function AgentScenarioCard({ agent, runState, onEditAgent, onEditDiagram, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase }) {
+  const { phase, jobId, errMsg, run, stop } = runState;
 
   const isProbing  = phase === 'probing';
   const isRunning  = phase === 'running';
@@ -174,16 +201,32 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
   // Running jobs must be stopped before the descriptor can be changed (the BFF enforces this).
   const canEdit = !isProbing && !isBusy && !isRunning;
 
-  // Local confirm state: null | { type: 'use-case' } | { type: 'agent', agentId }
+  // Local confirm state: null | { type: 'use-case' } | { type: 'agent', agentId } | { type: 'undeploy' }
   const [confirm, setConfirm] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
   const [deleteInFlight, setDeleteInFlight] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
 
-  const handleConfirmDelete = async () => {
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const handleConfirm = async () => {
     setDeleteInFlight(true);
     setDeleteError(null);
     try {
-      if (confirm.type === 'use-case') {
+      if (confirm.type === 'undeploy') {
+        await stop();
+      } else if (confirm.type === 'use-case') {
         await onDeleteAgent(agent.id);
       } else {
         await onDeleteSpecificAgent(agent.id, confirm.agentId);
@@ -199,11 +242,19 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
 
   const agentList  = agent.agents || [];
 
-  const confirmMsg = confirm?.type === 'use-case'
+  const cleanTitle = agent.name || agent.id;
+
+  const confirmTitle = confirm?.type === 'undeploy'
+    ? 'Undeploy job?'
+    : 'Delete Event Rule Application?';
+
+  const confirmMsg = confirm?.type === 'undeploy'
+    ? `Stop the running Flink job for "${cleanTitle}"? The application will remain and can be redeployed.`
+    : confirm?.type === 'use-case'
     ? `Delete Event Rule Application "${agent.id}" and all its descriptor files? This cannot be undone.`
     : `Remove agent "${confirm?.agentId}" from the application "${agent.id}"? This cannot be undone.`;
 
-  const cleanTitle = agent.name || agent.id;
+  const confirmPrimaryLabel = confirm?.type === 'undeploy' ? 'Undeploy' : 'Delete';
 
   const description = agent.description || 'No description added yet';
 
@@ -213,25 +264,48 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
 
   return (
     <Fragment>
-      {/* Inline confirm dialog — rendered above card, scoped to this card */}
+      {/* Carbon-style confirmation modal */}
       {confirm && (
-        <div className="agent-confirm-overlay">
-          <div className="agent-confirm-dialog">
-            <p className="agent-confirm-message">{confirmMsg}</p>
-            <div className="agent-confirm-actions">
+        <div className="cds-modal-backdrop" role="presentation">
+          <div
+            className="cds-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`confirm-title-${agent.id}`}
+            aria-describedby={`confirm-body-${agent.id}`}
+          >
+            <div className="cds-modal-header">
+              <h2 className="cds-modal-title" id={`confirm-title-${agent.id}`}>
+                {confirmTitle}
+              </h2>
               <button
-                className="agent-mgmt-btn agent-mgmt-btn-ghost"
+                className="cds-modal-close"
+                aria-label="Close"
+                onClick={() => setConfirm(null)}
+                disabled={deleteInFlight}
+              >
+                <svg width="20" height="20" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
+                  <path d="M24 9.4L22.6 8 16 14.6 9.4 8 8 9.4 14.6 16 8 22.6 9.4 24 16 17.4 22.6 24 24 22.6 17.4 16 24 9.4z"/>
+                </svg>
+              </button>
+            </div>
+            <div className="cds-modal-body">
+              <p id={`confirm-body-${agent.id}`}>{confirmMsg}</p>
+            </div>
+            <div className="cds-modal-footer">
+              <button
+                className="cds-btn cds-btn--secondary"
                 onClick={() => setConfirm(null)}
                 disabled={deleteInFlight}
               >
                 Cancel
               </button>
               <button
-                className="agent-mgmt-btn agent-mgmt-btn-danger"
-                onClick={handleConfirmDelete}
+                className="cds-btn cds-btn--danger"
+                onClick={handleConfirm}
                 disabled={deleteInFlight}
               >
-                {deleteInFlight ? 'Deleting…' : 'Yes, delete'}
+                {deleteInFlight ? `${confirmPrimaryLabel}…` : confirmPrimaryLabel}
               </button>
             </div>
           </div>
@@ -247,24 +321,70 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
                 {agentList.length} {agentList.length === 1 ? 'agent' : 'agents'}
               </span>
             )}
+            {isRunning && (
+              <RuntimeBadge mode={runState.runtime} />
+            )}
             {isRunning && jobId && (
               <span className="di-job-badge" title={`Job ID: ${jobId}`}>
                 {jobId.slice(0, 8)}…
               </span>
             )}
           </div>
-          <button
-            className="di-agent-card-menu-btn"
-            disabled
-            title="Options (coming soon)"
-            aria-label="Options (coming soon)"
-          >
-            <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor">
-              <circle cx="16" cy="8" r="2" />
-              <circle cx="16" cy="16" r="2" />
-              <circle cx="16" cy="24" r="2" />
-            </svg>
-          </button>
+          <div className="di-agent-card-menu-wrap" ref={menuRef}>
+            <button
+              className="di-agent-card-menu-btn"
+              onClick={() => setMenuOpen(v => !v)}
+              title="Options"
+              aria-label="Options"
+              aria-haspopup="true"
+              aria-expanded={menuOpen}
+            >
+              <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
+                <circle cx="16" cy="8" r="2" />
+                <circle cx="16" cy="16" r="2" />
+                <circle cx="16" cy="24" r="2" />
+              </svg>
+            </button>
+            {menuOpen && (
+              <ul className="di-agent-card-menu" role="menu">
+                <li role="none">
+                  <button
+                    role="menuitem"
+                    className="di-agent-card-menu-item"
+                    disabled={!isRunning}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setDeleteError(null);
+                      setConfirm({ type: 'undeploy' });
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
+                      <path d="M16 2a14 14 0 1014 14A14 14 0 0016 2zm0 26a12 12 0 1112-12 12 12 0 01-12 12zm-1-18h2v8h-2zm0 10h2v2h-2z"/>
+                    </svg>
+                    Undeploy Job
+                  </button>
+                </li>
+                {onDeleteAgent && (
+                  <li role="none">
+                    <button
+                      role="menuitem"
+                      className="di-agent-card-menu-item di-agent-card-menu-item--danger"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setDeleteError(null);
+                        setConfirm({ type: 'use-case' });
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
+                        <path d="M12 12h2v11h-2zm6 0h2v11h-2zM4 6v2h2v20a2 2 0 002 2h16a2 2 0 002-2V8h2V6zm4 22V8h16v20zm4-26h8v2h-8z"/>
+                      </svg>
+                      Delete
+                    </button>
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
         </div>
 
         <div className="di-agent-card-id">{agent.id}</div>
@@ -350,15 +470,16 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
                 </button>
               )}
 
-              {onAddAgentToJob && (
+              {canEdit && onEditDiagram && (
                 <button
                   className="di-btn-secondary-action"
-                  onClick={() => onAddAgentToJob(agent.id)}
-                  title={`Add another agent to '${agent.id}'`}
+                  onClick={() => onEditDiagram(agent.id)}
+                  title={`Edit the whole application '${agent.id}' in the diagram editor`}
                 >
-                  + Add Agent
+                  Edit diagram
                 </button>
               )}
+
             </div>
 
             <div className="di-agent-card-actions-right">
@@ -381,7 +502,7 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditSpecificAgent, 
 
 // ── Wrapper that owns the run-state for a single agent ────────────────────────
 
-function AgentScenarioCardWithState({ agent, onEditAgent, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase }) {
+function AgentScenarioCardWithState({ agent, onEditAgent, onEditDiagram, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase }) {
   const runState = useAgentRunState(agent.id);
   // Keep a stable ref to probe so the mount effect runs exactly once regardless
   // of any future identity changes to the callback (M-3).
@@ -396,6 +517,7 @@ function AgentScenarioCardWithState({ agent, onEditAgent, onEditSpecificAgent, o
       agent={agent}
       runState={runState}
       onEditAgent={onEditAgent}
+      onEditDiagram={onEditDiagram}
       onEditSpecificAgent={onEditSpecificAgent}
       onAddAgentToJob={onAddAgentToJob}
       onDeleteAgent={onDeleteAgent}
@@ -407,7 +529,7 @@ function AgentScenarioCardWithState({ agent, onEditAgent, onEditSpecificAgent, o
 
 // ── Single Agent List Row (for List View mode) ───────────────────────────────
 
-function AgentScenarioListRowWithState({ agent, onEditAgent, onSelectUseCase }) {
+function AgentScenarioListRowWithState({ agent, onEditAgent, onEditDiagram, onSelectUseCase }) {
   const runState = useAgentRunState(agent.id);
   const { phase, jobId, run } = runState;
   // Stable ref pattern — same fix as AgentScenarioCardWithState (M-3).
@@ -437,6 +559,9 @@ function AgentScenarioListRowWithState({ agent, onEditAgent, onSelectUseCase }) 
         <div className="di-list-item-title-group">
           <h3 className="di-list-item-title">{cleanTitle}</h3>
           <span className="di-agent-card-id">({agent.id})</span>
+          {isRunning && (
+            <RuntimeBadge mode={runState.runtime} />
+          )}
           {isRunning && jobId && (
             <span className="di-job-badge">{jobId.slice(0, 8)}…</span>
           )}
@@ -470,6 +595,15 @@ function AgentScenarioListRowWithState({ agent, onEditAgent, onSelectUseCase }) 
             Edit
           </button>
         )}
+        {canEdit && onEditDiagram && (
+          <button
+            className="di-btn-secondary-action"
+            onClick={() => onEditDiagram(agent.id)}
+            title={`Edit the whole application '${agent.id}' in the diagram editor`}
+          >
+            Edit diagram
+          </button>
+        )}
       </div>
     </div>
   );
@@ -477,7 +611,7 @@ function AgentScenarioListRowWithState({ agent, onEditAgent, onSelectUseCase }) 
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
-function AgentScenariosPanel({ onEditAgent, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase, refreshToken, searchQuery, sortBy, viewMode }) {
+function AgentScenariosPanel({ onEditAgent, onEditDiagram, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase, refreshToken, searchQuery, sortBy, viewMode }) {
   const [agents,  setAgents]  = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
@@ -573,6 +707,7 @@ function AgentScenariosPanel({ onEditAgent, onEditSpecificAgent, onAddAgentToJob
             key={agent.id}
             agent={agent}
             onEditAgent={onEditAgent}
+            onEditDiagram={onEditDiagram}
             onEditSpecificAgent={onEditSpecificAgent}
             onAddAgentToJob={onAddAgentToJob}
             onDeleteAgent={onDeleteAgent}
@@ -591,6 +726,7 @@ function AgentScenariosPanel({ onEditAgent, onEditSpecificAgent, onAddAgentToJob
           key={agent.id}
           agent={agent}
           onEditAgent={onEditAgent}
+          onEditDiagram={onEditDiagram}
           onEditSpecificAgent={onEditSpecificAgent}
           onAddAgentToJob={onAddAgentToJob}
           onDeleteAgent={onDeleteAgent}

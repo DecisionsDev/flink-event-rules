@@ -58,7 +58,7 @@ function buildUseCaseDescriptor(useCaseId, agentsJson) {
         outboundMap.set(o.topic, {
           name:  o.topic,
           type:  o.eventType,
-          label: o.description || o.eventType,
+          label: o.label || o.description || o.eventType,
           ...(o.filterKey   && { filterKey:   o.filterKey   }),
           ...(o.filterValue && { filterValue: o.filterValue }),
           ...(o.filterLabel && { filterLabel: o.filterLabel }),
@@ -261,6 +261,16 @@ describe('buildUseCaseDescriptor — single-agent use-case', () => {
   test('outbound entries use description as label when present', () => {
     const ot = stub.outboundTopics.find(t => t.name === 'agent-fraud-alerts');
     expect(ot.label).toBe('Fraud alerts');
+  });
+
+  test('outbound entries prefer an explicit label over description and eventType', () => {
+    const json = { agents: [{ agentId: 'x', subscriptions: [], outputs: [
+      { eventType: 'Alert', topic: 't-alert', label: 'Alerts', description: 'Long description' },
+      { eventType: 'Info',  topic: 't-info' },
+    ] }] };
+    const d = buildUseCaseDescriptor('x', json);
+    expect(d.outboundTopics.find(t => t.name === 't-alert').label).toBe('Alerts');
+    expect(d.outboundTopics.find(t => t.name === 't-info').label).toBe('Info');
   });
 });
 

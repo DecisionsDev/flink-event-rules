@@ -427,6 +427,24 @@ describe('descriptorToForm — edge cases', () => {
     expect(form.entityType).toBe('');
     expect(form.entityKeyExtractor).toBe('$.id');
     expect(form.outputs[0].description).toBe('');
+    expect(form.outputs[0].label).toBe('');
+  });
+
+  test('output label round-trips through descriptorToForm and buildDescriptor', () => {
+    const original = { agents: [{
+      agentId: 'a', ruleset: { path: '/tmp/a.jar' },
+      subscriptions: [{ eventType: 'ev', topic: 't', operation: 'op' }],
+      outputs: [
+        { eventType: 'out',  topic: 'tout',  label: 'Results' },
+        { eventType: 'out2', topic: 'tout2' },
+      ],
+      stateConfig: { ttl: '30d', backend: 'rocksdb' },
+    }] };
+    const form = descriptorToForm(original);
+    expect(form.outputs[0].label).toBe('Results');
+    const rebuilt = buildDescriptor(form).agents[0];
+    expect(rebuilt.outputs[0].label).toBe('Results');
+    expect(rebuilt.outputs[1]).not.toHaveProperty('label');
   });
 
   test('time horizon subscription is mapped correctly', () => {

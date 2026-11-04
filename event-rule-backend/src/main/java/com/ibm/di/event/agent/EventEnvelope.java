@@ -30,7 +30,7 @@ import java.util.Map;
  * Flink-serializable carrier for events flowing through the Agent pipeline.
  *
  * <p>All Kafka events are wrapped in an {@code EventEnvelope} before entering the
- * {@link StatefulAgentProcessor}.  This allows the processor to operate on typed,
+ * {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor}.  This allows the processor to operate on typed,
  * uniformly structured events regardless of their original Kafka topic or schema.
  *
  * <p><strong>Serialization note:</strong> {@link #payload} is a Jackson

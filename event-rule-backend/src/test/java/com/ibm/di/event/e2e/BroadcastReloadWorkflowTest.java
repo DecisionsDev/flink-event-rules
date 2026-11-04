@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ibm.di.event.agent.*;
+import com.ibm.di.event.agent.datastream.*;
 import com.ibm.di.event.rule.RuleEngineRunner;
 import com.ibm.di.event.rule.broadcast.ArchiveControlCmd;
 import com.ibm.di.event.rule.broadcast.ArchiveControlCmd.CommandType;
@@ -40,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * End-to-end workflow tests for the broadcast-state archive hot-swap mechanism.
  *
  * <p>These tests exercise scenarios that go beyond the unit-level dispatch tests in
- * {@link com.ibm.di.event.agent.StatefulAgentProcessorTest.BroadcastReload} and the
+ * {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessorTest.BroadcastReload} and the
  * lifecycle invariants in {@link ArchiveLifecycleWorkflowTest}.  The focus here is on
  * <em>observable state transitions</em> produced by sequences of broadcast commands:
  *

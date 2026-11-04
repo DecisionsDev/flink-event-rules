@@ -47,6 +47,7 @@ Thumbs.db
 
 # Samples — runtime job state (written by the UI, not committed)
 samples/*/.job-state.json
+samples/*/.ptf-sql.json
 
 
 # Log files generated when ${sys:log.file} is unset (e.g. during local Maven builds/tests)

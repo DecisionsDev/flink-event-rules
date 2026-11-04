@@ -22,28 +22,6 @@
       "idleness": "30s"
     }
   ],
-  "outboundTopics": [
-    {
-      "name": "agent-flight-notifications",
-      "type": "FlightNotification",
-      "label": "Flight Notifications"
-    },
-    {
-      "name": "agent-passenger-notifications",
-      "type": "PassengerNotification",
-      "label": "Passenger Notifications"
-    },
-    {
-      "name": "agent-airline-errors",
-      "type": "agent-error",
-      "label": "Agent Errors"
-    },
-    {
-      "name": "agent-flight-entity-changelog",
-      "type": "entity-changelog",
-      "label": "Flight Entity Changelog"
-    }
-  ],
   "agents": [
     {
       "agentId": "airline-agent",
@@ -51,6 +29,28 @@
       "entityType": "Flight",
       "entityKeyExtractor": "$.flightNumber",
       "chainingEnabled": true,
+      "references": [
+        {
+          "name": "flights",
+          "type": "csv",
+          "file": "samples/airline-agent/enrichment/flights.csv"
+        },
+        {
+          "name": "passengers",
+          "type": "csv",
+          "file": "samples/airline-agent/enrichment/passengers.csv"
+        },
+        {
+          "name": "catering",
+          "type": "csv",
+          "file": "samples/airline-agent/enrichment/catering.csv"
+        },
+        {
+          "name": "roster",
+          "type": "csv",
+          "file": "samples/airline-agent/enrichment/flight_passengers.csv"
+        }
+      ],
       "subscriptions": [
         {
           "eventType": "FlightEvent",
@@ -61,11 +61,64 @@
             "timeLimit": "96h",
             "description": "Keep 96 hours of Flight Events per flight"
           },
-          "sqlEnrichment": {
-            "sqlFile": "samples/airline-agent/enrichment/enrich_flight_events.sql",
-            "inputViewName": "raw_flight_events",
-            "outputViewName": "enriched_flight_events"
-          }
+          "enrichment": [
+            {
+              "reference": "flights",
+              "key": "flightNumber",
+              "on": "$.flightNumber",
+              "when": "$[?(@.type == 'FLIGHTOPEN')]",
+              "into": "$.flight",
+              "fields": [
+                "flightNumber",
+                "aircraftId",
+                "aircraftType",
+                "date",
+                "origin",
+                "destination",
+                "duration"
+              ]
+            },
+            {
+              "reference": "catering",
+              "key": "flightNumber",
+              "on": "$.flightNumber",
+              "when": "$[?(@.type == 'FLIGHTOPEN')]",
+              "into": "$.flight.cateringInformation",
+              "fields": [
+                "economyTotalMealCount",
+                "businessTotalMealCount",
+                "firstTotalMealCount"
+              ]
+            },
+            {
+              "reference": "roster",
+              "key": "flightNumber",
+              "on": "$.flightNumber",
+              "when": "$[?(@.type == 'FLIGHTOPEN')]",
+              "into": "$.flight.passengers",
+              "fields": [
+                "passengerId",
+                {
+                  "checkInStatus": "check-inStatus"
+                },
+                "travelClass"
+              ],
+              "cardinality": "many"
+            },
+            {
+              "reference": "passengers",
+              "key": "passengerId",
+              "on": "$.passengerId",
+              "into": "$.flight.passengers[*]",
+              "fields": [
+                "name",
+                "birthdate",
+                "citizenship",
+                "residenceCountry",
+                "loyaltyStatus"
+              ]
+            }
+          ]
         },
         {
           "eventType": "CateringEvent",
@@ -95,12 +148,32 @@
       ],
       "ruleset": {
         "path": "samples/airline-agent/AirlineDecisionService_1.2.6.jar",
+        "project": "samples/airline-agent/di-project/AirlineDecisionService.zip",
         "archiveControlTopic": "agent-airline-archive-control",
         "operations": [
+          {
+            "operation": "ProcessCateringEvent",
+            "entityField": "flight",
+            "currentEventField": "cateringEvent",
+            "scheduleRequestsField": "scheduleRequests",
+            "history": [
+              {
+                "eventType": "CateringEvent",
+                "field": "pastCateringEvents"
+              }
+            ],
+            "outbounds": [
+              {
+                "field": "flightNotifications",
+                "eventType": "FlightNotification"
+              }
+            ]
+          },
           {
             "operation": "ProcessFlightEvent",
             "entityField": "flight",
             "currentEventField": "flightEvent",
+            "scheduleRequestsField": "scheduleRequests",
             "history": [
               {
                 "eventType": "FlightEvent",
@@ -116,13 +189,13 @@
                 "field": "passengerNotifications",
                 "eventType": "PassengerNotification"
               }
-            ],
-            "scheduleRequestsField": "scheduleRequests"
+            ]
           },
           {
             "operation": "ProcessPassengerEvent",
             "entityField": "flight",
             "currentEventField": "passengerEvent",
+            "scheduleRequestsField": "scheduleRequests",
             "history": [
               {
                 "eventType": "PassengerEvent",
@@ -138,31 +211,13 @@
                 "field": "passengerNotifications",
                 "eventType": "PassengerNotification"
               }
-            ],
-            "scheduleRequestsField": "scheduleRequests"
-          },
-          {
-            "operation": "ProcessCateringEvent",
-            "entityField": "flight",
-            "currentEventField": "cateringEvent",
-            "history": [
-              {
-                "eventType": "CateringEvent",
-                "field": "pastCateringEvents"
-              }
-            ],
-            "outbounds": [
-              {
-                "field": "flightNotifications",
-                "eventType": "FlightNotification"
-              }
-            ],
-            "scheduleRequestsField": "scheduleRequests"
+            ]
           },
           {
             "operation": "ProcessSchedule",
             "entityField": "flight",
             "currentEventField": "schedule",
+            "scheduleRequestsField": "scheduleRequests",
             "history": [
               {
                 "eventType": "FlightEvent",
@@ -178,8 +233,7 @@
                 "field": "passengerNotifications",
                 "eventType": "PassengerNotification"
               }
-            ],
-            "scheduleRequestsField": "scheduleRequests"
+            ]
           }
         ]
       },
@@ -187,22 +241,35 @@
         {
           "eventType": "FlightNotification",
           "topic": "agent-flight-notifications",
+          "label": "Flight Notifications",
           "description": "Real-time flight notification"
         },
         {
           "eventType": "PassengerNotification",
           "topic": "agent-passenger-notifications",
+          "label": "Passenger Notifications",
           "description": "Real-time passenger notification",
           "schema": "samples/airline-agent/schemas/passenger-notification.schema.json",
-          "sqlEnrichment": {
-            "sqlFile": "samples/airline-agent/enrichment/enrich_passenger_notifications.sql",
-            "inputViewName": "raw_passenger_notifications",
-            "outputViewName": "enriched_passenger_notifications"
-          }
+          "enrichment": [
+            {
+              "reference": "passengers",
+              "key": "passengerId",
+              "on": "$.passengerNumber",
+              "into": "$",
+              "fields": [
+                "name",
+                "loyaltyStatus",
+                "email",
+                "phone",
+                "contactPreference"
+              ]
+            }
+          ]
         },
         {
           "eventType": "agent-error",
           "topic": "agent-airline-errors",
+          "label": "Agent Errors",
           "description": "Processing errors and unparseable events"
         }
       ],

@@ -1095,6 +1095,46 @@
   margin-bottom: 2px;
 }
 
+/* ── Redeploying footer message & card badge ────────────────────────────── */
+.scenario-deploying-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.scenario-deploying-badge {
+  display: inline-block;
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  padding: 1px 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.scenario-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
 /* ── Toolbar (description + New Scenario button) ─────────────────────────── */
 .send-events-toolbar {
   display: flex;
@@ -1274,7 +1314,11 @@
   color: var(--text-faint);
   flex-shrink: 0;
   margin-right: 0.25rem;
+  display: flex;
+  align-items: center;
 }
+
+.agent-mgmt-panel-title .runtime-badge { margin-left: 8px; }
 
 .agent-mgmt-actions {
   display: flex;

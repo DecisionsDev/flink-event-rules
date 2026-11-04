@@ -181,11 +181,12 @@ export default function ScenarioTimeline({ events, activeStep = null }) {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    setWidth(el.getBoundingClientRect().width || 600);
+    if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(entries => {
       setWidth(entries[0].contentRect.width || 600);
     });
     ro.observe(el);
-    setWidth(el.getBoundingClientRect().width || 600);
     return () => ro.disconnect();
   }, []);
 

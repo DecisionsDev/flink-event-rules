@@ -1,0 +1,175 @@
+/*
+ *
+ *   Copyright IBM Corp. 2026
+ *
+ *   Licensed under the Apache License, Version 2.0 (the "License");
+ *   you may not use this file except in compliance with the License.
+ *   You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *   Unless required by applicable law or agreed to in writing, software
+ *   distributed under the License is distributed on an "AS IS" BASIS,
+ *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *   See the License for the specific language governing permissions and
+ *   limitations under the License.
+ *
+ */
+
+/* ─── SQL View Modal ──────────────────────────────────────────────────────── */
+/* Reuses .agent-diagram-close and .agent-mgmt-btn* for the header controls. */
+
+.sql-view-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  padding: 0.75rem;
+}
+
+.sql-view-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-width: 1200px;
+  height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sql-view-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sql-view-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.sql-view-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.sql-view-spacer { flex: 1; }
+
+.sql-view-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sql-view-stale {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.sql-view-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface-alt);
+  display: flex;
+  flex-direction: column;
+}
+
+.sql-view-message {
+  margin: 0;
+  padding: 1.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.sql-view-message--error { color: var(--red); }
+
+.sql-view-code {
+  margin: 0;
+  padding: 0.75rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text);
+  min-width: max-content;
+}
+
+.sql-view-line { display: flex; }
+
+.sql-view-lineno {
+  flex: 0 0 3.5rem;
+  padding-right: 0.75rem;
+  text-align: right;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.sql-view-text { white-space: pre; padding-right: 1.25rem; }
+
+.sql-tok--keyword { color: #0043ce; font-weight: 600; }
+.sql-tok--string  { color: #198038; }
+.sql-tok--ident   { color: #8a3ffc; }
+.sql-tok--number  { color: #b28600; }
+.sql-tok--comment { color: var(--text-faint); font-style: italic; }
+
+/* Per-agent sections (statements attributed by the backend) */
+.sql-view-group + .sql-view-group { border-top: 1px solid var(--border); }
+
+.sql-view-group-title {
+  position: sticky;
+  left: 0;
+  margin: 0;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.sql-view-group-count {
+  margin-left: 0.75rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* Raw SQL / Graphical toggle */
+.sql-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.sql-view-toggle-btn {
+  padding: 0.3rem 0.8rem;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: none;
+  cursor: pointer;
+}
+.sql-view-toggle-btn + .sql-view-toggle-btn { border-left: 1px solid var(--border); }
+.sql-view-toggle-btn:hover:not(:disabled) { background: var(--surface-alt); }
+.sql-view-toggle-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.sql-view-toggle-btn--on { color: #fff; background: var(--accent); font-weight: 600; }
+.sql-view-toggle-btn--on:hover:not(:disabled) { background: var(--accent); }
+
+/* Statement selected in the graphical view */
+.sql-view-line--marked { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }

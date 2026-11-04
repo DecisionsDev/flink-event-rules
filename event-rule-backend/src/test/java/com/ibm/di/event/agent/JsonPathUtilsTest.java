@@ -17,6 +17,7 @@
  */
 package com.ibm.di.event.agent;
 
+import com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -29,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Unit tests for {@link JsonPathUtils}.
  *
  * <p>These tests verify the single canonical entity-ID extraction implementation.
- * Both {@link AgentBasedDataStreamJob.EnvelopeDeserializer} and
+ * Both {@link com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob.EnvelopeDeserializer} and
  * {@link AgentChainBuilder.DeferredChainedInputs} delegate to this utility, so a
  * failure here would surface in both the Kafka and chain paths simultaneously.
  */

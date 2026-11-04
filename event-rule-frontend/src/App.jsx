@@ -21,8 +21,12 @@ import './UseCaseSelector.css';
 import { API_URL as API_URL_APP, FLINK_DASHBOARD_URL } from './config.js';
 import UseCaseSelector from './UseCaseSelector';
 import AgentWizard from './AgentWizard';
+import AgentDiagramEditor from './AgentDiagramEditor';
 import SendEventsPanel from './SendEventsPanel';
 import AgentDiagramModal from './AgentDiagramModal';
+import SqlViewModal from './SqlViewModal';
+import RuntimeBadge from './RuntimeBadge';
+import { useDeploymentMode, supportsSqlView } from './deploymentMode.js';
 import { renderCard, OutboundEmptyState } from './eventCardRegistry';
 import { useKafkaNotifications } from './useKafkaNotifications';
 import { useEventStream } from './useEventStream';
@@ -103,12 +107,23 @@ function ConfirmDialog({ message, confirmLabel, confirmDanger, onConfirm, onCanc
 
 // agentId   — human-readable name shown in confirm dialogs (agents[0].agentId or folder name)
 // useCaseId — use-case folder name used as the :id key in all BFF API calls
-function AgentManagementPanel({ agentId, useCaseId, onEdit, onNavigateBack, agentsJson }) {
+export function AgentManagementPanel({ agentId, useCaseId, onEdit, onNavigateBack, agentsJson, flinkRuntime }) {
   const [confirm, setConfirm] = useState(null);          // null | 'cancel' | 'delete'
   const [cancelState, setCancelState] = useState('idle'); // idle | stopping | error
   const [deleteState, setDeleteState] = useState('idle'); // idle | deleting | error
   const [actionError, setActionError] = useState(null);
   const [showDiagram, setShowDiagram] = useState(false);
+  const [showSql, setShowSql] = useState(false);
+  // Deployment mode of the job actually running for this use case ('ptf' | 'datastream' |
+  // null).  It comes from the job's own stored runtime, not from the global `flinkRuntime`
+  // toggle, which only selects the runtime of the next deployment.  It is re-read when that
+  // toggle changes so the panel follows a redeploy.
+  const { mode: deploymentMode } = useDeploymentMode(useCaseId, flinkRuntime);
+  const sqlViewAvailable = supportsSqlView(deploymentMode);
+
+  // Leaving PTF (undeploy, redeploy as DataStream, other use case) closes the SQL view and
+  // forgets that it was open, so it cannot reappear later with another job's data.
+  useEffect(() => { if (!sqlViewAvailable) setShowSql(false); }, [sqlViewAvailable, useCaseId]);
 
   // Calls POST /api/agents/:useCaseId/stop then navigates back.
   // A 404 from the BFF means no job is registered as running — treat as success.
@@ -158,6 +173,12 @@ function AgentManagementPanel({ agentId, useCaseId, onEdit, onNavigateBack, agen
           onClose={() => setShowDiagram(false)}
         />
       )}
+      {showSql && sqlViewAvailable && (
+        <SqlViewModal
+          useCaseId={useCaseId}
+          onClose={() => setShowSql(false)}
+        />
+      )}
       {confirm === 'cancel' && (
         <ConfirmDialog
           message={`Cancel the running Flink job for agent "${agentId}" and return to the event rule application selection screen?`}
@@ -178,7 +199,10 @@ function AgentManagementPanel({ agentId, useCaseId, onEdit, onNavigateBack, agen
       )}
 
       <div className="agent-mgmt-panel">
-        <div className="agent-mgmt-panel-title">Agent Management</div>
+        <div className="agent-mgmt-panel-title">
+          Agent Management
+          <RuntimeBadge mode={deploymentMode} />
+        </div>
         <div className="agent-mgmt-actions">
           <button
             className="agent-mgmt-btn agent-mgmt-btn-primary"
@@ -196,6 +220,15 @@ function AgentManagementPanel({ agentId, useCaseId, onEdit, onNavigateBack, agen
           >
             Diagram View
           </button>
+          {sqlViewAvailable && (
+            <button
+              className="agent-mgmt-btn agent-mgmt-btn-ghost"
+              onClick={() => setShowSql(true)}
+              title="View the Flink SQL of the deployed job"
+            >
+              SQL View
+            </button>
+          )}
           <button
             className="agent-mgmt-btn agent-mgmt-btn-danger"
             onClick={() => setConfirm('delete')}
@@ -234,6 +267,9 @@ function App() {
   const [maxEventsDisplay, setMaxEventsDisplay] = useState(50);
   const [selectedUseCase, setSelectedUseCase] = useState(null);
   const [showWizard, setShowWizard] = useState(false);
+  const [showDiagramEditor, setShowDiagramEditor] = useState(false);
+  // Existing use case opened in the diagram editor: { useCaseId, descriptor } | null (new diagram)
+  const [diagramEdit, setDiagramEdit] = useState(null);
   const [editDescriptor, setEditDescriptor] = useState(null);
   // useCaseId, targetAgentId, and wizardMode are passed to the wizard when opening in
   // edit mode (useCaseId + targetAgentId) or append mode (useCaseId + wizardMode="append").
@@ -255,11 +291,30 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const [flinkRuntime, setFlinkRuntime] = useState('datastream');
+
+  const updateFlinkRuntime = async (newRuntime) => {
+    const norm = String(newRuntime || '').toLowerCase() === 'ptf' ? 'ptf' : 'datastream';
+    setFlinkRuntime(norm);
+    try {
+      await fetch(`${API_URL_APP}/api/flink/runtime`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runtime: norm }),
+      });
+    } catch (err) {
+      console.error('[App] Failed to update Flink runtime on BFF:', err.message);
+    }
+  };
+
   // ── Fetch BFF config once on mount to align display limits (H-2) ────────────
   useEffect(() => {
     fetch(`${API_URL_APP}/api/config`)
       .then(r => r.ok ? r.json() : null)
-      .then(cfg => { if (cfg?.maxEventsPerTopic) setMaxEventsDisplay(cfg.maxEventsPerTopic); })
+      .then(cfg => {
+        if (cfg?.maxEventsPerTopic) setMaxEventsDisplay(cfg.maxEventsPerTopic);
+        if (cfg?.flinkRuntime) setFlinkRuntime(cfg.flinkRuntime);
+      })
       .catch(() => { /* keep default */ });
   }, []);
 
@@ -421,6 +476,18 @@ function App() {
     }
   };
 
+  // handleEditDiagram — opens the whole use-case descriptor in the Agent Diagram Editor.
+  const handleEditDiagram = async (useCaseId) => {
+    try {
+      const r = await fetch(`${API_URL_APP}/api/agents/${useCaseId}`);
+      if (!r.ok) throw new Error(r.statusText);
+      setDiagramEdit({ useCaseId, descriptor: await r.json() });
+      setShowDiagramEditor(true);
+    } catch (err) {
+      setError(`Failed to load the application for editing: ${err.message}`);
+    }
+  };
+
   // handleEditSpecificAgent — opens the wizard to edit a named agent within a use-case.
   // Called from AgentScenariosPanel when the user clicks "✎ Edit" on a specific agent card.
   // useCaseId: folder key; targetAgentId: the agentId to edit within the file.
@@ -496,6 +563,21 @@ function App() {
 
   // ── Use Case Selector screen ─────────────────────────────────────────────
 
+  if (showDiagramEditor) {
+    return (
+      <AgentDiagramEditor
+        key={diagramEdit?.useCaseId || 'new'}
+        initialFolderName={diagramEdit?.useCaseId}
+        initialDescriptor={diagramEdit?.descriptor}
+        onClose={() => {
+          setShowDiagramEditor(false);
+          setDiagramEdit(null);
+          setRefreshToken(t => t + 1);
+        }}
+      />
+    );
+  }
+
   if (showWizard) {
     return (
       <AgentWizard
@@ -514,6 +596,8 @@ function App() {
         <main className="App-main App-main--fullwidth">
           <UseCaseSelector
             onSelectUseCase={handleUseCaseSelect}
+            onCreateDiagram={() => { setDiagramEdit(null); setShowDiagramEditor(true); }}
+            onEditDiagram={handleEditDiagram}
             onCreateDescriptor={() => {
               setEditDescriptor(null);
               setWizardUseCaseId(null);
@@ -527,6 +611,8 @@ function App() {
             onDeleteAgent={handleDeleteAgent}
             onDeleteSpecificAgent={handleDeleteSpecificAgent}
             refreshToken={refreshToken}
+            flinkRuntime={flinkRuntime}
+            onFlinkRuntimeChange={updateFlinkRuntime}
           />
         </main>
       </div>
@@ -604,10 +690,12 @@ function App() {
                 onEdit={handleEditAgent}
                 onNavigateBack={handleChangeUseCase}
                 agentsJson={agentsJson}
+                flinkRuntime={flinkRuntime}
               />
               <SendEventsPanel
                 useCase={selectedUseCase}
                 descriptor={descriptor}
+                flinkRuntime={flinkRuntime}
                 onBeforeRun={() => setEventsByType({})}
               />
             </div>

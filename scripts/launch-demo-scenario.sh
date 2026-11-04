@@ -187,8 +187,14 @@ reset_entity() {
     local key_field=$2
     local topic=$3
 
+    local last_ts=$4
+
     local payload
-    payload=$(printf '{"__eventType":"__ENTITY_RESET__","%s":"%s"}' "$key_field" "$entity_id")
+    if [ -n "$last_ts" ]; then
+        payload=$(printf '{"__eventType":"__ENTITY_RESET__","%s":"%s","timestamp":"%s"}' "$key_field" "$entity_id" "$last_ts")
+    else
+        payload=$(printf '{"__eventType":"__ENTITY_RESET__","%s":"%s"}' "$key_field" "$entity_id")
+    fi
 
     echo "$payload" | docker exec -i "$KAFKA_CONTAINER" \
         kafka-console-producer \
@@ -201,6 +207,7 @@ reset_entity() {
 # Skips gracefully if agents.json is missing or incomplete.
 reset_scenario_entities() {
     local scenario_id=$1
+    local last_ts=$2
 
     local key_field
     key_field=$(resolve_entity_key_field)
@@ -228,7 +235,7 @@ reset_scenario_entities() {
 
     echo "🔄 Resetting entity state for scenario '$scenario_id' (topic=$event_topic)..."
     while IFS= read -r entity_id; do
-        reset_entity "$entity_id" "$key_field" "$event_topic"
+        reset_entity "$entity_id" "$key_field" "$event_topic" "$last_ts"
     done <<< "$entity_ids"
     echo "  ✓ Entity reset complete."
     echo ""
@@ -273,6 +280,10 @@ launch_scenario() {
         return 0
     fi
 
+    # Use a temp file to capture the last event timestamp across the subshell boundary
+    local last_ts_file
+    last_ts_file=$(mktemp)
+
     # Iterate events in order; each line from jq is one compact JSON object
     jq -c -r --arg id "$id" '.[] | select(.id == $id) | .events[]' "$SCENARIOS_FILE" | while IFS= read -r event_json; do
         if [ -z "$event_json" ]; then
@@ -308,17 +319,28 @@ launch_scenario() {
         echo "  ✓ Sent: $event_payload"
         echo ""
 
+        # Track the timestamp of this event for use by the reset sentinel
+        local event_ts
+        event_ts=$(echo "$event_payload" | jq -r '.timestamp // empty')
+        if [ -n "$event_ts" ]; then
+            echo "$event_ts" > "$last_ts_file"
+        fi
+
         # Wait between events so the Flink pipeline can process each one
         # before the next event arrives on any topic.
         sleep 2
     done
+
+    local last_ts
+    last_ts=$(cat "$last_ts_file" 2>/dev/null || true)
+    rm -f "$last_ts_file"
 
     echo "🎉 Scenario '$id' completed successfully!"
     echo "========================================================================="
     echo ""
 
     if [ "$RESET_STATE" = "true" ]; then
-        reset_scenario_entities "$id"
+        reset_scenario_entities "$id" "$last_ts"
     fi
 }
 

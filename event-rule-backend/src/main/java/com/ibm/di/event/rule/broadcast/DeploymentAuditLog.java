@@ -36,14 +36,14 @@ import java.util.List;
  *
  * <p>The log lives in operator memory (not in Flink state).  It accumulates entries for the
  * lifetime of the task and is cleared on restart / restore.  Operators expose it via
- * {@link com.ibm.di.event.agent.StatefulAgentProcessor#getDeploymentAuditLog()} for testing and
+ * {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor#getDeploymentAuditLog()} for testing and
  * operational introspection.
  *
  * <p>Only successful activations are recorded — failed or DLQ'd commands are not logged here
  * (they are already captured by the DLQ side output and SLF4J error logs).
  *
  * <p>Thread safety: not externally synchronized; safe under Flink's single-threaded
- * task-thread model.  Instances are held inside {@link com.ibm.di.event.agent.StatefulAgentProcessor}
+ * task-thread model.  Instances are held inside {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor}
  * subtasks and are never shared across threads.
  */
 public final class DeploymentAuditLog {

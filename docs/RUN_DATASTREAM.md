@@ -101,7 +101,7 @@ You can also run using Maven directly:
 
 ```bash
 mvn -Pdev compile exec:java \
-  -Dexec.mainClass="com.ibm.di.event.agent.AgentBasedDataStreamJob" \
+  -Dexec.mainClass="com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob" \
   -Dexec.args="localhost:9092 ../samples/banking-fraud-agent/agents.json" \
   -Dexec.classpathScope=compile
 ```

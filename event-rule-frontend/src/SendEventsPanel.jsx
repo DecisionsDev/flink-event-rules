@@ -187,9 +187,10 @@ function NewScenarioForm({ onSave, onCancel, existingIds }) {
  *                                   used to determine inbound topics and whether
  *                                   sample generation is available.
  */
-function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
+function SendEventsPanel({ useCase, descriptor, flinkRuntime, onBeforeRun }) {
   const [scenarios, setScenarios]   = useState([]);
-  const [sending, setSending]       = useState(null);  // scenarioId currently sending
+  const [sending, setSending]       = useState(null);   // scenarioId currently sending
+  const [deploying, setDeploying]   = useState(null);   // scenarioId currently redeploying (PTF)
   const [lastResult, setLastResult] = useState(null);  // { id, ok, message }
   const [isExpanded, setIsExpanded] = useState(true); // expanded by default
   const [showModal, setShowModal]   = useState(false); // controls SampleEventModal
@@ -374,8 +375,34 @@ function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
     // Notify the parent so it can clear the live timeline before new events arrive.
     onBeforeRun?.();
 
-    setSending(scenario.id);
     setLastResult(null);
+
+    // ── Phase 1 (PTF only): redeploy the Flink job ─────────────────────────
+    // The BFF cancels the running job, resets Kafka consumer-group offsets to
+    // the latest position, resubmits the job, and waits until it is RUNNING.
+    // For the DataStream runtime this call returns 204 immediately (no-op).
+    if (flinkRuntime === 'ptf') {
+      setDeploying(scenario.id);
+      try {
+        const deployResp = await fetch(
+          `${API_URL}/api/use-cases/${useCase}/redeploy`,
+          { method: 'POST' }
+        );
+        if (!deployResp.ok) {
+          const body = await deployResp.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${deployResp.status}`);
+        }
+      } catch (err) {
+        setDeploying(null);
+        setLastResult({ id: scenario.id, ok: false, message: `Redeploy failed: ${err.message}` });
+        return;
+      } finally {
+        setDeploying(null);
+      }
+    }
+
+    // ── Phase 2: reset topic history + entity state, then publish events ───
+    setSending(scenario.id);
 
     try {
       // Reset both topic history and entity state before publishing new events so
@@ -385,24 +412,30 @@ function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
       //                 and broadcasts an empty snapshot to all WebSocket clients.
       // reset-entities — sends a sentinel event so Flink resets entity state before
       //                  the first real event of this scenario arrives.
+      //                  (Skipped in PTF mode: state is cleared by the job restart.)
       //
       // Both calls are fired in parallel; a failure in either is only warned (not
       // fatal) so a Kafka hiccup does not prevent the scenario from running.
-      const [topicsResp, resetResp] = await Promise.all([
+      const resetCalls = [
         fetch(`${API_URL}/api/use-cases/${useCase}/reset-topics`, { method: 'POST' }),
-        fetch(
-          `${API_URL}/api/use-cases/${useCase}/reset-entities`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scenarioId: scenario.id }),
-          }
-        ),
-      ]);
+      ];
+      if (flinkRuntime !== 'ptf') {
+        resetCalls.push(
+          fetch(
+            `${API_URL}/api/use-cases/${useCase}/reset-entities`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ scenarioId: scenario.id }),
+            }
+          )
+        );
+      }
+      const [topicsResp, resetResp] = await Promise.all(resetCalls);
       if (!topicsResp.ok) {
         console.warn(`[reset-topics] Reset failed for scenario '${scenario.id}': HTTP ${topicsResp.status}`);
       }
-      if (!resetResp.ok) {
+      if (resetResp && !resetResp.ok) {
         console.warn(`[reset-entities] Reset failed for scenario '${scenario.id}': HTTP ${resetResp.status}`);
       }
 
@@ -548,8 +581,10 @@ function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
 
   const selectedScenario = scenarios.find(s => s.id === selectedId) || null;
   const isSending        = sending === selectedId;
-  const canSend          = !isSending && !editorError && editorText.trim() !== '';
-  const canSave          = !isSending && deleteState !== 'deleting' && saveState !== 'saving' && !editorError && editorText.trim() !== '';
+  const isDeploying      = deploying === selectedId;
+  const isBusy           = isSending || isDeploying;
+  const canSend          = !isBusy && !editorError && editorText.trim() !== '';
+  const canSave          = !isBusy && deleteState !== 'deleting' && saveState !== 'saving' && !editorError && editorText.trim() !== '';
   const isBusyCrud       = saveState === 'saving' || deleteState === 'deleting';
   const result           = lastResult && lastResult.id === selectedId ? lastResult : null;
   const existingIds      = new Set(scenarios.map(s => s.id));
@@ -628,6 +663,7 @@ function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
                     <div className="scenario-grid">
                       {scenarios.map((s) => {
                         const isSelected = selectedId === s.id;
+                        const isCardDeploying = deploying === s.id;
                         return (
                           <div
                             key={s.id}
@@ -643,7 +679,10 @@ function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span style={{ fontSize: '0.9rem', flexShrink: 0 }}>{s.icon || '▶'}</span>
                               <div className="scenario-label">{s.label}</div>
-                              {isSelected && (
+                              {isCardDeploying && (
+                                <span className="scenario-deploying-badge">redeploying…</span>
+                              )}
+                              {isSelected && !isCardDeploying && (
                                 <span className="scenario-selected-badge">selected</span>
                               )}
                             </div>
@@ -671,21 +710,21 @@ function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
                       </div>
                       <div className="scenario-editor-header-actions">
                         <button
-                          className="scenario-editor-reset-btn"
-                          onClick={handleResetEditor}
-                          disabled={isBusyCrud || isSending}
-                          title="Reset to original payload"
-                        >
-                          ↺ Reset
-                        </button>
-                        {/* Delete button with inline confirm */}
-                        {!confirmDelete ? (
-                          <button
-                            className="scenario-delete-btn"
-                            onClick={() => setConfirmDelete(true)}
-                            disabled={isBusyCrud || isSending}
-                            title="Delete this scenario"
-                          >
+                         className="scenario-editor-reset-btn"
+                         onClick={handleResetEditor}
+                         disabled={isBusyCrud || isBusy}
+                         title="Reset to original payload"
+                       >
+                         ↺ Reset
+                       </button>
+                       {/* Delete button with inline confirm */}
+                       {!confirmDelete ? (
+                         <button
+                           className="scenario-delete-btn"
+                           onClick={() => setConfirmDelete(true)}
+                           disabled={isBusyCrud || isBusy}
+                           title="Delete this scenario"
+                         >
                             {deleteState === 'deleting' ? 'Deleting…' : 'Delete'}
                           </button>
                         ) : (
@@ -750,7 +789,7 @@ function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
                           value={editorText}
                           onChange={handleEditorChange}
                           spellCheck={false}
-                          disabled={isSending || isBusyCrud}
+                          disabled={isBusy || isBusyCrud}
                           aria-describedby={editorError ? 'scenario-editor-error' : undefined}
                         />
                         {editorError && (
@@ -769,14 +808,19 @@ function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
                     )}
 
                     <div className="scenario-editor-footer">
-                      {result && (
+                      {isDeploying ? (
+                        <div className="scenario-deploying-msg" role="status">
+                          <span className="scenario-spinner" aria-hidden="true" />
+                          <span>Job is redeploying, expecting to take 20–30s…</span>
+                        </div>
+                      ) : result ? (
                         <div
                           className="scenario-result"
                           style={{ color: result.ok ? '#15803d' : '#b91c1c', flex: 1 }}
                         >
                           {result.ok ? '✓ ' : '✗ '}{result.message}
                         </div>
-                      )}
+                      ) : null}
                       {/* Save scenario button */}
                       <button
                         className={`scenario-btn scenario-save-btn${saveState === 'saved' ? ' scenario-save-btn--saved' : ''}`}
@@ -794,7 +838,9 @@ function SendEventsPanel({ useCase, descriptor, onBeforeRun }) {
                         disabled={!canSend}
                         onClick={handleSend}
                       >
-                        {isSending ? 'Sending…' : 'Run Scenario'}
+                        {isDeploying ? 'Redeploying…'
+                          : isSending  ? 'Sending…'
+                          : 'Run Scenario'}
                       </button>
                     </div>
                   </div>

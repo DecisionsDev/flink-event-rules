@@ -45,7 +45,8 @@ echo "Building Maven classpath..."
 # Build the classpath from all Maven dependencies.
 # The 'dev' profile includes Flink (normally 'provided') in compile scope
 # so the job can run without a Flink cluster on the host machine.
-MAVEN_CLASSPATH=$(mvn -Pdev dependency:build-classpath -DincludeScope=compile -q -Dmdep.outputFile=/dev/stdout)
+# includeScope=runtime ensures runtime-scoped JARs (log4j-slf4j2-impl etc.) are included.
+MAVEN_CLASSPATH=$(mvn -Pdev dependency:build-classpath -DincludeScope=runtime -q -Dmdep.outputFile=/dev/stdout)
 
 if [ -z "$MAVEN_CLASSPATH" ]; then
     echo "Error: Failed to build Maven classpath"
@@ -72,7 +73,8 @@ echo ""
 # Launch the Flink job in local (mini-cluster) mode
 java -cp "$CLASSPATH" \
     -Dlog4j.configurationFile=src/main/resources/log4j2.properties \
-    com.ibm.di.event.agent.AgentBasedDataStreamJob \
+    -Dlog.file=target/datastream-local.log \
+    com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob \
     "$BOOTSTRAP_SERVERS" \
     "$AGENTS_JSON_PATH"
 

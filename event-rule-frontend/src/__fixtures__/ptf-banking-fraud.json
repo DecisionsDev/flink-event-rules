@@ -1,0 +1,55 @@
+{
+ "statements": [
+  {
+   "kind": "table",
+   "agentId": "banking-fraud-agent",
+   "sql": "CREATE TEMPORARY TABLE `banking_fraud_agent_src_agent_transactions` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'Transaction', '$.accountNumber') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-transactions',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-banking-fraud-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n)"
+  },
+  {
+   "kind": "table",
+   "agentId": "banking-fraud-agent",
+   "sql": "CREATE TEMPORARY TABLE `banking_fraud_agent_src_agent_account_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AccountEvent', '$.accountNumber') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-account-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-banking-fraud-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n)"
+  },
+  {
+   "kind": "view",
+   "agentId": "banking-fraud-agent",
+   "sql": "CREATE TEMPORARY VIEW `banking_fraud_agent_in` AS\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'Transaction', '$.accountNumber') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'Transaction', '$.accountNumber') AS `event_type`,\n  CAST('agent-transactions' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'Transaction', '$.accountNumber') AS `payload`,\n  `event_ts`\nFROM `banking_fraud_agent_src_agent_transactions`\nUNION ALL\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AccountEvent', '$.accountNumber') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AccountEvent', '$.accountNumber') AS `event_type`,\n  CAST('agent-account-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AccountEvent', '$.accountNumber') AS `payload`,\n  `event_ts`\nFROM `banking_fraud_agent_src_agent_account_events`"
+  },
+  {
+   "kind": "view",
+   "agentId": "banking-fraud-agent",
+   "sql": "CREATE TEMPORARY VIEW `banking_fraud_agent_out` AS\nSELECT * FROM `event_rule_banking_fraud_agent`(\n    events => TABLE `banking_fraud_agent_in` PARTITION BY `entity_id`,\n    on_time => DESCRIPTOR(`event_ts`),\n    uid => 'agent-processor-banking-fraud-agent')"
+  },
+  {
+   "kind": "table",
+   "agentId": "banking-fraud-agent",
+   "sql": "CREATE TEMPORARY TABLE `banking_fraud_agent_sink_agent_fraud_alerts` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-fraud-alerts',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'banking_fraud_agent_sink_agent_fraud_alerts'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "banking-fraud-agent",
+   "sql": "INSERT INTO `banking_fraud_agent_sink_agent_fraud_alerts`\nSELECT `entity_id`, `envelope`\nFROM `banking_fraud_agent_out`\nWHERE `out_type` = 'Alert'"
+  },
+  {
+   "kind": "table",
+   "agentId": "banking-fraud-agent",
+   "sql": "CREATE TEMPORARY TABLE `banking_fraud_agent_sink_agent_banking_errors` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-banking-errors',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'banking_fraud_agent_sink_agent_banking_errors'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "banking-fraud-agent",
+   "sql": "INSERT INTO `banking_fraud_agent_sink_agent_banking_errors`\nSELECT `entity_id`, `envelope`\nFROM `banking_fraud_agent_out`\nWHERE `out_type` = 'agent-error'"
+  },
+  {
+   "kind": "table",
+   "agentId": "banking-fraud-agent",
+   "sql": "CREATE TEMPORARY TABLE `banking_fraud_agent_sink_changelog` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-account-entity-changelog',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'banking_fraud_agent_sink_changelog'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "banking-fraud-agent",
+   "sql": "INSERT INTO `banking_fraud_agent_sink_changelog`\nSELECT `entity_id`, `envelope`\nFROM `banking_fraud_agent_out`\nWHERE `out_type` = 'entity-changelog'"
+  }
+ ],
+ "script": "CREATE TEMPORARY TABLE `banking_fraud_agent_src_agent_transactions` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'Transaction', '$.accountNumber') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-transactions',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-banking-fraud-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n);\n\nCREATE TEMPORARY TABLE `banking_fraud_agent_src_agent_account_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AccountEvent', '$.accountNumber') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-account-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-banking-fraud-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n);\n\nCREATE TEMPORARY VIEW `banking_fraud_agent_in` AS\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'Transaction', '$.accountNumber') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'Transaction', '$.accountNumber') AS `event_type`,\n  CAST('agent-transactions' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'Transaction', '$.accountNumber') AS `payload`,\n  `event_ts`\nFROM `banking_fraud_agent_src_agent_transactions`\nUNION ALL\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AccountEvent', '$.accountNumber') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AccountEvent', '$.accountNumber') AS `event_type`,\n  CAST('agent-account-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AccountEvent', '$.accountNumber') AS `payload`,\n  `event_ts`\nFROM `banking_fraud_agent_src_agent_account_events`;\n\nCREATE TEMPORARY VIEW `banking_fraud_agent_out` AS\nSELECT * FROM `event_rule_banking_fraud_agent`(\n    events => TABLE `banking_fraud_agent_in` PARTITION BY `entity_id`,\n    on_time => DESCRIPTOR(`event_ts`),\n    uid => 'agent-processor-banking-fraud-agent');\n\nCREATE TEMPORARY TABLE `banking_fraud_agent_sink_agent_fraud_alerts` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-fraud-alerts',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'banking_fraud_agent_sink_agent_fraud_alerts'\n);\n\nCREATE TEMPORARY TABLE `banking_fraud_agent_sink_agent_banking_errors` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-banking-errors',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'banking_fraud_agent_sink_agent_banking_errors'\n);\n\nCREATE TEMPORARY TABLE `banking_fraud_agent_sink_changelog` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-account-entity-changelog',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'banking_fraud_agent_sink_changelog'\n);\n\nEXECUTE STATEMENT SET\nBEGIN\nINSERT INTO `banking_fraud_agent_sink_agent_fraud_alerts`\nSELECT `entity_id`, `envelope`\nFROM `banking_fraud_agent_out`\nWHERE `out_type` = 'Alert';\nINSERT INTO `banking_fraud_agent_sink_agent_banking_errors`\nSELECT `entity_id`, `envelope`\nFROM `banking_fraud_agent_out`\nWHERE `out_type` = 'agent-error';\nINSERT INTO `banking_fraud_agent_sink_changelog`\nSELECT `entity_id`, `envelope`\nFROM `banking_fraud_agent_out`\nWHERE `out_type` = 'entity-changelog';\nEND;\n"
+}

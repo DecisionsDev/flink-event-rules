@@ -17,18 +17,19 @@
 2. [Prerequisites](#2-prerequisites)
 3. [Quick Start](#3-quick-start)
 4. [Architecture Overview](#4-architecture-overview)
-5. [How Event Rules Work](#5-how-event-rules-work)
-6. [Descriptor Wizard](#6-descriptor-wizard)
-7. [Building and Testing](#7-building-and-testing)
-8. [Running with Docker](#8-running-with-docker)
-9. [Running Locally](#9-running-locally)
-10. [Use Cases](#10-use-cases)
-11. [Generating an Event Rule Application with AI](#11-generating-an-event-rule-application-with-ai)
-12. [Demo Scenario Isolation](#12-demo-scenario-isolation)
-13. [Project Structure](#13-project-structure)
-14. [Monitoring and Troubleshooting](#14-monitoring-and-troubleshooting)
-15. [Further Reading](#15-further-reading)
-16. [License](#16-license)
+5. [Flink Backends](#5-flink-backends)
+6. [How Event Rules Work](#6-how-event-rules-work)
+7. [Descriptor Wizard](#7-descriptor-wizard)
+8. [Building and Testing](#8-building-and-testing)
+9. [Running with Docker](#9-running-with-docker)
+10. [Running Locally](#10-running-locally)
+11. [Use Cases](#11-use-cases)
+12. [Generating an Event Rule Application with AI](#12-generating-an-event-rule-application-with-ai)
+13. [Demo Scenario Isolation](#13-demo-scenario-isolation)
+14. [Project Structure](#14-project-structure)
+15. [Monitoring and Troubleshooting](#15-monitoring-and-troubleshooting)
+16. [Further Reading](#16-further-reading)
+17. [License](#17-license)
 
 ---
 
@@ -95,7 +96,7 @@ running application. When rules change, the application automatically picks up t
 | Maven                    | 3.6+               | Building the backend                               |
 | Node.js & npm            | 20.x / 10.x        | Building/running the frontend and BFF               |
 | `jq`                     | any                | Sample and validation scripts                       |
-| IBM Decision Designer       | running instance | Resolving IBM Decision Intelligence Maven dependencies (see [§7](#7-building-and-testing)) |
+| IBM Decision Designer       | running instance | Resolving IBM Decision Intelligence Maven dependencies (see [§8](#8-building-and-testing)) |
 
 For the full list of runtime environment variables, see [`.env.example`](.env.example) and
 [`DOCKER.md`](DOCKER.md).
@@ -148,7 +149,9 @@ decision.
 
 ## 4. Architecture Overview
 
-The system is composed of four tiers connected through Apache Kafka.
+The system is composed of four tiers connected through Apache Kafka. The stream-processing tier
+has two interchangeable Flink backends, selected at launch time (see
+[§5](#5-flink-backends)).
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -167,26 +170,26 @@ The system is composed of four tiers connected through Apache Kafka.
                              ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │  STREAM PROCESSING  —  Apache Flink 2.2.0                        │
+│  One agents.json, two interchangeable backends (see §5)          │
 │                                                                  │
-│  AgentBasedDataStreamJob                                         │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  Per-Agent DAG Subgraph                                    │  │
-│  │                                                            │  │
-│  │  KafkaSources ──► union ──► keyBy(entityId)               │  │
-│  │                    ▲                                       │  │
-│  │  ArchiveControl ───┘  (broadcast stream)                  │  │
-│  │       ▼                                                    │  │
-│  │  StatefulAgentProcessor  ◄── RocksDB (keyed state)        │  │
-│  │       │                                                    │  │
-│  │       ├── IBM Decision Intelligence DecisionRunner (in-process)│  │
-│  │       │                                                    │  │
-│  │       └── Filter by eventType ──► KafkaSinks              │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                              │                                    │
-│  (optional) Chain edge ──────┘                                    │
-│  AgentChainBuilder wires Agent A output → Agent B input           │
-│  in-process; no Kafka hop; Kafka source suppressed at Agent B     │
-│  State: RocksDB  /  Checkpointing: EXACTLY_ONCE, 60 s            │
+│  ┌─────────────────────────────┐  ┌────────────────────────────┐ │
+│  │ DataStream backend (default)│  │ PTF backend                │ │
+│  │ AgentBasedDataStreamJob     │  │ AgentBasedPTFJob           │ │
+│  │                             │  │                            │ │
+│  │ KafkaSources ─► union       │  │ Kafka sources ─► SQL views │ │
+│  │   ─► keyBy(entityId)        │  │   <agent>_in               │ │
+│  │ ArchiveControl (broadcast)  │  │ PARTITION BY entity_id     │ │
+│  │   ─► StatefulAgentProcessor │  │   ─► StatefulAgentProcess- │ │
+│  │      (RocksDB keyed state)  │  │      TableFunction (PTF)   │ │
+│  │   ─► filter by eventType    │  │   ─► <agent>_out ─► sinks  │ │
+│  │   ─► KafkaSinks             │  │                            │ │
+│  │ Chaining: AgentChainBuilder │  │ Chaining: <agent>_out view │ │
+│  │ Runs on: Flink cluster      │  │ Runs on: Flink cluster or  │ │
+│  │                             │  │ Confluent Cloud for Flink  │ │
+│  └──────────────┬──────────────┘  └─────────────┬──────────────┘ │
+│                 └───────────────┬───────────────┘                │
+│  Shared: decision logic, IBM Decision Intelligence DecisionRunner│
+│  (in-process), Kafka I/O, EXACTLY_ONCE checkpoints every 60 s    │
 └────────────────────────────┬─────────────────────────────────────┘
                              │  Output Kafka topics
                              ▼
@@ -202,6 +205,7 @@ The system is composed of four tiers connected through Apache Kafka.
 | Decision                           | Rationale                                                                                                                    |
 |---------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
 | **Apache Flink**                   | Native RocksDB keyed state, exactly-once checkpointing, broadcast state API maps perfectly to zero-downtime archive reload   |
+| **Two Flink backends**             | DataStream (default, hot reload, SQL enrichment) and Process Table Functions (SQL-based, can run on Confluent Cloud for Apache Flink); same `agents.json` |
 | **IBM Decision Intelligence in-process** | ~8 ms rule execution with no network hop; each archive version gets its own `URLClassLoader` for isolation              |
 | **Kafka broadcast state**          | Ordered, exactly-once delivery of archive-control commands to every running subtask before the next checkpoint               |
 | **JSON agent descriptor**          | New use cases require zero Java development; the full Agent DAG is built from a single JSON file                             |
@@ -209,7 +213,205 @@ The system is composed of four tiers connected through Apache Kafka.
 
 ---
 
-## 5. How Event Rules Work
+## 5. Flink Backends
+
+Event Rule has two Flink backends for the same `agents.json`. Both are supported and are selected
+at launch time; the descriptor, the Decision Intelligence archive, the Kafka topics and the output
+events are identical.
+
+|                                            | DataStream backend (default)                                                  | PTF backend                                                                                        |
+|--------------------------------------------|-------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|
+| Entry point                                | `com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob`                   | `com.ibm.di.event.agent.ptf.AgentBasedPTFJob`                                                      |
+| Processing                                 | `StatefulAgentProcessor` (`KeyedBroadcastProcessFunction`)                    | `StatefulAgentProcessTableFunction` (`ProcessTableFunction<Row>`) called from Flink SQL            |
+| Pipeline                                   | built with the DataStream API                                                 | generated as SQL by `AgentSqlPipelineBuilder`                                                      |
+| Runs on                                    | Flink cluster, `flink run`                                                    | Flink cluster, or **Confluent Cloud for Apache Flink**                                             |
+| Ruleset hot reload (`archiveControlTopic`) | yes                                                                           | **no**                                                                                             |
+| `sqlEnrichment`                            | yes                                                                           | **no** (ignored with a warning)                                                                    |
+| `references` + `enrichment` (CSV lookups)  | yes, see [AGENT_PATTERN_DESIGN.md §7.6](docs/AGENT_PATTERN_DESIGN.md#76-reference-data-enrichment) | yes, same section                                                                            |
+
+The business logic is shared in spirit but not in code: the 13-step pipeline of
+`StatefulAgentProcessor.processElement` was ported unchanged in behaviour into
+[`AgentEventProcessor`](event-rule-backend/src/main/java/com/ibm/di/event/agent/ptf/AgentEventProcessor.java),
+which does not depend on any Flink API. The DataStream classes were not modified apart from a few
+`public` modifiers.
+
+### Selecting the backend
+
+The shaded JAR's main class is `AgentJobLauncher`, which reads `EVENT_RULE_RUNTIME`:
+
+```bash
+EVENT_RULE_RUNTIME=datastream   # default
+EVENT_RULE_RUNTIME=ptf
+```
+
+`AgentBasedDataStreamJob` and `AgentBasedPTFJob` remain directly runnable (for example with
+`flink run -c com.ibm.di.event.agent.ptf.AgentBasedPTFJob ...`). Both read the same environment
+variables: `KAFKA_BOOTSTRAP_SERVERS`, `AGENT_DESCRIPTOR_PATH`, `FLINK_JOB_NAME`,
+`FLINK_PARALLELISM`, `CHECKPOINT_INTERVAL_MS`, `WATERMARK_OUT_OF_ORDER_MS`, `CHAINING_ENABLED`,
+`AGENT_ERROR_TOPIC[_<AGENT>]`.
+
+### 5.1 DataStream implementation
+
+The default backend, started by
+[`AgentBasedDataStreamJob`](event-rule-backend/src/main/java/com/ibm/di/event/agent/datastream/AgentBasedDataStreamJob.java).
+It builds one Flink DAG subgraph per agent from `agents.json` with the DataStream API (see the
+diagram in [§4](#4-architecture-overview)):
+
+1. one `KafkaSource` per subscription, normalised to an `EventEnvelope` and unioned per agent;
+2. `keyBy(entityId)` on the entity key extractor;
+3. `StatefulAgentProcessor`, a `KeyedBroadcastProcessFunction` that connects the keyed event stream
+   with a **broadcast stream** of `ArchiveControlCmd` messages;
+4. an output router that filters by declared `outputs[]` and writes to the Kafka sinks, the error
+   topic and the entity changelog (side output).
+
+Characteristics:
+
+- **State**: `ValueState<AgentState>` and `MapState` for schedules plus a time index, held in
+  RocksDB; event-time timers fire the schedules, a processing-time horizon cleanup and
+  `StateTtlConfig` (`stateConfig.ttl`) evict state.
+- **Ruleset hot reload**: archive-control commands (`LOAD` / `ROLLBACK` / `PREFETCH`) published on
+  `archiveControlTopic` are broadcast to every subtask, verified (SHA-256) and activated without
+  restarting the job. See [`docs/RULE_ENGINE.md`](docs/RULE_ENGINE.md).
+- **Agent chaining**: `AgentChainBuilder.resolveTopology()` wires an agent's output into another
+  agent's input in-process, with no Kafka hop. See
+  [`docs/ADVANCED_PATTERNS.md`](docs/ADVANCED_PATTERNS.md).
+- **Enrichment**: `enrichment` steps run as `Enrich[<agent>/<eventType>]` map operators
+  (`EnrichEnvelopeFunction`); `sqlEnrichment` runs a Flink SQL script per subscription or output
+  (`SqlEnrichmentRunner`) and takes precedence when both are declared. See
+  [AGENT_PATTERN_DESIGN.md §7.5](docs/AGENT_PATTERN_DESIGN.md#75-enrichment-mechanisms).
+- **Checkpointing**: `EXACTLY_ONCE`, `CHECKPOINT_INTERVAL_MS` (default 60 s).
+
+The full step-by-step processing and the DAG are described in
+[`docs/AGENT_PATTERN_DESIGN.md`](docs/AGENT_PATTERN_DESIGN.md#8-flink-dag-architecture). To run it
+locally without Docker, see [`docs/RUN_DATASTREAM.md`](docs/RUN_DATASTREAM.md).
+
+### 5.2 PTF implementation
+
+The alternative backend runs the same agents on Flink **Process Table Functions**, started by
+[`AgentBasedPTFJob`](event-rule-backend/src/main/java/com/ibm/di/event/agent/ptf/AgentBasedPTFJob.java).
+It generates a Flink SQL pipeline and calls `StatefulAgentProcessTableFunction` from it. It can
+also target **Confluent Cloud for Apache Flink**, where custom DataStream jobs are not available.
+Locally:
+
+```bash
+cd event-rule-backend
+./run-ptf.sh [bootstrap-servers] [agents-json-path]
+```
+
+See [`docs/RUN_PTF.md`](docs/RUN_PTF.md) for the full CLI guide.
+
+It adds two environment variables to those of [§5](#5-flink-backends):
+
+| Variable | Effect |
+|---|---|
+| `PTF_PRINT_SQL=true` | Print the generated SQL script and exit (nothing is submitted). `json` prints `{"script", "statements"}` instead, with every statement attributed to its agent (used by the dashboard SQL View). |
+| `PTF_DIALECT=confluent` | Generate the Confluent Cloud flavour (only with `PTF_PRINT_SQL=true`). |
+
+#### How an agent becomes SQL
+
+For each agent, `AgentSqlPipelineBuilder` generates, in order:
+
+1. one **source** per topic subscription, normalised to
+   `entity_id, event_type, source_topic, payload, event_ts` with the `EVENT_FIELD` scalar function
+   (same rules as `EnvelopeDeserializer`: `agentEventType`/`payload` unwrapping, `__eventType`
+   override, ISO or numeric `timestamp`, JSONPath entity id, `deserialization-error` on bad input);
+2. one **chained input** per chain edge, read from the upstream agent's `<agent>_out` view instead
+   of Kafka (the downstream entity id is re-extracted and the Kafka source of that event type is
+   suppressed, as `AgentChainBuilder` does);
+3. the view `<agent>_in` (`UNION ALL` of the above);
+4. the view `<agent>_out`:
+   ```sql
+   SELECT * FROM event_rule_<agent>(
+       events  => TABLE <agent>_in PARTITION BY entity_id,
+       on_time => DESCRIPTOR(event_ts),
+       uid     => 'agent-processor-<agentId>')
+   ```
+   returning `entity_id, out_type, envelope, rowtime`;
+5. one **sink** per output, the error topic (`agent-error`) and the changelog topic
+   (`entity-changelog`), each an `INSERT ... WHERE out_type = ...`. A sink without `eventType`
+   takes everything except the changelog.
+
+Print the result for any sample:
+
+```bash
+PTF_PRINT_SQL=true AGENT_DESCRIPTOR_PATH=samples/airtraffic-agent/agents.json \
+  java -cp ... com.ibm.di.event.agent.ptf.AgentBasedPTFJob
+```
+
+#### State and timers
+
+| DataStream | PTF backend |
+|---|---|
+| `ValueState<AgentState>` | `AgentPtfState.data`: the state as one JSON string (`AgentStateCodec`) |
+| `MapState` schedules + time index | `SchedulePtfState.requests` (schedule id → request JSON); `ScheduleBook` derives the timepoints |
+| event-time timer per schedule | named timer `sched-<epochMs>` |
+| processing-time horizon cleanup | event-time timer `cleanup` = newest event + shortest time horizon + 1 ms |
+| `StateTtlConfig` (`stateConfig.ttl`) | event-time timer `ttl` = newest event + ttl; clears the entity state only, pending schedules survive |
+| side output `entity-changelog` | rows with `out_type = 'entity-changelog'` |
+| reset sentinel `__ENTITY_RESET__` | same; also clears all timers |
+
+A named timer replaces an existing one of the same name, which is what makes `cleanup` and `ttl`
+cheap to re-arm on every event. Because the timers are event-time, an entity that stops receiving
+events does not expire until the watermark of its partition advances (idle detection / other keys).
+
+#### Confluent Cloud for Apache Flink
+
+Generate the script with `PTF_DIALECT=confluent PTF_PRINT_SQL=true` and run it in the SQL
+workspace. What differs from open source Flink, and why:
+
+| Constraint of Confluent Cloud | What the backend does |
+|---|---|
+| No custom DataStream job, no `flink run` | Only the SQL + UDF path is used. |
+| No broadcast, no `BROADCAST_SEMANTIC_TABLE` | **No hot reload.** The ruleset is fixed per deployment; redeploy the function to change it. A warning is logged if `archiveControlTopic` is set. |
+| No `MapView` / `ListView` | State is plain POJOs with public fields, holding JSON strings. The whole POJO is (de)serialised per call, so keep `horizon`s modest. |
+| `PARTITION BY` required, multi-table inputs co-partitioned | One input view per agent, partitioned by `entity_id`. |
+| Function registered with `CREATE FUNCTION ... USING JAR`, public no-arg constructor | `StatefulAgentProcessTableFunction()` has one; the descriptor is passed as the optional `agent_config` argument (JSON). One function serves all agents. |
+| UDF JAR: Java 11–21, size limited, Flink classes not bundled | Compiled with `release 21`. **Not done yet:** the shaded JAR still bundles Flink (compile scope), so a Confluent-specific artifact needs a profile that makes the Flink dependencies `provided`. |
+| Kafka `properties.*`/`topic` options unsupported; topics are tables | The `CONFLUENT` dialect reads `val` and `$rowtime` from the topic tables and writes `key`/`val` as `BYTES`. No DDL is generated for tables. |
+| Default `$rowtime` watermark | Used as event time (the open source dialect derives it from the payload `timestamp` instead). |
+| `TIMESTAMP_LTZ` precision ≤ 6 | Millisecond precision (3) is used. |
+| Parameter names | The compiler runs with `-parameters`, and every `@StateHint`/`@ArgumentHint` has an explicit name. |
+| Reference data (`references`) | The CSV files are read from the classpath, so they must be **bundled in the UDF JAR** (see [AGENT_PATTERN_DESIGN.md §7.6](docs/AGENT_PATTERN_DESIGN.md#confluent-cloud)). A data change means a new artifact version. `EVENT_ENRICH` is created with its own `CREATE FUNCTION`. |
+
+**Deploying**
+
+1. Build: `mvn -pl event-rule-backend package`. Upload the JAR as a Confluent Cloud Flink
+   *artifact*; note `<artifact-id>` and `<version-id>`.
+2. Replace `confluent-artifact://<artifact-id>/<version-id>` in the generated `CREATE FUNCTION`
+   statements and run the script.
+
+**Open risk — delivering the decision archive**
+
+`ruleset.path` is a local file path or a URI. Confluent Cloud UDFs have **no local filesystem**, so
+the IBM Decision Intelligence archive must come from somewhere reachable. Options, none of which
+is automated yet:
+
+- bundle the archive in the UDF JAR and use a path that `RulesetRunnerProvider` can resolve from
+  the classpath (needs a small change: it currently resolves `file`/URI paths only);
+- host the archive on an HTTPS endpoint reachable from Confluent Cloud and set
+  `ruleset.path` to that URL (`RulesetRunnerProvider` passes any path containing `://` to
+  `RuleEngineRunner` as a URI; whether the runner can open an `https` URI has not been verified).
+
+Also verify with Confluent that the DI runtime's dependencies (`com.ibm.decision:*`) fit the
+artifact size limit and the UDF sandbox. This has not been validated on Confluent Cloud itself.
+
+#### Testing
+
+`event-rule-backend/src/test/java/com/ibm/di/event/agent/ptf/`:
+
+- `AgentEventProcessorTest`, `PtfStateAndInputTest`: the shared logic, state codec, schedules,
+  normalisation.
+- `AgentSqlPipelineBuilderTest`: generated SQL for both dialects and all sample descriptors,
+  including the aircraft → airport chain.
+- `StatefulAgentProcessTableFunctionTest`: the function driven through stub Flink contexts.
+- `PtfLocalRunTest`: the function inside a real local `StreamTableEnvironment`, which makes Flink
+  itself validate the signature (state hints, `on_time`, output type) and fire event-time timers.
+
+There is no Kafka-based end-to-end test for the PTF backend yet.
+
+---
+
+## 6. How Event Rules Work
 
 The complete lifecycle of a single event, from Kafka to the dashboard:
 
@@ -253,9 +455,10 @@ Every use case is defined by a single JSON file — no application code required
 - **`agents`** — the execution contract: which entity the Agent tracks, which Kafka topics
   it subscribes to, how much history it keeps, which Decision Intelligence operation it invokes,
   and where it publishes results.
-- **Top-level use-case properties** (`name`, `flinkJobName`, `topics`, `outboundTopics`, …) — the
-  presentation contract: which of those topics the dashboard displays and how they are labeled.
-  They are optional; the BFF derives them from the agents when they are missing.
+- **Top-level use-case properties** (`name`, `flinkJobName`, `topics`, …) — the
+  presentation contract: which inbound topics the dashboard displays and how they are labeled.
+  They are optional; the BFF derives them from the agents when they are missing. Outbound topics
+  are never declared here: they are always derived from each agent's `outputs[]`.
 
 **[`docs/AGENT_PATTERN_DESIGN.md`](docs/AGENT_PATTERN_DESIGN.md) is the authoritative reference**
 for the file format, the generic rule-execution context, state management, and the Flink DAG
@@ -267,7 +470,7 @@ agent processing a single event type, see
 
 ---
 
-## 6. Descriptor Wizard
+## 7. Descriptor Wizard
 
 The **Descriptor Wizard** is a multi-step form built into the dashboard that lets you create or
 edit an agent descriptor entirely from the UI — no manual JSON editing required.
@@ -375,7 +578,7 @@ See [`.env.example`](.env.example) for the full configuration block and
 
 ---
 
-## 7. Building and Testing
+## 8. Building and Testing
 
 ### Build
 
@@ -548,7 +751,7 @@ for the full walkthrough, version cross-check details, and TLS options.
 
 ---
 
-## 8. Running with Docker
+## 9. Running with Docker
 
 The full stack — Kafka, Flink, the BFF, and the dashboard — runs via Docker Compose managed by [`run.sh`](run.sh):
 
@@ -606,13 +809,17 @@ Docker-specific issues, see **[`DOCKER.md`](DOCKER.md)**.
 
 ---
 
-## 9. Running Locally
+## 10. Running Locally
 
 Each component can also run outside Docker for local development:
 
 - **Backend (Flink job):** see
   [`docs/RUN_DATASTREAM.md`](docs/RUN_DATASTREAM.md) for running
   `AgentBasedDataStreamJob` directly against a local or remote Kafka broker.
+- **Backend on Flink Process Table Functions (alternative backend):** set
+  `EVENT_RULE_RUNTIME=ptf` (default `datastream`) on the shaded JAR, or run
+  `event-rule-backend/run-ptf.sh`; see [`docs/RUN_PTF.md`](docs/RUN_PTF.md) and
+  [§5.2](#52-ptf-implementation).
 - **Frontend (dashboard):** see [`event-rule-frontend/README.md`](event-rule-frontend/README.md) for `npm start` and
   environment variable configuration.
 - **BFF:** see [`event-rule-frontend/bff/README.md`](event-rule-frontend/bff/README.md) for `npm start` / `npm run dev`
@@ -620,7 +827,7 @@ Each component can also run outside Docker for local development:
 
 ---
 
-## 10. Use Cases
+## 11. Use Cases
 
 Event Rule ships with sample use cases under [`samples/`](samples/), each a self-contained
 Agent descriptor, Decision Intelligence archive, and set of demo scenarios.
@@ -640,7 +847,7 @@ step-by-step guide, from creating the use-case directory through running and val
 
 ---
 
-## 11. Generating an Event Rule Application with AI
+## 12. Generating an Event Rule Application with AI
 
 You don't need to create every file of an Event Rule application by hand. Instead, you can
 describe the application you want in a **Markdown specification** and ask a capable coding AI
@@ -652,7 +859,7 @@ and produces the configuration file that every Event Rule application requires: 
 
 ---
 
-### 11.1 Prepare the specification
+### 12.1 Prepare the specification
 
 Copy the template and fill it in:
 
@@ -729,7 +936,7 @@ The state is stored on `rocksdb` with a time-to-live of 24 hours.
 
 ---
 
-### 11.2 Give the specification and prompt to the AI
+### 12.2 Give the specification and prompt to the AI
 
 Open the project in your AI coding assistant (Claude, Bob, or equivalent) and provide **both**:
 
@@ -766,7 +973,7 @@ Replace `<YOUR-DIRECTORY>` with the folder name you chose (e.g. `my-app-agent`) 
 
 ---
 
-### 11.3 Reference examples
+### 12.3 Reference examples
 
 Two completed specifications are included in the repository. The Air Traffic Control example
 is paired with its fully generated output file:
@@ -788,7 +995,7 @@ example to confirm the AI generalises correctly to a different domain.
 
 ---
 
-### 11.4 Step-by-step workflow
+### 12.4 Step-by-step workflow
 
 ```
 1. Copy the template:
@@ -800,7 +1007,7 @@ example to confirm the AI generalises correctly to a different domain.
 
 3. Open the project with your AI assistant (Claude / Bob).
 
-4. Paste the generation prompt from §11.2, replacing
+4. Paste the generation prompt from §12.2, replacing
    <YOUR-DIRECTORY> and <Your Application> with your values.
 
 5. Point the AI to your specification and to the existing
@@ -811,19 +1018,19 @@ example to confirm the AI generalises correctly to a different domain.
 
 7. Review the generated files against your specification:
      - Every inbound topic  → entry in the top-level "topics"
-     - Every outbound topic → entry in the top-level "outboundTopics"
+     - Every outbound topic → entry in the agent's "outputs"
      - Every agent          → entry in "agents"
      - Every subscription horizon → correct "horizon" block
      - Every operation input/output → "history" / "outbounds" arrays
 
-8. Load the application through the Descriptor Wizard (§6),
+8. Load the application through the Descriptor Wizard (§7),
    or place the files in your sample directory and restart
    the BFF to pick them up automatically.
 ```
 
 ---
 
-## 12. Demo Scenario Isolation
+## 13. Demo Scenario Isolation
 
 When the **Send Events** panel is used to run demo scenarios, each "Run Scenario" click
 automatically resets the Flink state left by the **previous** scenario before publishing the
@@ -848,7 +1055,7 @@ publishes one **reset sentinel** per entity to the first subscribed event topic:
 ```
 
 Apache Flink routes the sentinel via `keyBy(entityId)` to the exact keyed partition for that
-entity.  The [`StatefulAgentProcessor`](event-rule-backend/src/main/java/com/ibm/di/event/agent/StatefulAgentProcessor.java)
+entity.  The [`StatefulAgentProcessor`](event-rule-backend/src/main/java/com/ibm/di/event/agent/datastream/StatefulAgentProcessor.java)
 detects `__ENTITY_RESET__` and clears the `AgentState` for that entity — both the entity profile
 (`entityData`) and the complete event history (`eventHistories`).  No other entity is affected.
 No output event is emitted.  The rule engine is not invoked.
@@ -878,7 +1085,7 @@ per-entity reset automatically after each scenario.  Pass `--no-reset` to skip i
 
 ---
 
-## 13. Project Structure
+## 14. Project Structure
 
 ```
 event-rule/
@@ -954,7 +1161,8 @@ event-rule/
 │   ├── AGENT_PATTERN_DESIGN.md          # Authoritative reference: descriptor schemas, DAG architecture
 │   ├── ADVANCED_PATTERNS.md             # Chaining, multi-input, parallel processing, worked examples
 │   ├── RULE_ENGINE.md                   # IBM Decision Intelligence class hierarchy, RuleEngineRunner internals
-│   └── RUN_DATASTREAM.md               # Running the Flink job locally without Docker
+│   ├── RUN_DATASTREAM.md               # Running the Flink job locally without Docker
+│   └── RUN_PTF.md                      # Running the PTF backend locally without Docker
 │
 ├── docker-compose.yml                   # All services (Kafka, Flink, BFF, Frontend)
 ├── build.sh                             # Build all components
@@ -968,7 +1176,7 @@ event-rule/
 
 ---
 
-## 14. Monitoring and Troubleshooting
+## 15. Monitoring and Troubleshooting
 
 **Watch the TaskManager logs to see every decision:**
 
@@ -987,7 +1195,7 @@ throughput, backpressure indicators.
 | Rules not firing                            | Check for smoke-test warnings in TaskManager logs; verify `ruleset.path` points to an existing JAR                            |
 | `Could not find decision runner` error      | The `operation` in each subscription must match the operation name exported by IBM Decision Designer exactly (case-sensitive). Verify the operation's decision flow is registered in the JAR's `META-INF/services/com.ibm.decision.run.DecisionServiceProvider` — a missing service entry is the most common cause. |
 | State lost after restart                    | Flink restores from the last checkpoint; allow at least one checkpoint interval (60 s) before restarting                      |
-| DI wizard shows "No DI runtimes configured" | Set `DI_RUNTIMES` in `.env` (see [§6](#6-descriptor-wizard)) and restart the BFF                                             |
+| DI wizard shows "No DI runtimes configured" | Set `DI_RUNTIMES` in `.env` (see [§7](#7-descriptor-wizard)) and restart the BFF                                             |
 | DI wizard shows "Could not load runtimes"   | BFF cannot reach `GET /api/ads-runtimes` — check BFF logs; if running locally, ensure BFF is started                          |
 | DI fetch returns "authentication failed"    | `username`/`password` in `DI_RUNTIMES` do not match the DI runtime — check credentials in `.env`                            |
 | DI fetch returns "Failed to connect"        | DI runtime is unreachable from the BFF — check `url` in `DI_RUNTIMES` and network/firewall rules                             |
@@ -1000,7 +1208,7 @@ archive hot-swap internals, see [`event-rule-frontend/bff/README.md`](event-rule
 
 ---
 
-## 15. Further Reading
+## 16. Further Reading
 
 | Document                                                                                      | Contents                                                                                            |
 |--------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
@@ -1011,6 +1219,7 @@ archive hot-swap internals, see [`event-rule-frontend/bff/README.md`](event-rule
 | [`DOCKER.md`](DOCKER.md)                                                                       | Docker Compose reference, image configuration, troubleshooting                                      |
 | [`docs/RULE_ENGINE.md`](docs/RULE_ENGINE.md)                                                  | IBM Decision Intelligence `RuleEngineRunner` internals, archive hot-swap, reload mechanics          |
 | [`docs/RUN_DATASTREAM.md`](docs/RUN_DATASTREAM.md)                                           | Running the Flink job locally without Docker                                                        |
+| [`docs/RUN_PTF.md`](docs/RUN_PTF.md)                                                         | Running the PTF backend locally without Docker                                                      |
 | [`event-rule-frontend/bff/README.md`](event-rule-frontend/bff/README.md)                      | BFF architecture, full REST API reference                                                           |
 | [`scripts/README.md`](scripts/README.md)                                                       | Operational scripts: topic creation, event submission, deployment validation, monitoring            |
 | [Apache Flink Documentation](https://nightlies.apache.org/flink/flink-docs-release-2.2/)      | Flink 2.2.0 reference                                                                                |
@@ -1018,7 +1227,7 @@ archive hot-swap internals, see [`event-rule-frontend/bff/README.md`](event-rule
 
 ---
 
-## 16. License
+## 17. License
 
 Licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 

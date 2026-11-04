@@ -2,7 +2,7 @@
 
 This document provides detailed instructions for building and running the Event Rule
 application in Docker. For a quick entry point, see
-[`README.md` §8 (Running with Docker)](README.md#8-running-with-docker).
+[`README.md` §9 (Running with Docker)](README.md#9-running-with-docker).
 
 ## Prerequisites
 

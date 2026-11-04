@@ -71,7 +71,7 @@ const DEFAULT_AGENT = {
     operations: [],
   },
   outputs: [
-    { _key: newKey(), eventType: '', topic: '', description: '', schema: '', sqlFile: '', sqlInputView: '', sqlOutputView: '' },
+    { _key: newKey(), eventType: '', topic: '', label: '', description: '', schema: '', sqlFile: '', sqlInputView: '', sqlOutputView: '' },
   ],
   stateConfig: {
     ttl: '30d',
@@ -150,6 +150,7 @@ export function buildDescriptor(form) {
       .map(o => ({
         eventType: o.eventType.trim(),
         topic: o.topic.trim(),
+        ...((o.label ?? '').trim() && { label: o.label.trim() }),
         ...(o.description.trim() && { description: o.description.trim() }),
         ...buildSqlEnrichmentFields(o),
       })),
@@ -1337,7 +1338,10 @@ function OutputRow({ out, onChange, onRemove, index, total }) {
           <TextInput value={out.topic} onChange={v => update('topic', v)} placeholder="agent-decision-results" mono />
         </Field>
       </div>
-      <Field label="Description" hint="Optional label shown in Flink operator names and logs.">
+      <Field label="Label" hint="Optional name shown for this output in the dashboard. Defaults to the description, then to the event type.">
+        <TextInput value={out.label ?? ''} onChange={v => update('label', v)} placeholder="Decision results" />
+      </Field>
+      <Field label="Description" hint="Optional description shown in Flink operator names and logs.">
         <TextInput value={out.description} onChange={v => update('description', v)} placeholder="Rule engine decisions" />
       </Field>
       <SqlEnrichmentFields item={out} update={update} kind="output" />
@@ -1347,7 +1351,7 @@ function OutputRow({ out, onChange, onRemove, index, total }) {
 
 function StepOutputs({ form, setOutputs }) {
   const add = () => setOutputs([...form.outputs, {
-    _key: newKey(), eventType: '', topic: '', description: '',
+    _key: newKey(), eventType: '', topic: '', label: '', description: '',
     schema: '', sqlFile: '', sqlInputView: '', sqlOutputView: '',
   }]);
   const remove = i => setOutputs(form.outputs.filter((_, idx) => idx !== i));
@@ -1509,6 +1513,7 @@ export function descriptorToForm(descriptor, targetAgentId, useCaseId) {
       _key: newKey(),
       eventType: o.eventType || '',
       topic: o.topic || '',
+      label: o.label || '',
       description: o.description || '',
       ...sqlEnrichmentToForm(o),
     })),

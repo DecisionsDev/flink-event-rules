@@ -74,6 +74,13 @@ public class EventSubscription implements Serializable {
     /** Optional SQL enrichment configuration for pre-processing events via Flink SQL. */
     private SqlEnrichmentConfig sqlEnrichment;
 
+    /**
+     * Optional reference-data enrichment steps applied to each incoming event before the agent
+     * processes it. Process Table Function engine only; the DataStream engine uses
+     * {@link #sqlEnrichment}.
+     */
+    private java.util.List<EnrichmentConfig> enrichment;
+
     // ── Constructors ──────────────────────────────────────────────────────────
 
     public EventSubscription() {}
@@ -132,6 +139,14 @@ public class EventSubscription implements Serializable {
     public SqlEnrichmentConfig getSqlEnrichment()                  { return sqlEnrichment; }
     public void                setSqlEnrichment(SqlEnrichmentConfig se) { this.sqlEnrichment = se; }
 
+    public java.util.List<EnrichmentConfig> getEnrichment()                 { return enrichment; }
+    public void setEnrichment(java.util.List<EnrichmentConfig> e)           { this.enrichment = e; }
+
+    /** Returns {@code true} when this subscription declares reference-data enrichment steps. */
+    public boolean hasEnrichment() {
+        return enrichment != null && !enrichment.isEmpty();
+    }
+
     /** Returns {@code true} when this subscription has an active SQL enrichment configuration. */
     public boolean hasSqlEnrichment() {
         return sqlEnrichment != null && sqlEnrichment.hasSqlFile();
@@ -144,12 +159,12 @@ public class EventSubscription implements Serializable {
 
     /**
      * Returns {@code true} when this subscription declares the {@code Schedule} event type,
-     * i.e. the events the agent synthesises when a schedule fires (see {@link ScheduleManager}).
+     * i.e. the events the agent synthesises when a schedule fires (see {@link ScheduleRequests}).
      * Such a subscription has no Kafka topic and no horizon: no source is wired for it.
      */
     @com.fasterxml.jackson.annotation.JsonIgnore
     public boolean isScheduleSubscription() {
-        return ScheduleManager.SCHEDULE_EVENT_TYPE.equals(eventType);
+        return ScheduleRequests.SCHEDULE_EVENT_TYPE.equals(eventType);
     }
 
     public HorizonConfig getHorizon()             { return horizon; }

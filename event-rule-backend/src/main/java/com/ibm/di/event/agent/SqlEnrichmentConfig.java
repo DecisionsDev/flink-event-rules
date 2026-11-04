@@ -29,7 +29,7 @@ import java.io.Serializable;
  * view (named {@link #inputViewName}) in a Flink {@code StreamTableEnvironment} based on the
  * topic's JSON Schema. The DDL and queries in {@link #sqlFile} are executed, and the resulting
  * table (named {@link #outputViewName}) is converted back into {@link EventEnvelope}s before
- * entering the {@link StatefulAgentProcessor}.
+ * entering the {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor}.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class SqlEnrichmentConfig implements Serializable {

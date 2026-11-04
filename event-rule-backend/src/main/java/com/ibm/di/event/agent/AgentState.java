@@ -33,7 +33,7 @@ import java.util.Map;
 
 /**
  * Per-entity Flink {@link org.apache.flink.api.common.state.ValueState} for the
- * {@link StatefulAgentProcessor}.
+ * {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor}.
  *
  * <h3>Structure</h3>
  * <ul>
@@ -60,7 +60,7 @@ import java.util.Map;
  * </ul>
  * Time-based eviction at this point uses the <em>current event's timestamp</em>
  * as the reference, which is deterministic and checkpoint-safe.  The
- * {@link StatefulAgentProcessor#onTimer} path runs an additional sweep keyed by
+ * {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor#onTimer} path runs an additional sweep keyed by
  * Flink processing time to clean up entities that stop receiving events.
  */
 public class AgentState implements Serializable {
@@ -179,7 +179,7 @@ public class AgentState implements Serializable {
 
     /**
      * Removes events older than {@code cutoffMs} from all time-sensitive histories.
-     * Called from {@link StatefulAgentProcessor#onTimer} for idle-entity cleanup.
+     * Called from {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor#onTimer} for idle-entity cleanup.
      *
      * @param cutoffMs  evict events whose timestamp is &lt; this value
      */

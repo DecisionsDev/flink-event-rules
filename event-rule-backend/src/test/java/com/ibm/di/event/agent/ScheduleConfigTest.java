@@ -64,7 +64,7 @@ class ScheduleConfigTest {
     void validateAccepts() throws Exception {
         AgentDescriptor d = new ObjectMapper().readTree(AGENTS_JSON).get("agents").get(0)
             .traverse(new ObjectMapper()).readValueAs(AgentDescriptor.class);
-        assertDoesNotThrow(() -> AgentBasedDataStreamJob.validate(d));
+        assertDoesNotThrow(() -> AgentDescriptorValidator.validate(d));
     }
 
     @Test
@@ -76,7 +76,7 @@ class ScheduleConfigTest {
         d.setRuleset(new RulesetConfig("x.jar"));
         d.setSubscriptions(List.of(
             new EventSubscription("Schedule", "some-topic", "OnSchedule", HorizonConfig.count(0))));
-        assertThrows(IllegalArgumentException.class, () -> AgentBasedDataStreamJob.validate(d));
+        assertThrows(IllegalArgumentException.class, () -> AgentDescriptorValidator.validate(d));
     }
 
     @Test
@@ -91,19 +91,18 @@ class ScheduleConfigTest {
               "agents": [] }
             """);
         Map<String, Long> idleness =
-            AgentBasedDataStreamJob.loadTopicIdleness(dir.resolve("agents.json").toString());
+            AgentDescriptorLoader.loadTopicIdleness(dir.resolve("agents.json").toString());
         assertEquals(30_000L, idleness.get("t-fast"));
         assertEquals(7_200_000L, idleness.get("t-slow"));
         assertFalse(idleness.containsKey("t-default"));
-        assertEquals(60_000L, AgentBasedDataStreamJob.DEFAULT_IDLENESS_MS, "default is 1 minute");
+        assertEquals(60_000L, AgentDescriptorLoader.DEFAULT_IDLENESS_MS, "default is 1 minute");
     }
 
     @Test
     @DisplayName("agents.json without a topics section → empty map")
     void noTopicsSection(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("agents.json"), AGENTS_JSON);
-        assertTrue(AgentBasedDataStreamJob
-            .loadTopicIdleness(dir.resolve("agents.json").toString()).isEmpty());
+        assertTrue(AgentDescriptorLoader.loadTopicIdleness(dir.resolve("agents.json").toString()).isEmpty());
     }
 
     @Test
@@ -111,7 +110,6 @@ class ScheduleConfigTest {
     void invalidIdleness(@TempDir Path dir) throws Exception {
         Files.writeString(dir.resolve("agents.json"),
             "{ \"topics\": [ { \"name\": \"t\", \"idleness\": \"soon\" } ], \"agents\": [] }");
-        assertThrows(IllegalArgumentException.class, () -> AgentBasedDataStreamJob
-            .loadTopicIdleness(dir.resolve("agents.json").toString()));
+        assertThrows(IllegalArgumentException.class, () -> AgentDescriptorLoader.loadTopicIdleness(dir.resolve("agents.json").toString()));
     }
 }

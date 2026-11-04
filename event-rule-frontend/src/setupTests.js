@@ -21,3 +21,27 @@ import { vi } from 'vitest';
 // Vitest exposes its mock API as `vi`, but many CRA-era tests use the Jest
 // global `jest`. Assign it here once so all test files work without changes.
 globalThis.jest = vi;
+
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
+// jsdom does not implement DOMMatrixReadOnly, which @xyflow/react uses in
+// requestAnimationFrame callbacks (updateNodeInternals) to read the zoom level.
+// Minimal stub as recommended by the React Flow testing docs.
+if (typeof globalThis.DOMMatrixReadOnly === 'undefined') {
+  globalThis.DOMMatrixReadOnly = class DOMMatrixReadOnly {
+    constructor(transform) {
+      const scale = typeof transform === 'string' ? transform.match(/scale\(([\d.]+)\)/)?.[1] : undefined;
+      this.m22 = scale !== undefined ? Number(scale) : 1;
+    }
+  };
+}
+if (typeof window !== 'undefined' && typeof window.DOMMatrixReadOnly === 'undefined') {
+  window.DOMMatrixReadOnly = globalThis.DOMMatrixReadOnly;
+}
+

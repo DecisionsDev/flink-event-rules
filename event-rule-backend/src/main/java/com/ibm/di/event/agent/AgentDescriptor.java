@@ -34,7 +34,7 @@ import java.util.List;
  *
  * <p>The {@link #entityKeyExtractor} is a JSONPath expression (Jayway JsonPath)
  * (e.g. {@code "$.accountId"}, {@code "$.customer.id"}, or any deeper path like
- * {@code "$.a.b.c"}).  Resolved by {@link StatefulAgentProcessor}.
+ * {@code "$.a.b.c"}).  Resolved by {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor}.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class AgentDescriptor implements Serializable {
@@ -60,6 +60,12 @@ public class AgentDescriptor implements Serializable {
      */
     private String entityKeyExtractor;
 
+    /**
+     * Reference data sets (CSV files) that {@link EnrichmentConfig} steps of the subscriptions and
+     * outputs look rows up in. Used by the Process Table Function engine only.
+     */
+    private List<ReferenceConfig> references;
+
     /** Event subscriptions defining which topics feed this agent and their history horizons. */
     private List<EventSubscription> subscriptions;
 
@@ -73,7 +79,7 @@ public class AgentDescriptor implements Serializable {
     private StateConfig stateConfig;
 
     /**
-     * Flink parallelism for this agent's {@link StatefulAgentProcessor}.
+     * Flink parallelism for this agent's {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor}.
      * {@code 0} means inherit the job-level default.
      */
     private int parallelism;
@@ -120,6 +126,9 @@ public class AgentDescriptor implements Serializable {
         return (sub != null && sub.getEntityKeyExtractor() != null)
             ? sub.getEntityKeyExtractor() : entityKeyExtractor;
     }
+
+    public List<ReferenceConfig> getReferences()                   { return references; }
+    public void                  setReferences(List<ReferenceConfig> r) { this.references = r; }
 
     public List<EventSubscription> getSubscriptions()                        { return subscriptions; }
     public void                    setSubscriptions(List<EventSubscription> s) { this.subscriptions = s; }

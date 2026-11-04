@@ -451,8 +451,9 @@ function AgentDiagramSVG({ agents, svgRef, onNodeClick }) {
         }
 
         if (n.type === 'outbound') {
-          const { topic, eventType, description } = n.data;
-          const descLines = description ? wrapText(description, 22) : [];
+          const { topic, eventType, label, description } = n.data;
+          // The dashboard label is the most meaningful caption; fall back to the description.
+          const descLines = (label || description) ? wrapText(label || description, 22) : [];
           return (
             <HorizCylinder key={i} x={n.x} y={n.y} w={n.w} h={n.h} ry={CYL_RY}
               fill={C.outbound.fill} stroke={C.outbound.stroke}>

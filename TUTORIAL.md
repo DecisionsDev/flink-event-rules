@@ -64,9 +64,6 @@ use-case properties at the top:
   "topics": [
     { "name": "my-usecase-events", "type": "MyEvent", "label": "My Events" }
   ],
-  "outboundTopics": [
-    { "name": "my-usecase-results", "type": "MyResult", "label": "Results" }
-  ],
   "agents": [
     {
       "agentId": "my-agent",
@@ -107,14 +104,15 @@ use-case properties at the top:
 }
 ```
 
-The top-level properties (`name`, `flinkJobName`, `consumerGroupId`, `topics`, `outboundTopics`)
-are optional: when omitted, the BFF derives them from the agents (topics from `subscriptions[].topic`
-and `outputs[].topic`). Declare them to control labels and to set a per-topic `idleness`.
-If you declare them:
+The top-level properties (`name`, `flinkJobName`, `consumerGroupId`, `topics`) are optional: when
+omitted, the BFF derives them from the agents (topics from `subscriptions[].topic`). Declare them to
+control labels and to set a per-topic `idleness`. If you declare them:
 
 - `flinkJobName` must match the job name the Flink job registers under (see Step 6).
 - `topics[].name` must match a `subscriptions[].topic` in an agent.
-- `outboundTopics[].name` must match an `outputs[].topic` in an agent.
+
+Outbound topics are never declared at the top level: the BFF always derives them from each agent's
+`outputs[].topic` and `stateConfig.changeLogTopic`.
 
 See [`docs/AGENT_PATTERN_DESIGN.md` §4](docs/AGENT_PATTERN_DESIGN.md#4-agentsjson--use-case-properties)
 for the full field reference.

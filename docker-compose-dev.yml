@@ -14,7 +14,7 @@
 
 # Development compose file — starts Kafka (KRaft), BFF, and Frontend only.
 # The Flink job is run locally via `mvn exec:java -Pdev` or from the IDE.
-# See README.md §9 for local-run instructions.
+# See README.md §10 for local-run instructions.
 
 services:
   # Kafka Broker — KRaft mode (no ZooKeeper required)

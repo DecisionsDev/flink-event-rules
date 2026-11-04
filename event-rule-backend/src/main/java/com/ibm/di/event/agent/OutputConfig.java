@@ -25,7 +25,7 @@ import java.io.Serializable;
 /**
  * Maps an agent output event type to the Kafka topic it should be written to.
  *
- * <p>The {@link com.ibm.di.event.agent.StatefulAgentProcessor} emits
+ * <p>The {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor} emits
  * {@link com.ibm.di.event.agent.EventEnvelope} objects tagged with a logical
  * {@code eventType}.  The downstream routing step filters by this type and
  * writes matching envelopes to the configured {@link #topic}.
@@ -35,7 +35,7 @@ import java.io.Serializable;
  * outbound stream as a temporary view named {@link SqlEnrichmentConfig#getInputViewName()}
  * and reads the enriched result from {@link SqlEnrichmentConfig#getOutputViewName()}.
  * The output view must expose the three conventional columns expected by
- * {@link com.ibm.di.event.sql.SqlEnrichmentRunner}: {@code timestamp}, {@code entity_id},
+ * {@link com.ibm.di.event.agent.enrichment.sql.SqlEnrichmentRunner}: {@code timestamp}, {@code entity_id},
  * and {@code payload_json}.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -54,6 +54,13 @@ public class OutputConfig implements Serializable {
     private String description;
 
     /**
+     * Optional display label of this output in the dashboard. Presentation only: not used by
+     * the Flink job. When absent the BFF falls back to {@link #description}, then to
+     * {@link #eventType}.
+     */
+    private String label;
+
+    /**
      * Path to a JSON Schema file describing the payload shape of outbound events of this type.
      * Required when {@link #sqlEnrichment} is set: the schema is used to map each
      * {@link com.ibm.di.event.agent.EventEnvelope} payload into a typed Flink {@code Row}
@@ -66,6 +73,13 @@ public class OutputConfig implements Serializable {
      * reach the Kafka sink.  {@code null} means no enrichment (default behaviour).
      */
     private SqlEnrichmentConfig sqlEnrichment;
+
+    /**
+     * Optional reference-data enrichment steps applied to the payload of outbound events of this
+     * type before they reach the Kafka sink. Process Table Function engine only; the DataStream
+     * engine uses {@link #sqlEnrichment}.
+     */
+    private java.util.List<EnrichmentConfig> enrichment;
 
     // ── Constructors ──────────────────────────────────────────────────────────
 
@@ -87,11 +101,22 @@ public class OutputConfig implements Serializable {
     public String getDescription()            { return description; }
     public void   setDescription(String d)    { this.description = d; }
 
+    public String getLabel()                  { return label; }
+    public void   setLabel(String l)          { this.label = l; }
+
     public String getSchema()              { return schema; }
     public void   setSchema(String s)      { this.schema = s; }
 
     public SqlEnrichmentConfig getSqlEnrichment()                      { return sqlEnrichment; }
     public void                setSqlEnrichment(SqlEnrichmentConfig se) { this.sqlEnrichment = se; }
+
+    public java.util.List<EnrichmentConfig> getEnrichment()        { return enrichment; }
+    public void setEnrichment(java.util.List<EnrichmentConfig> e)  { this.enrichment = e; }
+
+    /** Returns {@code true} when this output declares reference-data enrichment steps. */
+    public boolean hasEnrichment() {
+        return enrichment != null && !enrichment.isEmpty();
+    }
 
     /** Returns {@code true} when this output has an active SQL enrichment configuration. */
     public boolean hasSqlEnrichment() {

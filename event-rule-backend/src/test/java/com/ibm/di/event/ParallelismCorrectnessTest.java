@@ -20,10 +20,10 @@ package com.ibm.di.event;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.ibm.di.event.agent.AgentBasedDataStreamJob;
+import com.ibm.di.event.agent.AgentDescriptorLoader;
 import com.ibm.di.event.agent.AgentDescriptor;
 import com.ibm.di.event.agent.EventEnvelope;
-import com.ibm.di.event.agent.StatefulAgentProcessor;
+import com.ibm.di.event.agent.datastream.StatefulAgentProcessor;
 import com.ibm.di.event.rule.RuleEngineRunner;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -60,7 +60,7 @@ class ParallelismCorrectnessTest {
                     }
                   ]
                 }""";
-            AgentBasedDataStreamJob.AgentFileDescriptor fd =
+            AgentDescriptorLoader.AgentFileDescriptor fd =
                 invokeLoadFileDescriptor(json);
             assertEquals(4, fd.parallelism(),
                 "top-level parallelism field must be propagated from descriptor JSON");
@@ -81,7 +81,7 @@ class ParallelismCorrectnessTest {
                     }
                   ]
                 }""";
-            AgentBasedDataStreamJob.AgentFileDescriptor fd =
+            AgentDescriptorLoader.AgentFileDescriptor fd =
                 invokeLoadFileDescriptor(json);
             assertEquals(0, fd.parallelism(),
                 "absent top-level parallelism must return 0 so env-var/default fallback kicks in");
@@ -99,7 +99,7 @@ class ParallelismCorrectnessTest {
                     "ruleset": { "name": "TestModel-op", "path": "/tmp/test.jar" }
                   }
                 ]""";
-            AgentBasedDataStreamJob.AgentFileDescriptor fd =
+            AgentDescriptorLoader.AgentFileDescriptor fd =
                 invokeLoadFileDescriptor(json);
             assertEquals(0, fd.parallelism(),
                 "plain array format has no top-level parallelism field; must return 0");
@@ -121,7 +121,7 @@ class ParallelismCorrectnessTest {
                     }
                   ]
                 }""";
-            AgentBasedDataStreamJob.AgentFileDescriptor fd =
+            AgentDescriptorLoader.AgentFileDescriptor fd =
                 invokeLoadFileDescriptor(json);
             assertEquals(0, fd.parallelism(),
                 "non-integer parallelism node must be rejected (isInt() guard) → returns 0");
@@ -143,7 +143,7 @@ class ParallelismCorrectnessTest {
                     }
                   ]
                 }""";
-            AgentBasedDataStreamJob.AgentFileDescriptor fd =
+            AgentDescriptorLoader.AgentFileDescriptor fd =
                 invokeLoadFileDescriptor(json);
             assertEquals(2, fd.parallelism(), "job-level parallelism must be 2");
             assertEquals(4, fd.agents().get(0).getParallelism(),
@@ -283,18 +283,18 @@ class ParallelismCorrectnessTest {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /**
-     * Invokes the package-private {@code AgentBasedDataStreamJob.loadFileDescriptor} via
+     * Invokes the package-private {@code AgentDescriptorLoader.loadFileDescriptor} via
      * a temporary file so the method's classpath-then-filesystem resolution is exercised.
      */
-    private static AgentBasedDataStreamJob.AgentFileDescriptor invokeLoadFileDescriptor(
+    private static AgentDescriptorLoader.AgentFileDescriptor invokeLoadFileDescriptor(
             String json) throws Exception {
         java.nio.file.Path tmp = java.nio.file.Files.createTempFile("agents-test-", ".json");
         try {
             java.nio.file.Files.writeString(tmp, json);
-            Method m = AgentBasedDataStreamJob.class.getDeclaredMethod(
+            Method m = AgentDescriptorLoader.class.getDeclaredMethod(
                 "loadFileDescriptor", String.class);
             m.setAccessible(true);
-            return (AgentBasedDataStreamJob.AgentFileDescriptor) m.invoke(
+            return (AgentDescriptorLoader.AgentFileDescriptor) m.invoke(
                 null, tmp.toAbsolutePath().toString());
         } finally {
             java.nio.file.Files.deleteIfExists(tmp);

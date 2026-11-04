@@ -20,7 +20,7 @@ import './UseCaseSelector.css';
 import { FLINK_DASHBOARD_URL } from './config';
 import AgentScenariosPanel from './AgentScenariosPanel';
 
-function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onEditAgent, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, refreshToken }) {
+function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onCreateDiagram, onEditDiagram, onEditAgent, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, refreshToken, flinkRuntime = 'datastream', onFlinkRuntimeChange }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recently_updated');
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
@@ -49,11 +49,6 @@ function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onEditAgent, onE
               <path d="M20 2v2h6.586L18 12.586 19.414 14 28 5.414V12h2V2H20z"/>
             </svg>
           </a>
-          <button className="di-header-action" title="Connections" aria-label="Connections">
-            <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
-              <path d="M26 14v-4h-4V8h4V4h2v4h4v2h-4v4h-2zm-8 4v-4h-4v-2h4V8h2v4h4v2h-4v4h-2zM4 28v-4h4v-2H4v-4H2v4H0v2h2v4h2zM12 28v-4h4v-2h-4v-4h-2v4H8v2h2v4h2z"/>
-            </svg>
-          </button>
           <button className="di-header-action" title="Settings" aria-label="Settings">
             <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
               <path d="M29.41 14.16l-2.61-.43a11.13 11.13 0 00-.91-2.19l1.55-2.18a1 1 0 00-.14-1.3l-2.67-2.67a1 1 0 00-1.3-.14l-2.18 1.55a11.13 11.13 0 00-2.19-.91l-.43-2.61A1 1 0 0017.65 2h-3.3a1 1 0 00-.99.84l-.43 2.61a11.13 11.13 0 00-2.19.91L8.56 4.81a1 1 0 00-1.3.14L4.59 7.62a1 1 0 00-.14 1.3l1.55 2.18a11.13 11.13 0 00-.91 2.19l-2.61.43A1 1 0 001.5 14.72v3.3a1 1 0 00.84.99l2.61.43a11.13 11.13 0 00.91 2.19L4.31 23.81a1 1 0 00.14 1.3l2.67 2.67a1 1 0 001.3.14l2.18-1.55a11.13 11.13 0 002.19.91l.43 2.61a1 1 0 00.99.84h3.3a1 1 0 00.99-.84l.43-2.61a11.13 11.13 0 002.19-.91l2.18 1.55a1 1 0 001.3-.14l2.67-2.67a1 1 0 00.14-1.3l-1.55-2.18a11.13 11.13 0 00.91-2.19l2.61-.43a1 1 0 00.84-.99v-3.3a1 1 0 00-.84-.86zM16 21a5 5 0 115-5 5 5 0 01-5 5z"/>
@@ -73,10 +68,18 @@ function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onEditAgent, onE
       {/* ── Title Bar ── */}
       <div className="di-title-bar">
         <h1 className="di-page-title">Event Rules Applications</h1>
-        <button className="di-btn-primary" onClick={onCreateDescriptor}>
-          <span>New Event Rules Application</span>
-          <span className="di-btn-icon">+</span>
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="di-btn-primary" onClick={onCreateDescriptor}>
+            <span>New Event Rules Application</span>
+            <span className="di-btn-icon">+</span>
+          </button>
+          <button className="di-btn-primary" onClick={onCreateDiagram} style={{ background: '#6929c4', borderColor: '#6929c4' }} title="Open the graphical Agent Diagram Editor">
+            <svg width="14" height="14" viewBox="0 0 32 32" fill="currentColor" style={{ flexShrink: 0 }}>
+              <path d="M27 22.14V9.86A4 4 0 1022.14 5H9.86A4 4 0 105 9.86v12.28A4 4 0 109.86 27h12.28A4 4 0 1027 22.14zM25 4a2 2 0 11-2 2 2 2 0 012-2zM4 7a2 2 0 112 2A2 2 0 014 7zm3 18a2 2 0 11-2-2 2 2 0 012 2zm18.14-4A4 4 0 0022 23.86v.14H9.86A4 4 0 008 22.14V9.86A4 4 0 0010.14 8H22a4 4 0 001.86.14V22a4 4 0 00-.72.14zM25 28a2 2 0 112-2 2 2 0 01-2 2z"/>
+            </svg>
+            <span>New Event Rules Application (Diagram)</span>
+          </button>
+        </div>
       </div>
 
       {/* ── Toolbar Bar ── */}
@@ -108,6 +111,34 @@ function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onEditAgent, onE
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
+          </div>
+
+          <div className="di-flink-runtime-selector">
+            <span className="di-flink-runtime-label">Flink Runtime:</span>
+            <div className="di-radio-group" role="radiogroup" aria-label="Flink Runtime Implementation">
+              <label className="di-radio-label">
+                <input
+                  type="radio"
+                  name="flink-runtime"
+                  value="datastream"
+                  checked={flinkRuntime === 'datastream'}
+                  onChange={() => onFlinkRuntimeChange && onFlinkRuntimeChange('datastream')}
+                  className="di-radio-input"
+                />
+                <span className="di-radio-text">DataStream</span>
+              </label>
+              <label className="di-radio-label">
+                <input
+                  type="radio"
+                  name="flink-runtime"
+                  value="ptf"
+                  checked={flinkRuntime === 'ptf'}
+                  onChange={() => onFlinkRuntimeChange && onFlinkRuntimeChange('ptf')}
+                  className="di-radio-input"
+                />
+                <span className="di-radio-text">Process Table Function</span>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -141,6 +172,7 @@ function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onEditAgent, onE
       <div className="di-main-content">
         <AgentScenariosPanel
           onEditAgent={onEditAgent}
+          onEditDiagram={onEditDiagram}
           onEditSpecificAgent={onEditSpecificAgent}
           onAddAgentToJob={onAddAgentToJob}
           onDeleteAgent={onDeleteAgent}
@@ -150,6 +182,7 @@ function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onEditAgent, onE
           searchQuery={searchQuery}
           sortBy={sortBy}
           viewMode={viewMode}
+          flinkRuntime={flinkRuntime}
         />
       </div>
     </div>

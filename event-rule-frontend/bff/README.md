@@ -52,7 +52,7 @@ The BFF service:
 | `JAR_PATH`                 | Explicit path to the fat JAR; if unset, auto-resolved from `event-rule-backend/target/` | auto-resolved                                    |
 | `TOPIC_PARTITIONS`         | Number of partitions for auto-created topics                                            | `3`                                              |
 | `TOPIC_REPLICATION_FACTOR` | Replication factor for auto-created topics                                              | `1`                                              |
-| `DI_RUNTIMES`              | JSON array of IBM Decision Intelligence runtime connections used by the Descriptor Wizard's "Fetch from DI Runtime" path. See [`README.md §6`](../../README.md#6-descriptor-wizard) for the full format. | unset — DI fetch feature disabled |
+| `DI_RUNTIMES`              | JSON array of IBM Decision Intelligence runtime connections used by the Descriptor Wizard's "Fetch from DI Runtime" path. See [`README.md §7`](../../README.md#7-descriptor-wizard) for the full format. | unset — DI fetch feature disabled |
 
 ## API Reference
 
@@ -77,6 +77,7 @@ The BFF service:
 | `DELETE` | `/api/agents/:id`                    | Stop job, delete Kafka topics, and remove the agent files                      |
 | `POST`   | `/api/agents/:id/jar`                | Upload a Decision Intelligence ruleset JAR (multipart `jar` field)             |
 | `GET`    | `/api/agents/:id/sample-input`       | Generate example event payloads from the ruleset archive                       |
+| `POST`   | `/api/agents/:id/reference`          | Upload an enrichment reference CSV to `samples/:id/enrichment/` (multipart `reference` field) |
 
 ---
 
@@ -129,7 +130,7 @@ Returns all discovered use cases.
 ```
 
 #### `GET /api/use-cases/:useCase/descriptor`
-Returns the use-case descriptor, built from the use case's `agents.json`. Top-level `name`, `flinkJobName`, `consumerGroupId`, `description`, `icon`, `topics` and `outboundTopics` in `agents.json` are used when present; otherwise they are derived from the agents' `subscriptions[].topic` and `outputs[].topic`.
+Returns the use-case descriptor, built from the use case's `agents.json`. Top-level `name`, `flinkJobName`, `consumerGroupId`, `description`, `icon` and `topics` in `agents.json` are used when present; otherwise they are derived from the agents' `subscriptions[].topic`. The returned `outboundTopics` is always derived from the agents' `outputs[].topic` and `stateConfig.changeLogTopic` (a top-level `outboundTopics` in `agents.json` is ignored).
 
 #### `GET /api/use-cases/:useCase/scenarios`
 Returns the pre-built demo scenarios from `samples/<useCase>/demo-scenarios.json`, or `[]` if the file does not exist.

@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@link OutputConfig}, {@link RulesetConfig}, and {@link StateConfig}.
  *
  * <p>Covers JSON round-trip parsing, field defaults, derived helpers, and
- * the in-memory object model used by {@link StatefulAgentProcessor}.
+ * the in-memory object model used by {@code StatefulAgentProcessor}.
  */
 @DisplayName("Agent descriptor model tests")
 class AgentDescriptorTest {
@@ -270,12 +270,30 @@ class AgentDescriptorTest {
         }
 
         @Test
+        @DisplayName("Dashboard label is parsed from the optional 'label' property")
+        void labelParsed() throws Exception {
+            String json = """
+                {
+                  "eventType": "fraud-alert",
+                  "topic": "fraud-alerts",
+                  "label": "Fraud alerts",
+                  "description": "High-risk transactions"
+                }""";
+
+            OutputConfig o = MAPPER.readValue(json, OutputConfig.class);
+
+            assertEquals("Fraud alerts", o.getLabel());
+            assertEquals("High-risk transactions", o.getDescription());
+        }
+
+        @Test
         @DisplayName("Two-arg constructor sets eventType and topic")
         void twoArgConstructor() {
             OutputConfig o = new OutputConfig("approved", "approved-txns");
             assertEquals("approved",      o.getEventType());
             assertEquals("approved-txns", o.getTopic());
             assertNull(o.getDescription());
+            assertNull(o.getLabel());
         }
 
         @Test

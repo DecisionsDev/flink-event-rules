@@ -1,0 +1,120 @@
+{
+ "statements": [
+  {
+   "kind": "table",
+   "agentId": "aircraft-agent",
+   "sql": "CREATE TEMPORARY TABLE `aircraft_agent_src_agent_aircraft_init_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AircraftInitializationEvent', '$.aircraftId') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-aircraft-init-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-aircraft-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n)"
+  },
+  {
+   "kind": "table",
+   "agentId": "aircraft-agent",
+   "sql": "CREATE TEMPORARY TABLE `aircraft_agent_src_agent_aircraft_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AircraftEvent', '$.aircraftId') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-aircraft-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-aircraft-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n)"
+  },
+  {
+   "kind": "view",
+   "agentId": "aircraft-agent",
+   "sql": "CREATE TEMPORARY VIEW `aircraft_agent_in` AS\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AircraftInitializationEvent', '$.aircraftId') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AircraftInitializationEvent', '$.aircraftId') AS `event_type`,\n  CAST('agent-aircraft-init-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AircraftInitializationEvent', '$.aircraftId') AS `payload`,\n  `event_ts`\nFROM `aircraft_agent_src_agent_aircraft_init_events`\nUNION ALL\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AircraftEvent', '$.aircraftId') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AircraftEvent', '$.aircraftId') AS `event_type`,\n  CAST('agent-aircraft-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AircraftEvent', '$.aircraftId') AS `payload`,\n  `event_ts`\nFROM `aircraft_agent_src_agent_aircraft_events`"
+  },
+  {
+   "kind": "view",
+   "agentId": "aircraft-agent",
+   "sql": "CREATE TEMPORARY VIEW `aircraft_agent_out` AS\nSELECT * FROM `event_rule_aircraft_agent`(\n    events => TABLE `aircraft_agent_in` PARTITION BY `entity_id`,\n    on_time => DESCRIPTOR(`event_ts`),\n    uid => 'agent-processor-aircraft-agent')"
+  },
+  {
+   "kind": "table",
+   "agentId": "aircraft-agent",
+   "sql": "CREATE TEMPORARY TABLE `aircraft_agent_sink_agent_tracked_aircraft_events` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-tracked-aircraft-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'aircraft_agent_sink_agent_tracked_aircraft_events'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "aircraft-agent",
+   "sql": "INSERT INTO `aircraft_agent_sink_agent_tracked_aircraft_events`\nSELECT `entity_id`, `envelope`\nFROM `aircraft_agent_out`\nWHERE `out_type` = 'TrackedAircraftEvent'"
+  },
+  {
+   "kind": "table",
+   "agentId": "aircraft-agent",
+   "sql": "CREATE TEMPORARY TABLE `aircraft_agent_sink_agent_atc_alerts` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-atc-alerts',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'aircraft_agent_sink_agent_atc_alerts'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "aircraft-agent",
+   "sql": "INSERT INTO `aircraft_agent_sink_agent_atc_alerts`\nSELECT `entity_id`, `envelope`\nFROM `aircraft_agent_out`\nWHERE `out_type` = 'Alert'"
+  },
+  {
+   "kind": "table",
+   "agentId": "aircraft-agent",
+   "sql": "CREATE TEMPORARY TABLE `aircraft_agent_sink_agent_atc_errors` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-atc-errors',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'aircraft_agent_sink_agent_atc_errors'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "aircraft-agent",
+   "sql": "INSERT INTO `aircraft_agent_sink_agent_atc_errors`\nSELECT `entity_id`, `envelope`\nFROM `aircraft_agent_out`\nWHERE `out_type` = 'agent-error'"
+  },
+  {
+   "kind": "table",
+   "agentId": "aircraft-agent",
+   "sql": "CREATE TEMPORARY TABLE `aircraft_agent_sink_changelog` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-aircraft-entity-changelog',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'aircraft_agent_sink_changelog'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "aircraft-agent",
+   "sql": "INSERT INTO `aircraft_agent_sink_changelog`\nSELECT `entity_id`, `envelope`\nFROM `aircraft_agent_out`\nWHERE `out_type` = 'entity-changelog'"
+  },
+  {
+   "kind": "table",
+   "agentId": "airport-agent",
+   "sql": "CREATE TEMPORARY TABLE `airport_agent_src_agent_airport_init_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AirportInitializationEvent', '$.airport') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-airport-init-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-airport-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n)"
+  },
+  {
+   "kind": "table",
+   "agentId": "airport-agent",
+   "sql": "CREATE TEMPORARY TABLE `airport_agent_src_agent_airport_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AirportEvent', '$.airport') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-airport-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-airport-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n)"
+  },
+  {
+   "kind": "table",
+   "agentId": "airport-agent",
+   "sql": "CREATE TEMPORARY TABLE `airport_agent_src_agent_tracked_aircraft_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'TrackedAircraftEvent', '$.airport') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-tracked-aircraft-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-airport-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n)"
+  },
+  {
+   "kind": "view",
+   "agentId": "airport-agent",
+   "sql": "CREATE TEMPORARY VIEW `airport_agent_in` AS\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AirportInitializationEvent', '$.airport') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AirportInitializationEvent', '$.airport') AS `event_type`,\n  CAST('agent-airport-init-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AirportInitializationEvent', '$.airport') AS `payload`,\n  `event_ts`\nFROM `airport_agent_src_agent_airport_init_events`\nUNION ALL\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AirportEvent', '$.airport') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AirportEvent', '$.airport') AS `event_type`,\n  CAST('agent-airport-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AirportEvent', '$.airport') AS `payload`,\n  `event_ts`\nFROM `airport_agent_src_agent_airport_events`\nUNION ALL\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'TrackedAircraftEvent', '$.airport') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'TrackedAircraftEvent', '$.airport') AS `event_type`,\n  CAST('agent-tracked-aircraft-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'TrackedAircraftEvent', '$.airport') AS `payload`,\n  `event_ts`\nFROM `airport_agent_src_agent_tracked_aircraft_events`"
+  },
+  {
+   "kind": "view",
+   "agentId": "airport-agent",
+   "sql": "CREATE TEMPORARY VIEW `airport_agent_out` AS\nSELECT * FROM `event_rule_airport_agent`(\n    events => TABLE `airport_agent_in` PARTITION BY `entity_id`,\n    on_time => DESCRIPTOR(`event_ts`),\n    uid => 'agent-processor-airport-agent')"
+  },
+  {
+   "kind": "table",
+   "agentId": "airport-agent",
+   "sql": "CREATE TEMPORARY TABLE `airport_agent_sink_agent_atc_alerts` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-atc-alerts',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'airport_agent_sink_agent_atc_alerts'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "airport-agent",
+   "sql": "INSERT INTO `airport_agent_sink_agent_atc_alerts`\nSELECT `entity_id`, `envelope`\nFROM `airport_agent_out`\nWHERE `out_type` = 'Alert'"
+  },
+  {
+   "kind": "table",
+   "agentId": "airport-agent",
+   "sql": "CREATE TEMPORARY TABLE `airport_agent_sink_agent_atc_errors` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-atc-errors',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'airport_agent_sink_agent_atc_errors'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "airport-agent",
+   "sql": "INSERT INTO `airport_agent_sink_agent_atc_errors`\nSELECT `entity_id`, `envelope`\nFROM `airport_agent_out`\nWHERE `out_type` = 'agent-error'"
+  },
+  {
+   "kind": "table",
+   "agentId": "airport-agent",
+   "sql": "CREATE TEMPORARY TABLE `airport_agent_sink_changelog` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-airport-entity-changelog',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'airport_agent_sink_changelog'\n)"
+  },
+  {
+   "kind": "insert",
+   "agentId": "airport-agent",
+   "sql": "INSERT INTO `airport_agent_sink_changelog`\nSELECT `entity_id`, `envelope`\nFROM `airport_agent_out`\nWHERE `out_type` = 'entity-changelog'"
+  }
+ ],
+ "script": "CREATE TEMPORARY TABLE `aircraft_agent_src_agent_aircraft_init_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AircraftInitializationEvent', '$.aircraftId') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-aircraft-init-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-aircraft-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n);\n\nCREATE TEMPORARY TABLE `aircraft_agent_src_agent_aircraft_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AircraftEvent', '$.aircraftId') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-aircraft-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-aircraft-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n);\n\nCREATE TEMPORARY VIEW `aircraft_agent_in` AS\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AircraftInitializationEvent', '$.aircraftId') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AircraftInitializationEvent', '$.aircraftId') AS `event_type`,\n  CAST('agent-aircraft-init-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AircraftInitializationEvent', '$.aircraftId') AS `payload`,\n  `event_ts`\nFROM `aircraft_agent_src_agent_aircraft_init_events`\nUNION ALL\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AircraftEvent', '$.aircraftId') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AircraftEvent', '$.aircraftId') AS `event_type`,\n  CAST('agent-aircraft-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AircraftEvent', '$.aircraftId') AS `payload`,\n  `event_ts`\nFROM `aircraft_agent_src_agent_aircraft_events`;\n\nCREATE TEMPORARY VIEW `aircraft_agent_out` AS\nSELECT * FROM `event_rule_aircraft_agent`(\n    events => TABLE `aircraft_agent_in` PARTITION BY `entity_id`,\n    on_time => DESCRIPTOR(`event_ts`),\n    uid => 'agent-processor-aircraft-agent');\n\nCREATE TEMPORARY TABLE `aircraft_agent_sink_agent_tracked_aircraft_events` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-tracked-aircraft-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'aircraft_agent_sink_agent_tracked_aircraft_events'\n);\n\nCREATE TEMPORARY TABLE `aircraft_agent_sink_agent_atc_alerts` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-atc-alerts',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'aircraft_agent_sink_agent_atc_alerts'\n);\n\nCREATE TEMPORARY TABLE `aircraft_agent_sink_agent_atc_errors` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-atc-errors',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'aircraft_agent_sink_agent_atc_errors'\n);\n\nCREATE TEMPORARY TABLE `aircraft_agent_sink_changelog` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-aircraft-entity-changelog',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'aircraft_agent_sink_changelog'\n);\n\nCREATE TEMPORARY TABLE `airport_agent_src_agent_airport_init_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AirportInitializationEvent', '$.airport') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-airport-init-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-airport-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n);\n\nCREATE TEMPORARY TABLE `airport_agent_src_agent_airport_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'AirportEvent', '$.airport') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-airport-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-airport-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n);\n\nCREATE TEMPORARY TABLE `airport_agent_src_agent_tracked_aircraft_events` (\n  `raw` STRING,\n  `rec_ts` TIMESTAMP_LTZ(3) METADATA FROM 'timestamp',\n  `event_ts` AS COALESCE(TO_TIMESTAMP_LTZ(CAST(EVENT_FIELD(`raw`, 'ts', 'TrackedAircraftEvent', '$.airport') AS BIGINT), 3), `rec_ts`),\n  WATERMARK FOR `event_ts` AS `event_ts` - INTERVAL '5.000' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-tracked-aircraft-events',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'properties.group.id' = 'agent-airport-agent',\n  'properties.auto.offset.reset' = 'latest',\n  'scan.startup.mode' = 'group-offsets',\n  'format' = 'raw'\n);\n\nCREATE TEMPORARY VIEW `airport_agent_in` AS\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AirportInitializationEvent', '$.airport') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AirportInitializationEvent', '$.airport') AS `event_type`,\n  CAST('agent-airport-init-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AirportInitializationEvent', '$.airport') AS `payload`,\n  `event_ts`\nFROM `airport_agent_src_agent_airport_init_events`\nUNION ALL\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'AirportEvent', '$.airport') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'AirportEvent', '$.airport') AS `event_type`,\n  CAST('agent-airport-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'AirportEvent', '$.airport') AS `payload`,\n  `event_ts`\nFROM `airport_agent_src_agent_airport_events`\nUNION ALL\nSELECT\n  EVENT_FIELD(`raw`, 'entity_id', 'TrackedAircraftEvent', '$.airport') AS `entity_id`,\n  EVENT_FIELD(`raw`, 'event_type', 'TrackedAircraftEvent', '$.airport') AS `event_type`,\n  CAST('agent-tracked-aircraft-events' AS STRING) AS `source_topic`,\n  EVENT_FIELD(`raw`, 'payload', 'TrackedAircraftEvent', '$.airport') AS `payload`,\n  `event_ts`\nFROM `airport_agent_src_agent_tracked_aircraft_events`;\n\nCREATE TEMPORARY VIEW `airport_agent_out` AS\nSELECT * FROM `event_rule_airport_agent`(\n    events => TABLE `airport_agent_in` PARTITION BY `entity_id`,\n    on_time => DESCRIPTOR(`event_ts`),\n    uid => 'agent-processor-airport-agent');\n\nCREATE TEMPORARY TABLE `airport_agent_sink_agent_atc_alerts` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-atc-alerts',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'airport_agent_sink_agent_atc_alerts'\n);\n\nCREATE TEMPORARY TABLE `airport_agent_sink_agent_atc_errors` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-atc-errors',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'airport_agent_sink_agent_atc_errors'\n);\n\nCREATE TEMPORARY TABLE `airport_agent_sink_changelog` (\n  `k` STRING,\n  `v` STRING\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'agent-airport-entity-changelog',\n  'properties.bootstrap.servers' = 'localhost:9092',\n  'key.format' = 'raw',\n  'key.fields' = 'k',\n  'value.format' = 'raw',\n  'value.fields-include' = 'EXCEPT_KEY',\n  'sink.delivery-guarantee' = 'at-least-once',\n  'sink.transactional-id-prefix' = 'airport_agent_sink_changelog'\n);\n\nEXECUTE STATEMENT SET\nBEGIN\nINSERT INTO `aircraft_agent_sink_agent_tracked_aircraft_events`\nSELECT `entity_id`, `envelope`\nFROM `aircraft_agent_out`\nWHERE `out_type` = 'TrackedAircraftEvent';\nINSERT INTO `aircraft_agent_sink_agent_atc_alerts`\nSELECT `entity_id`, `envelope`\nFROM `aircraft_agent_out`\nWHERE `out_type` = 'Alert';\nINSERT INTO `aircraft_agent_sink_agent_atc_errors`\nSELECT `entity_id`, `envelope`\nFROM `aircraft_agent_out`\nWHERE `out_type` = 'agent-error';\nINSERT INTO `aircraft_agent_sink_changelog`\nSELECT `entity_id`, `envelope`\nFROM `aircraft_agent_out`\nWHERE `out_type` = 'entity-changelog';\nINSERT INTO `airport_agent_sink_agent_atc_alerts`\nSELECT `entity_id`, `envelope`\nFROM `airport_agent_out`\nWHERE `out_type` = 'Alert';\nINSERT INTO `airport_agent_sink_agent_atc_errors`\nSELECT `entity_id`, `envelope`\nFROM `airport_agent_out`\nWHERE `out_type` = 'agent-error';\nINSERT INTO `airport_agent_sink_changelog`\nSELECT `entity_id`, `envelope`\nFROM `airport_agent_out`\nWHERE `out_type` = 'entity-changelog';\nEND;\n"
+}

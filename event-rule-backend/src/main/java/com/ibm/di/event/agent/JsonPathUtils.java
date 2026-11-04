@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
  * <p>This class is the <strong>single authoritative implementation</strong> of the
  * entity-ID extraction logic used in two places:
  * <ol>
- *   <li>{@link AgentBasedDataStreamJob.EnvelopeDeserializer} — at Kafka deserialization time.</li>
+ *   <li>{@link com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob.EnvelopeDeserializer} — at Kafka deserialization time.</li>
  *   <li>{@link AgentChainBuilder.DeferredChainedInputs} — during chain envelope normalisation.</li>
  * </ol>
  *

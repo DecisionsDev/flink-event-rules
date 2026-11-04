@@ -187,7 +187,6 @@ describe('buildUseCaseDescriptor', () => {
       description:     'Custom description',
       icon:            'bank',
       topics:          [{ name: 'agent-transactions', type: 'Transaction', label: 'Txn', idleness: '30s' }],
-      outboundTopics:  [{ name: 'agent-fraud-alerts', type: 'Alert', label: 'Alerts' }],
       ...bankingAgents,
     };
     const d = fn('banking-fraud-agent', merged);
@@ -197,7 +196,32 @@ describe('buildUseCaseDescriptor', () => {
     expect(d.description).toBe('Custom description');
     expect(d.icon).toBe('bank');
     expect(d.topics).toEqual(merged.topics);
-    expect(d.outboundTopics).toEqual(merged.outboundTopics);
+  });
+
+  test('uses outputs[].label for the outbound label, falling back to description then eventType', () => {
+    const json = { agents: [{ agentId: 'a', subscriptions: [], ruleset: { path: '/tmp/a.jar' }, outputs: [
+      { eventType: 'Alert', topic: 't1', label: 'Alerts', description: 'Long description' },
+      { eventType: 'Info',  topic: 't2', description: 'Information' },
+      { eventType: 'Other', topic: 't3' },
+    ] }] };
+    const d = fn('x', json);
+    const label = n => d.outboundTopics.find(t => t.name === n).label;
+    expect(label('t1')).toBe('Alerts');
+    expect(label('t2')).toBe('Information');
+    expect(label('t3')).toBe('Other');
+  });
+
+  test('ignores a legacy top-level outboundTopics: outbound topics are always derived from the agents', () => {
+    const legacy = {
+      outboundTopics: [{ name: 'stale-topic', type: 'Alert', label: 'Stale' }],
+      ...bankingAgents,
+    };
+    const d = fn('banking-fraud-agent', legacy);
+    const outNames = d.outboundTopics.map(t => t.name);
+    expect(outNames).not.toContain('stale-topic');
+    expect(outNames).toEqual([
+      'agent-fraud-alerts', 'agent-banking-errors', 'agent-account-entity-changelog',
+    ]);
   });
 
   test('omits description and icon when agents.json does not declare them', () => {
@@ -747,5 +771,133 @@ describe('collectTopicsFromAgentsJson — changeLogTopic included (regression)',
       agents: [{ subscriptions: [], outputs: [], ruleset: {} }],
     };
     expect(() => fn(agentsJson)).not.toThrow();
+  });
+});
+
+// ── Flink runtime implementation options (BFF option) ─────────────────────────
+describe('Flink runtime implementation option (BFF option)', () => {
+  const { resolveFlinkEntryClass, getFlinkRuntime, setFlinkRuntime } = server;
+
+  test('resolveFlinkEntryClass resolves datastream by default', () => {
+    expect(resolveFlinkEntryClass('datastream')).toBe('com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob');
+    expect(resolveFlinkEntryClass('')).toBe('com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob');
+    expect(resolveFlinkEntryClass(null)).toBe('com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob');
+  });
+
+  test('resolveFlinkEntryClass resolves ptf and sql to AgentBasedPTFJob', () => {
+    expect(resolveFlinkEntryClass('ptf')).toBe('com.ibm.di.event.agent.ptf.AgentBasedPTFJob');
+    expect(resolveFlinkEntryClass('PTF')).toBe('com.ibm.di.event.agent.ptf.AgentBasedPTFJob');
+    expect(resolveFlinkEntryClass('sql')).toBe('com.ibm.di.event.agent.ptf.AgentBasedPTFJob');
+  });
+
+  test('setFlinkRuntime and getFlinkRuntime update and read the BFF option', () => {
+    expect(setFlinkRuntime('ptf')).toBe('ptf');
+    expect(getFlinkRuntime()).toBe('ptf');
+    expect(resolveFlinkEntryClass()).toBe('com.ibm.di.event.agent.ptf.AgentBasedPTFJob');
+
+    expect(setFlinkRuntime('datastream')).toBe('datastream');
+    expect(getFlinkRuntime()).toBe('datastream');
+    expect(resolveFlinkEntryClass()).toBe('com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob');
+  });
+
+  test('runtimeOfJobState returns the deployed runtime, DataStream for legacy states', () => {
+    const { runtimeOfJobState } = server;
+    expect(runtimeOfJobState({ jobId: 'j', runtime: 'ptf' })).toBe('ptf');
+    expect(runtimeOfJobState({ jobId: 'j', runtime: 'datastream' })).toBe('datastream');
+    // Persisted before the runtime selector existed: never the *current* global toggle.
+    setFlinkRuntime('ptf');
+    expect(runtimeOfJobState({ jobId: 'j' })).toBe('datastream');
+  });
+
+  test('setFlinkRuntime rejects invalid runtimes', () => {
+    expect(() => setFlinkRuntime('invalid')).toThrow("Invalid Flink runtime: must be 'datastream' or 'ptf'");
+  });
+});
+
+// ── generatePtfSql — PTF SQL view ─────────────────────────────────────────────
+// generatePtfSql(jarPath, descriptorPath, spawnFn) runs AgentBasedPTFJob in print-only
+// JSON mode and resolves with { script, statements } parsed from stdout.  spawnFn is injectable like in
+// invokeArchiveSampleGenerator, so no JVM is needed.
+describe('generatePtfSql', () => {
+  const fn = server.generatePtfSql;
+  const EventEmitter = require('events').EventEmitter;
+
+  function makeChild({ stdoutData = '', stderrData = '', exitCode = 0, signal = null } = {}) {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = jest.fn();
+    setImmediate(() => {
+      if (stdoutData) child.stdout.emit('data', Buffer.from(stdoutData));
+      if (stderrData) child.stderr.emit('data', Buffer.from(stderrData));
+      child.emit('close', exitCode, signal);
+    });
+    return child;
+  }
+
+  const okJson = JSON.stringify({
+    script: 'CREATE TEMPORARY VIEW `a_in` AS SELECT 1;\n',
+    statements: [{ kind: 'view', agentId: 'a', sql: 'CREATE TEMPORARY VIEW `a_in` AS SELECT 1;' }],
+  });
+
+  test('resolves with the script and statements parsed from stdout', async () => {
+    const spawn = jest.fn().mockReturnValue(makeChild({ stdoutData: okJson + '\n' }));
+    await expect(fn('/fake.jar', '/s/uc/agents.json', spawn)).resolves.toEqual({
+      script: 'CREATE TEMPORARY VIEW `a_in` AS SELECT 1;\n',
+      statements: [{ kind: 'view', agentId: 'a', sql: 'CREATE TEMPORARY VIEW `a_in` AS SELECT 1;' }],
+    });
+  });
+
+  test('rejects when stdout is not valid JSON', async () => {
+    const spawn = jest.fn().mockReturnValue(makeChild({ stdoutData: 'CREATE VIEW x AS SELECT 1;' }));
+    await expect(fn('/fake.jar', '/s/uc/agents.json', spawn)).rejects.toThrow(/invalid JSON/);
+  });
+
+  test('rejects when the JSON lacks script or statements', async () => {
+    const spawn = jest.fn().mockReturnValue(makeChild({ stdoutData: '{"script":"x"}' }));
+    await expect(fn('/fake.jar', '/s/uc/agents.json', spawn)).rejects.toThrow(/unexpected JSON shape/);
+  });
+
+  test('runs the PTF job in print-only mode with log output suppressed', async () => {
+    const spawn = jest.fn().mockReturnValue(makeChild({ stdoutData: okJson }));
+    await fn('/fake.jar', '/s/uc/agents.json', spawn);
+
+    const [cmd, args, opts] = spawn.mock.calls[0];
+    expect(cmd).toBe('java');
+    expect(args).toContain('-Dconsole.log.level=OFF');
+    expect(args).toContain('com.ibm.di.event.agent.ptf.AgentBasedPTFJob');
+    expect(args).toContain('/s/uc/agents.json');
+    expect(opts.env.PTF_PRINT_SQL).toBe('json');
+    // The open-source dialect is what the job runs, whatever the BFF environment says.
+    expect(opts.env.PTF_DIALECT).toBe('');
+    expect(opts.env.AGENT_DESCRIPTOR_PATH).toBe('/s/uc/agents.json');
+  });
+
+  test('rejects with the stderr text when the JVM exits non-zero', async () => {
+    const spawn = jest.fn().mockReturnValue(makeChild({ stderrData: 'Agent descriptor not found', exitCode: 1 }));
+    await expect(fn('/fake.jar', '/s/uc/agents.json', spawn)).rejects.toThrow(/exit 1: Agent descriptor not found/);
+  });
+
+  test('rejects when nothing is printed', async () => {
+    const spawn = jest.fn().mockReturnValue(makeChild({ stdoutData: '  \n' }));
+    await expect(fn('/fake.jar', '/s/uc/agents.json', spawn)).rejects.toThrow(/no output/);
+  });
+
+  test('rejects with the spawn error when Java is not on PATH', async () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const spawn = jest.fn().mockImplementation(() => {
+      setImmediate(() => child.emit('error', Object.assign(new Error('spawn java ENOENT'), { code: 'ENOENT' })));
+      return child;
+    });
+    await expect(fn('/fake.jar', '/s/uc/agents.json', spawn)).rejects.toThrow('spawn java ENOENT');
+  });
+
+  test('kills the process and rejects when the output is unreasonably large', async () => {
+    const child = makeChild({ stdoutData: 'x'.repeat(2 * 1024 * 1024 + 1), exitCode: 0 });
+    const spawn = jest.fn().mockReturnValue(child);
+    await expect(fn('/fake.jar', '/s/uc/agents.json', spawn)).rejects.toThrow(/exceeds/);
+    expect(child.kill).toHaveBeenCalled();
   });
 });

@@ -137,7 +137,7 @@ docker exec \
   "${FLINK_CONTAINER}" \
   /opt/flink/bin/flink run -d \
     -m localhost:8081 \
-    -c com.ibm.di.event.agent.AgentBasedDataStreamJob \
+    -c com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob \
     "${CONTAINER_JAR}" \
     "${BOOTSTRAP}" \
     "${CONTAINER_DESCRIPTOR}"

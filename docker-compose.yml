@@ -224,6 +224,8 @@ services:
       FLINK_URL: http://jobmanager:8081
       JAR_PATH: /app/flink-jars/event-rule-backend-1.0-SNAPSHOT.jar
       DI_RUNTIMES: ${DI_RUNTIMES:-}
+      # Must match the Flink containers: it changes the PTF SQL the BFF generates for the SQL view.
+      CHAINING_ENABLED: ${CHAINING_ENABLED:-false}
     ports:
       - "8080:8080"
     volumes:

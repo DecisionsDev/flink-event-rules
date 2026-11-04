@@ -1,0 +1,1148 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Agent Diagram Editor
+   Follows the same design language as UseCaseSelector.css (di-* classes) and
+   App.css (--surface / --border / --text / --accent token set).
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Full-screen wrapper ────────────────────────────────────────────────────
+   Mirrors how AgentWizard takes over the full viewport.                       */
+.ade-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg, #f4f6f9);
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.875rem;
+  color: var(--text, #1f2328);
+}
+
+/* ── Header — reuse the di-header dark shell exactly ──────────────────────── */
+/* (di-header + di-header-left + di-header-right + di-header-action are
+   already defined in UseCaseSelector.css and loaded globally, so we only
+   need the editor-specific title piece here.)                                  */
+
+.ade-header-sep {
+  color: #525252;
+  font-size: 0.875rem;
+  margin: 0 6px;
+}
+
+.ade-header-page {
+  font-size: 0.875rem;
+  color: #ffffff;
+  font-weight: 400;
+}
+
+/* Close/Save buttons in header — follow di-btn-primary pattern */
+.ade-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: #c6c6c6;
+  border: 1px solid #525252;
+  padding: 0 14px;
+  height: 32px;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  letter-spacing: 0.16px;
+  white-space: nowrap;
+  border-radius: 0;
+}
+.ade-header-btn:hover {
+  background: #393939;
+  color: #ffffff;
+  border-color: #6f6f6f;
+}
+.ade-header-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Primary action (Close Editor) */
+.ade-header-btn--primary {
+  background: var(--cds-button-primary, #0f62fe);
+  color: #ffffff;
+  border-color: var(--cds-button-primary, #0f62fe);
+}
+.ade-header-btn--primary:hover {
+  background: var(--cds-button-primary-hover, #0353e9);
+  border-color: var(--cds-button-primary-hover, #0353e9);
+}
+
+/* Save button in header */
+.ade-header-btn--save {
+  background: var(--cds-button-primary, #0f62fe);
+  color: #ffffff;
+  border-color: var(--cds-button-primary, #0f62fe);
+}
+.ade-header-btn--save:hover:not(:disabled) {
+  background: var(--cds-button-primary-hover, #0353e9);
+  border-color: var(--cds-button-primary-hover, #0353e9);
+}
+.ade-header-btn--save.ade-header-btn--saved {
+  background: #198038;
+  border-color: #198038;
+  color: #ffffff;
+}
+.ade-header-btn--save.ade-header-btn--error {
+  background: #da1e28;
+  border-color: #da1e28;
+  color: #ffffff;
+}
+
+.ade-header-error {
+  color: #fa4d56;
+  font-size: 0.75rem;
+  margin-right: 8px;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Toolbar — mirrors di-toolbar-bar (48 px, white, bottom border) ───────── */
+.ade-toolbar {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 1rem;
+  background: var(--surface, #ffffff);
+  border-bottom: 1px solid var(--cds-border-subtle, #e0e0e0);
+  flex-shrink: 0;
+}
+
+.ade-toolbar-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--cds-border-subtle, #e0e0e0);
+  margin: 0 6px;
+}
+
+/* Toolbar ghost button — agent-mgmt-btn-ghost style */
+.ade-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  height: 32px;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--text-muted, #57606a);
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+  letter-spacing: 0.16px;
+}
+.ade-tool-btn:hover {
+  background: var(--surface-alt, #f8fafc);
+  border-color: var(--accent-border, #bfdbfe);
+  color: var(--text, #1f2328);
+}
+.ade-tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ade-tool-btn--danger {
+  color: var(--red, #b91c1c);
+  border-color: var(--red-border, #fca5a5);
+  background: var(--red-soft, #fef2f2);
+}
+.ade-tool-btn--danger:hover {
+  background: #fecaca;
+  border-color: var(--red, #b91c1c);
+  color: var(--red, #b91c1c);
+}
+
+.ade-zoom-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted, #57606a);
+  min-width: 38px;
+  text-align: center;
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+}
+
+/* ── Body: palette | canvas | splitter | detail ───────────────────────────── */
+.ade-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Palette panel — matches the style of the left side-panel in dashboard ── */
+.ade-palette {
+  width: 192px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #ffffff);
+  border-right: 1px solid var(--border, #e5e7eb);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.ade-palette-title {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--text-faint, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 12px 12px 4px;
+}
+
+.ade-palette-section {
+  padding: 2px 8px 10px;
+}
+
+.ade-palette-section-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-faint, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 4px 4px;
+}
+
+/* Palette drag item — follows di-agent-card / esp-entity-chip shape */
+.ade-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border, #e5e7eb);
+  background: var(--surface-alt, #f8fafc);
+  margin-bottom: 4px;
+  cursor: grab;
+  font-size: 0.8125rem;
+  color: var(--text, #1f2328);
+  user-select: none;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.ade-palette-item:hover {
+  background: var(--surface, #ffffff);
+  border-color: var(--accent-border, #bfdbfe);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.07));
+}
+.ade-palette-item:active {
+  cursor: grabbing;
+}
+
+.ade-palette-item-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm, 6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+/* Node type accent colours — Carbon-aligned */
+.ade-palette-item--topic        .ade-palette-item-icon { background: #0043ce; }
+.ade-palette-item--agent        .ade-palette-item-icon { background: #198038; }
+.ade-palette-item--entity       .ade-palette-item-icon { background: #6929c4; }
+.ade-palette-item--outbound     .ade-palette-item-icon                        { background: #9f1853; }
+
+.ade-palette-item-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text, #1f2328);
+  line-height: 1.2;
+}
+
+.ade-palette-item-hint {
+  font-size: 0.6875rem;
+  color: var(--text-faint, #9ca3af);
+  margin-top: 1px;
+}
+
+/* ── Canvas area ────────────────────────────────────────────────────────────── */
+.ade-canvas-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* Dashed outline when a draggable is over the canvas */
+.ade-canvas-drop-active {
+  outline: 2px dashed var(--accent, #2563eb);
+  outline-offset: -4px;
+}
+/* Empty-diagram hint: centred over the canvas. The wrapper lets palette drags through to the
+   canvas; only the zip drop zone captures events. */
+.ade-empty-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  pointer-events: none;
+}
+.ade-empty-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text, #1f2328);
+}
+.ade-empty-text {
+  margin: 0;
+  max-width: 600px;
+  color: var(--text-muted, #57606a);
+  line-height: 1.5;
+}
+.ade-empty-dropzone {
+  pointer-events: auto;
+  margin-top: 8px;
+  width: 420px;
+  max-width: 100%;
+  padding: 24px 16px;
+  border: 2px dashed var(--border-strong, #c1c7cd);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface, #fff);
+  color: var(--text-muted, #57606a);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ade-empty-dropzone:hover,
+.ade-empty-dropzone:focus-visible {
+  border-color: var(--accent, #2563eb);
+  background: var(--accent-soft, #eff6ff);
+  outline: none;
+}
+.ade-empty-dropzone--over {
+  border-color: #198038;
+  background: #defbe6;
+  color: #198038;
+}
+
+
+
+/* ── Resizable splitter between canvas and detail panel ─────────────────────
+   Matches .dashboard-splitter in App.css exactly.                              */
+.ade-splitter {
+  width: 6px;
+  flex-shrink: 0;
+  background: var(--border, #e5e7eb);
+  cursor: col-resize;
+  position: relative;
+  transition: background 0.15s;
+}
+.ade-splitter:hover,
+.ade-splitter--dragging {
+  background: var(--accent-border, #bfdbfe);
+}
+/* Grab-handle dot, same as .dashboard-splitter::after */
+.ade-splitter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 32px;
+  border-radius: 2px;
+  background: var(--border, #e5e7eb);
+  pointer-events: none;
+}
+.ade-splitter:hover::after {
+  background: var(--accent, #2563eb);
+}
+
+/* ── Detail panel — matches .esp-panel shape ────────────────────────────────── */
+.ade-detail {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #ffffff);
+  border-left: 1px solid var(--border, #e5e7eb);
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.04);
+}
+
+.ade-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  flex-shrink: 0;
+  background: var(--surface, #ffffff);
+  min-height: 48px;
+}
+
+.ade-detail-title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--text, #1f2328);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Type badge — mirrors .esp-type-badge style */
+.ade-detail-type-badge {
+  display: inline-block;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+.ade-detail-type-badge--topic { color: #0043ce; background: #edf5ff; border-color: #d0e2ff; }
+.ade-detail-type-badge--agent        { color: #198038; background: #defbe6; border-color: #a7f0ba; }
+.ade-detail-type-badge--entity       { color: #6929c4; background: #f6f2ff; border-color: #d4bbff; }
+.ade-detail-type-badge--outbound     { color: #9f1853; background: #fff0f7; border-color: #ffd6e8; }
+
+/* Close button — mirrors .esp-close */
+.ade-detail-close,
+.ade-detail-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--text-muted, #57606a);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.ade-detail-close:hover {
+  background: var(--surface-alt, #f8fafc);
+  border-color: var(--border, #e5e7eb);
+}
+.ade-detail-delete:hover {
+  background: #fff1f1;
+  border-color: #ffd7d7;
+  color: #da1e28;
+}
+
+.ade-detail-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+/* Empty state — mirrors .esp-empty */
+.ade-detail-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+.ade-detail-empty-icon {
+  color: var(--text-faint, #9ca3af);
+  line-height: 1;
+}
+.ade-detail-empty-text {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-muted, #57606a);
+}
+.ade-detail-empty-hint {
+  font-size: 0.75rem;
+  color: var(--text-faint, #9ca3af);
+  max-width: 22ch;
+}
+
+/* ── Form fields in the detail panel ───────────────────────────────────────── */
+.ade-field-group {
+  margin-bottom: 1rem;
+}
+
+/* Section divider title — mirrors .esp-section-title */
+.ade-field-section-title {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint, #9ca3af);
+  margin: 1.25rem 0 0.5rem;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft, #f0f2f5);
+}
+
+/* Label — mirrors .scenario-editor-label */
+.ade-field-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted, #57606a);
+  margin-bottom: 4px;
+  letter-spacing: 0.03em;
+}
+
+/* Input — mirrors .scenario-new-input */
+.ade-field-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 6px);
+  font-size: 0.875rem;
+  font-family: inherit;
+  color: var(--text, #1f2328);
+  background: var(--surface-alt, #f8fafc);
+  box-sizing: border-box;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+  outline: none;
+}
+.ade-field-input:focus {
+  border-color: var(--accent, #2563eb);
+  background: var(--surface, #ffffff);
+  box-shadow: 0 0 0 3px var(--accent-soft, #eff6ff);
+}
+.ade-field-textarea {
+  resize: vertical;
+  min-height: 64px;
+  line-height: 1.5;
+}
+
+/* Hint text below label — smaller, muted */
+.ade-field-hint {
+  font-size: 0.6875rem;
+  color: var(--text-faint, #9ca3af);
+  margin-bottom: 5px;
+  line-height: 1.4;
+}
+
+/* Prefix input wrapper (e.g. "samples/" + text box) */
+.ade-field-prefix-wrap {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 6px);
+  overflow: hidden;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.ade-field-prefix-wrap:focus-within {
+  border-color: var(--accent, #2563eb);
+  box-shadow: 0 0 0 3px var(--accent-soft, #eff6ff);
+}
+
+.ade-field-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--surface-alt, #f8fafc);
+  border-right: 1px solid var(--border, #e5e7eb);
+  font-size: 0.75rem;
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  color: var(--text-faint, #9ca3af);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.ade-field-input--prefixed {
+  border: none;
+  border-radius: 0;
+  background: var(--surface-alt, #f8fafc);
+  flex: 1;
+  min-width: 0;
+}
+.ade-field-input--prefixed:focus {
+  border: none;
+  box-shadow: none;
+  background: var(--surface, #ffffff);
+}
+.ade-field-prefix-wrap:focus-within .ade-field-prefix {
+  background: var(--surface, #ffffff);
+  border-right-color: var(--accent-border, #bfdbfe);
+  color: var(--text-muted, #57606a);
+}
+
+/* ── React Flow custom node styles ─────────────────────────────────────────── */
+/* Nodes mirror the .di-agent-card / .esp-panel shape:
+   white card, 1 px border, rounded corners, shadow.                            */
+
+.ade-node {
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-md, 10px);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.07));
+  font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+  min-width: 180px;
+  overflow: visible;
+}
+.ade-node:hover {
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.08));
+  border-color: var(--accent-border, #bfdbfe);
+}
+
+/* Selected ring — like a focused card */
+.ade-node--selected,
+.ade-node.selected {
+  box-shadow: 0 0 0 2px var(--accent, #2563eb), var(--shadow-md, 0 4px 12px rgba(0,0,0,0.08));
+  border-color: var(--accent, #2563eb);
+}
+
+/* Left-edge accent stripe by type — matches di-agent-card running/failed pattern */
+.ade-node--topic { border-left: 3px solid #0043ce; }
+.ade-node--agent        { border-left: 3px solid #198038; min-width: 210px; }
+.ade-node--entity       { border-left: 3px solid #6929c4; }
+.ade-node--outbound     { border-left: 3px solid #9f1853; }
+
+/* Node header pill — replaces the big colored block with a compact type label */
+.ade-node-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 4px;
+}
+
+.ade-node-type-badge {
+  display: inline-block;
+  font-size: 0.625rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ade-node--topic .ade-node-type-badge { color: #0043ce; background: #edf5ff; border-color: #d0e2ff; }
+.ade-node--agent        .ade-node-type-badge { color: #198038; background: #defbe6; border-color: #a7f0ba; }
+.ade-node--entity       .ade-node-type-badge { color: #6929c4; background: #f6f2ff; border-color: #d4bbff; }
+.ade-node--outbound     .ade-node-type-badge { color: #9f1853; background: #fff0f7; border-color: #ffd6e8; }
+
+.ade-node-body {
+  padding: 4px 10px 8px;
+}
+
+/* Main label — mirrors .agent-scenario-name */
+.ade-node-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text, #1f2328);
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Secondary monospace id line */
+.ade-node-id {
+  font-size: 0.6875rem;
+  color: var(--text-faint, #9ca3af);
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+
+/* Sub-rows (subscription/outbound slots inside an agent node) */
+.ade-node-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 0;
+  border-top: 1px solid var(--border-soft, #f0f2f5);
+  position: relative;
+  gap: 6px;
+}
+
+.ade-node-row-label {
+  font-size: 0.75rem;
+  color: var(--text-muted, #57606a);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Tiny pill badge — mirrors .agent-mgmt-runtime-badge */
+.ade-node-row-badge {
+  font-size: 0.625rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #0043ce;
+  background: #edf5ff;
+  border: 1px solid #d0e2ff;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+/* ── Agent node: JAR file indicator ─────────────────────────────────────────── */
+.ade-node-jar-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0 2px;
+  border-top: 1px solid var(--border-soft, #f0f2f5);
+  color: #198038;
+}
+
+.ade-node-jar-name {
+  font-size: 0.6875rem;
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  color: #198038;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+/* ── Edge label (placed above the first horizontal run of the link) ─────────── */
+.ade-edge-label {
+  position: absolute;
+  pointer-events: none;
+  font-size: 10px;
+  line-height: 1.2;
+  color: #525252;
+  white-space: nowrap;
+}
+
+/* ── Agent node: operation sub nodes ─────────────────────────────────────────── */
+.ade-node-ops {
+  border-top: 1px solid var(--border-soft, #f0f2f5);
+  padding: 4px 0 2px;
+}
+.ade-subnode {
+  position: relative;            /* anchors the left/right handles to the sub node */
+  margin: 4px -10px 0;           /* stretch to the agent node's edges (body padding is 10px) */
+  padding: 5px 14px;
+  background: #f4fbf6;
+  border-top: 1px solid #a7f0ba;
+  border-bottom: 1px solid #a7f0ba;
+}
+.ade-subnode {
+  cursor: pointer;
+}
+.ade-subnode:hover { background: #e9f8ee; }
+.ade-subnode--selected {
+  background: #defbe6;
+  box-shadow: inset 0 0 0 2px #198038;
+}
+
+/* Operation editor: history / outbounds pair rows */
+.ade-pair-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.ade-pair-row .ade-field-input { padding: 5px 7px; font-size: 0.75rem; min-width: 0; }
+.ade-ref-row { grid-template-columns: 1fr 1fr auto auto; }
+.ade-pair-add.ade-ref-browse { margin-top: 0; }
+.ade-pair-remove,
+.ade-pair-add {
+  border: 1px solid var(--border, #e5e7eb);
+  background: var(--surface, #fff);
+  color: var(--text-muted, #57606a);
+  border-radius: var(--radius-sm, 6px);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.ade-pair-remove { padding: 0 8px; }
+.ade-pair-add { padding: 4px 10px; margin-top: 2px; }
+.ade-pair-remove:hover,
+.ade-pair-add:hover { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); }
+
+.ade-subnode-name {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  color: #198038;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Agent node: decision service operations / classes ──────────────────────── */
+.ade-node-ds {
+  border-top: 1px solid var(--border-soft, #f0f2f5);
+  padding: 4px 0 2px;
+}
+.ade-node-ds-title {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #57606a);
+  margin-top: 2px;
+}
+.ade-node-ds-list {
+  list-style: none;
+  margin: 2px 0 4px;
+  padding: 0;
+  max-height: 110px;
+  overflow-y: auto;
+}
+.ade-node-ds-item {
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+.ade-node-ds-class {
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  color: var(--text, #1f2328);
+}
+.ade-node-ds-label {
+  color: var(--text-muted, #57606a);
+}
+.ade-field-error {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: #da1e28;
+}
+
+/* ── Rule JAR file picker in detail panel ────────────────────────────────────── */
+.ade-jar-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-alt, #f8fafc);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+  min-height: 36px;
+}
+.ade-jar-dropzone:hover {
+  border-color: var(--accent-border, #bfdbfe);
+  background: var(--accent-soft, #eff6ff);
+}
+.ade-jar-dropzone--over {
+  border-color: #198038;
+  background: #defbe6;
+  box-shadow: 0 0 0 3px rgba(25, 128, 56, 0.12);
+}
+.ade-jar-dropzone--set {
+  border-style: solid;
+  border-color: #a7f0ba;
+  background: #defbe6;
+}
+.ade-jar-dropzone--set:hover {
+  border-color: #198038;
+  background: #b8f5c8;
+}
+
+.ade-jar-icon {
+  flex-shrink: 0;
+  color: var(--text-faint, #9ca3af);
+}
+.ade-jar-dropzone--set .ade-jar-icon,
+.ade-jar-dropzone--over .ade-jar-icon {
+  color: #198038;
+}
+
+.ade-jar-filename {
+  flex: 1;
+  font-size: 0.8125rem;
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  color: #198038;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ade-jar-placeholder {
+  flex: 1;
+  font-size: 0.8125rem;
+  color: var(--text-faint, #9ca3af);
+  font-style: italic;
+}
+
+.ade-jar-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-faint, #9ca3af);
+  font-size: 0.875rem;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  border-radius: 3px;
+  transition: color 0.12s, background 0.12s;
+}
+.ade-jar-clear:hover {
+  color: var(--red, #b91c1c);
+  background: var(--red-soft, #fef2f2);
+}
+
+/* ── Override ReactFlow built-in controls (position only, keep Carbon feel) ── */
+.react-flow__controls {
+  box-shadow: var(--shadow-sm) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  border-bottom: 1px solid var(--border-soft) !important;
+  background: var(--surface) !important;
+  color: var(--text-muted) !important;
+}
+.react-flow__controls-button:hover {
+  background: var(--surface-alt) !important;
+  color: var(--text) !important;
+}
+
+/* ── Agent node: operation-less links ("history only" / "other outputs") ─────── */
+.ade-subnode--aux {
+  background: #f8f8f8;
+  border-color: #e0e0e0;
+  cursor: default;
+}
+.ade-subnode--aux:hover { background: #f8f8f8; }
+.ade-subnode--aux .ade-subnode-name { color: #6f6f6f; font-style: italic; }
+
+/* Detail panel: repeated groups (enrichments, topic-less subscriptions) */
+.ade-card {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  padding: 8px 8px 2px;
+  margin-bottom: 8px;
+  background: #fafafa;
+}
+.ade-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #525252;
+}
+.ade-op-chip {
+  display: inline-block;
+  margin: 0 4px 4px 0;
+  padding: 2px 8px;
+  border: 1px solid #a7f0ba;
+  border-radius: 10px;
+  background: #defbe6;
+  color: #198038;
+  font-size: 0.75rem;
+}
+.ade-op-chip-remove {
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.ade-op-chip-remove:hover { opacity: 1; }
+
+/* Descriptor problems */
+.ade-header-btn--warn { color: #f1c21b; border-color: #f1c21b; }
+.ade-problems {
+  margin: 0;
+  padding: 8px 16px 8px 32px;
+  max-height: 140px;
+  overflow: auto;
+  background: #fff8e1;
+  border-bottom: 1px solid #f1c21b;
+  font-size: 0.75rem;
+  color: #161616;
+}
+
+/* ── Carbon Confirmation Modal (Clear diagram) ────────────────────────── */
+.ade-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(22, 22, 22, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  padding: 1rem;
+  animation: ade-fade-in 0.15s cubic-bezier(0, 0, 0.38, 0.9);
+}
+
+@keyframes ade-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ade-confirm-modal {
+  background-color: var(--cds-layer-01, #ffffff);
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 12px 24px 0 rgba(0, 0, 0, 0.24);
+  border-radius: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  color: var(--cds-text-primary, #161616);
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  animation: ade-modal-slide 0.2s cubic-bezier(0, 0, 0.38, 0.9);
+}
+
+@keyframes ade-modal-slide {
+  from {
+    transform: translateY(-12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.ade-confirm-header {
+  padding: 1rem 3rem 0 1rem;
+  position: relative;
+}
+
+.ade-confirm-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.34;
+  letter-spacing: 0.32px;
+  color: var(--cds-text-secondary, #525252);
+  margin-bottom: 0.25rem;
+}
+
+.ade-confirm-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--cds-text-primary, #161616);
+  margin: 0;
+}
+
+.ade-confirm-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--cds-text-primary, #161616);
+  transition: background-color 0.15s;
+}
+
+.ade-confirm-close:hover {
+  background-color: #e8e8e8;
+}
+
+.ade-confirm-close:focus {
+  outline: 2px solid var(--cds-link-primary, #0f62fe);
+  outline-offset: -2px;
+}
+
+.ade-confirm-body {
+  padding: 1rem 1rem 2.5rem 1rem;
+}
+
+.ade-confirm-text {
+  font-size: 0.875rem;
+  line-height: 1.43;
+  color: var(--cds-text-secondary, #525252);
+  margin: 0;
+}
+
+.ade-confirm-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  height: 64px;
+  margin-top: auto;
+}
+
+.ade-confirm-btn {
+  border: none;
+  font-size: 0.875rem;
+  font-family: inherit;
+  font-weight: 400;
+  letter-spacing: 0.16px;
+  padding: 0 1rem;
+  height: 100%;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+  border-radius: 0;
+}
+
+.ade-confirm-btn--secondary {
+  background-color: #393939;
+  color: #ffffff;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.ade-confirm-btn--secondary:hover {
+  background-color: #4c4c4c;
+}
+
+.ade-confirm-btn--secondary:active {
+  background-color: #6f6f6f;
+}
+
+.ade-confirm-btn--secondary:focus {
+  outline: 2px solid var(--cds-link-primary, #0f62fe);
+  outline-offset: -2px;
+}
+
+.ade-confirm-btn--danger {
+  background-color: var(--cds-button-danger, #da1e28);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ade-confirm-btn--danger:hover {
+  background-color: var(--cds-button-danger-hover, #ba1b23);
+}
+
+.ade-confirm-btn--danger:active {
+  background-color: var(--cds-button-danger-active, #750e13);
+}
+
+.ade-confirm-btn--danger:focus {
+  outline: 2px solid var(--cds-link-primary, #0f62fe);
+  outline-offset: -2px;
+}

@@ -6,6 +6,8 @@ import NotificationContainer from './NotificationContainer';
 import JsonCardRenderer from './JsonCardRenderer';
 import ProcessingErrorCard from './ProcessingErrorCard';
 import DecisionResultCard from './DecisionResultCard';
+import UseCaseSelector from './UseCaseSelector';
+import SendEventsPanel from './SendEventsPanel';
 
 describe('Frontend Component Regression Suite', () => {
   describe('NotificationToast & NotificationContainer', () => {
@@ -126,6 +128,141 @@ describe('Frontend Component Regression Suite', () => {
       expect(screen.getByText(/DEC-001/i)).toBeInTheDocument();
       expect(screen.getByText(/SUSPICIOUS_TRANSACTION/i)).toBeInTheDocument();
       expect(screen.getByText(/Velocity exceeded/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('UseCaseSelector Flink Runtime Radio Box', () => {
+    test('renders radio box with DataStream and Process Table Function options and triggers callback on change', () => {
+      const onFlinkRuntimeChange = vi.fn();
+      render(
+        <UseCaseSelector
+          onSelectUseCase={vi.fn()}
+          onCreateDescriptor={vi.fn()}
+          onEditAgent={vi.fn()}
+          onEditSpecificAgent={vi.fn()}
+          onAddAgentToJob={vi.fn()}
+          onDeleteAgent={vi.fn()}
+          onDeleteSpecificAgent={vi.fn()}
+          refreshToken={0}
+          flinkRuntime="datastream"
+          onFlinkRuntimeChange={onFlinkRuntimeChange}
+        />
+      );
+
+      const datastreamRadio = screen.getByLabelText(/DataStream/i);
+      const ptfRadio = screen.getByLabelText(/Process Table Function/i);
+
+      expect(datastreamRadio).toBeInTheDocument();
+      expect(ptfRadio).toBeInTheDocument();
+      expect(datastreamRadio).toBeChecked();
+      expect(ptfRadio).not.toBeChecked();
+
+      fireEvent.click(ptfRadio);
+      expect(onFlinkRuntimeChange).toHaveBeenCalledWith('ptf');
+    });
+
+    test('checks PTF radio when flinkRuntime is ptf', () => {
+      render(
+        <UseCaseSelector
+          onSelectUseCase={vi.fn()}
+          onCreateDescriptor={vi.fn()}
+          onEditAgent={vi.fn()}
+          onEditSpecificAgent={vi.fn()}
+          onAddAgentToJob={vi.fn()}
+          onDeleteAgent={vi.fn()}
+          onDeleteSpecificAgent={vi.fn()}
+          refreshToken={0}
+          flinkRuntime="ptf"
+          onFlinkRuntimeChange={vi.fn()}
+        />
+      );
+
+      const datastreamRadio = screen.getByLabelText(/DataStream/i);
+      const ptfRadio = screen.getByLabelText(/Process Table Function/i);
+
+      expect(datastreamRadio).not.toBeChecked();
+      expect(ptfRadio).toBeChecked();
+    });
+  });
+
+  describe('SendEventsPanel Redeploying Message', () => {
+    test('displays redeploying message expecting 20-30s when Run Scenario is pressed in PTF mode', async () => {
+      const mockScenarios = [
+        {
+          id: 'scenario-1',
+          label: 'Test Scenario',
+          description: 'A test scenario description',
+          events: [{ type: 'flight-event', topic: 'airline-events', payload: { flightId: 'AF123' } }],
+        },
+      ];
+
+      const mockDescriptor = {
+        name: 'airline-agent',
+        topics: [{ type: 'flight-event', name: 'airline-events' }],
+        outboundTopics: [],
+      };
+
+      let resolveRedeploy;
+      const redeployPromise = new Promise(resolve => {
+        resolveRedeploy = resolve;
+      });
+
+      global.fetch = vi.fn((url) => {
+        if (url.includes('/scenarios')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(mockScenarios),
+          });
+        }
+        if (url.includes('/redeploy')) {
+          return redeployPromise.then(() => ({
+            ok: true,
+            json: () => Promise.resolve({ redeployed: true }),
+          }));
+        }
+        if (url.includes('/reset-topics') || url.includes('/reset-entities') || url.includes('/events')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ ok: true, count: 1 }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+
+      render(
+        <SendEventsPanel
+          useCase="airline-agent"
+          descriptor={mockDescriptor}
+          flinkRuntime="ptf"
+          onBeforeRun={vi.fn()}
+        />
+      );
+
+      // Wait for scenarios to load
+      const scenarioCard = await screen.findByText('Test Scenario');
+      expect(scenarioCard).toBeInTheDocument();
+
+      // Click to select the scenario
+      fireEvent.click(scenarioCard);
+
+      // Find the "Run Scenario" button
+      const runBtn = await screen.findByRole('button', { name: /run scenario/i });
+      expect(runBtn).toBeInTheDocument();
+
+      // Click "Run Scenario"
+      await act(async () => {
+        fireEvent.click(runBtn);
+      });
+
+      // Verify redeploying message is displayed on the left panel
+      expect(screen.getByText(/Job is redeploying, expecting to take 20–30s/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^redeploying…$/i })).toBeInTheDocument();
+      expect(screen.getByText('redeploying…')).toBeInTheDocument();
+
+      // Resolve redeployment
+      await act(async () => {
+        resolveRedeploy();
+      });
     });
   });
 });

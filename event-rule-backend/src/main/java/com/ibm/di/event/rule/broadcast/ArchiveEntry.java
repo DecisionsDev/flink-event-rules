@@ -35,7 +35,7 @@ import java.io.Serializable;
  * processed.
  *
  * <p>{@link #previousEntry} records the archive that was active <em>before</em>
- * this one was loaded.  It is used by {@link com.ibm.di.event.agent.StatefulAgentProcessor}
+ * this one was loaded.  It is used by {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor}
  * to satisfy a {@code ROLLBACK} command that does not supply an explicit URL and
  * SHA-256 — the processor can re-activate the previous version without any
  * external bookkeeping by the caller.

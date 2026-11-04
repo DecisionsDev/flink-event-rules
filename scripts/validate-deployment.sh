@@ -177,8 +177,9 @@ validate_infrastructure() {
 #
 # Each use case is described by a single agents.json file: the agents themselves
 # (loaded by AgentBasedDataStreamJob via AGENT_DESCRIPTOR_PATH) plus the top-level
-# BFF metadata (name, flinkJobName, topics, outboundTopics — used by the BFF for
-# tile-visibility and topic discovery).
+# BFF metadata (name, flinkJobName, topics — used by the BFF for tile-visibility and
+# topic discovery). Outbound topics are not declared: they are derived from the agents'
+# outputs[].topic and stateConfig.changeLogTopic.
 # Reload is handled via broadcast-reload.sh (Kafka broadcast state).
 
 validate_use_case() {
@@ -218,11 +219,11 @@ for t in data.get('topics', []):
 " 2>/dev/null)
     fi
 
-    # Outbound topics (top-level outboundTopics array in agents.json)
+    # Outbound topics (derived from agents[].outputs[].topic and agents[].stateConfig.changeLogTopic)
     local outbound_topics=()
     if command -v jq &>/dev/null; then
         while IFS= read -r t; do [[ -n "$t" ]] && outbound_topics+=("$t"); done \
-            < <(jq -r '.outboundTopics[]?.name' "$descriptor_path" 2>/dev/null)
+            < <(jq -r '[.agents[]? | ((.outputs[]?.topic), .stateConfig.changeLogTopic)] | map(select(. != null and . != "")) | unique[]' "$descriptor_path" 2>/dev/null)
     fi
 
     if [[ -n "$display_name" ]]; then
@@ -246,7 +247,7 @@ for t in data.get('topics', []):
     if [[ ${#outbound_topics[@]} -gt 0 ]]; then
         success "Outbound topics  : ${outbound_topics[*]}"
     else
-        warning "No outbound topics in descriptor (outboundTopics array missing or empty)"
+        warning "No outbound topics in descriptor (no agent declares outputs[].topic)"
     fi
 
     info "Consumer group   : ${consumer_group:-<not set>}"

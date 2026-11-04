@@ -322,7 +322,7 @@ public class AgentChainBuilder {
      *       updater see the expected topic (fixes F-2).</li>
      * </ul>
      */
-    record EdgeSpec(String upstreamAgentId,
+    public record EdgeSpec(String upstreamAgentId,
                     String eventType,
                     String downstreamEntityKeyExtractor,
                     String downstreamSubscriptionTopic) {}
@@ -386,7 +386,7 @@ public class AgentChainBuilder {
         /**
          * Returns the set of event types that arrive via chain edges for {@code agentId}.
          *
-         * <p>Used by {@link AgentBasedDataStreamJob#wireAgent} to suppress Kafka sources
+         * <p>Used by {@link com.ibm.di.event.agent.datastream.AgentBasedDataStreamJob#wireAgent} to suppress Kafka sources
          * for subscriptions that are already covered by an incoming chain, avoiding
          * duplicate event delivery (one copy via chain + one via Kafka round-trip).
          *
@@ -419,7 +419,7 @@ public class AgentChainBuilder {
          *   <li><b>sourceTopic correction (F-2)</b> — the envelope's {@code sourceTopic}
          *       is set to the downstream agent's configured subscription topic for this
          *       event type.  This ensures the downstream's
-         *       {@link StatefulAgentProcessor#resolveOperation} topic-match arm finds
+         *       {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor#resolveOperation} topic-match arm finds
          *       the correct subscription, and that output envelopes carry the expected
          *       provenance topic rather than the upstream agent's original source topic.</li>
          * </ol>
@@ -481,6 +481,16 @@ public class AgentChainBuilder {
         /** The set of agent IDs that have at least one chain edge pointing to them. */
         public java.util.Set<String> chainedAgentIds() {
             return downstreamEdges.keySet();
+        }
+
+        /**
+         * Returns the chain edges feeding {@code agentId}, in declaration order; empty when
+         * there are none. Used by engines that do not consume {@link DataStream}s (the
+         * Process Table Function engine builds SQL from these edges).
+         */
+        public List<EdgeSpec> edgesFor(String agentId) {
+            List<EdgeSpec> edges = downstreamEdges.get(agentId);
+            return edges == null ? List.of() : java.util.Collections.unmodifiableList(edges);
         }
 
         /** Returns {@code true} when no chain edges were resolved. */

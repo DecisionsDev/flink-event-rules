@@ -21,7 +21,9 @@ job and the BFF/dashboard.
    - 7.2 [The `outbounds` Contract — Data Model JSON Names](#72-the-outbounds-contract--data-model-json-names)
    - 7.3 [Decision Service Design Guide](#73-decision-service-design-guide)
    - 7.4 [Scheduling](#74-scheduling)
-   - 7.5 [SQL-Based Enrichment](#75-sql-based-enrichment)
+   - 7.5 [Enrichment Mechanisms](#75-enrichment-mechanisms)
+   - 7.6 [Reference-Data Enrichment](#76-reference-data-enrichment)
+   - 7.7 [SQL-Based Enrichment](#77-sql-based-enrichment) (DataStream runtime only)
 8. [Flink DAG Architecture](#8-flink-dag-architecture)
 9. [Agent Descriptor Field Reference](#9-agent-descriptor-field-reference)
 10. [Best Practices](#10-best-practices)
@@ -38,7 +40,7 @@ file drives everything:
 | Part of `agents.json`                                  | Consumed by        | Purpose                                                                          |
 |---------------------------------------------------------|--------------------|-----------------------------------------------------------------------------------|
 | `agents[]`                                              | Flink (backend)    | Defines the Agents: subscriptions, state, ruleset wiring, and outputs            |
-| Top-level properties (`name`, `topics[]`, `outboundTopics[]`, …) | BFF (frontend API), Flink | Use-case metadata: how the dashboard names and labels the topics, and per-topic source idleness |
+| Top-level properties (`name`, `topics[]`, …) | BFF (frontend API), Flink | Use-case metadata: how the dashboard names and labels the inbound topics, and per-topic source idleness |
 
 The file lives under `samples/<use-case>/agents.json`. See
 [`samples/banking-fraud-agent/`](../samples/banking-fraud-agent/) for a complete working example.
@@ -153,7 +155,8 @@ processing (see *Subscribe-for-context pattern* below).
 | `topic`          | yes      | Single Kafka topic whose events belong to this subscription.                                                                                                                                  |
 | `operation`      | **yes**  | IBM Decision Intelligence operation name to invoke. Set to `""` (or any blank string) to subscribe for context only — the rule engine is **not** invoked and no output event is emitted.     |
 | `horizon`        | no       | Controls how many historical events are retained per entity. Defaults to `{"type":"count","value":0}` (no history).                                                                          |
-| `sqlEnrichment`  | no       | Optional Flink SQL enrichment step applied to events **before** they reach the Agent processor. When set, incoming events are projected through a SQL script that can join with reference data and reshape the payload. The topic must have a `schema` entry in the top-level `topics[]`. See [§7.5](#75-sql-based-pre-enrichment). |
+| `enrichment`     | no       | Optional reference-data enrichment steps (CSV lookups declared with the agent-level `references`) applied to events **before** they reach the Agent processor. Available in both the PTF and DataStream engines. See [§7.6](#76-reference-data-enrichment). |
+| `sqlEnrichment`  | no       | Optional Flink SQL enrichment step applied to events **before** they reach the Agent processor. When set, incoming events are projected through a SQL script that can join with reference data and reshape the payload. The topic must have a `schema` entry in the top-level `topics[]`. **DataStream runtime only** (ignored by the PTF engine). See [§7.7](#77-sql-based-enrichment). When `sqlEnrichment` is set, the reference-data `enrichment` of the same subscription is ignored in the DataStream engine, see [§7.5](#75-enrichment-mechanisms). |
 
 ### Subscribe-for-context pattern
 
@@ -210,10 +213,6 @@ the agents (see *Defaults* below).
     { "name": "agent-transactions",   "type": "Transaction",  "label": "Transaction Events" },
     { "name": "agent-account-events", "type": "AccountEvent", "label": "Account Events", "idleness": "30s" }
   ],
-  "outboundTopics": [
-    { "name": "agent-fraud-alerts",   "type": "Alert",       "label": "Fraud Alerts" },
-    { "name": "agent-banking-errors", "type": "agent-error", "label": "Agent Errors" }
-  ],
   "agents": [ … ]
 }
 ```
@@ -231,9 +230,6 @@ the agents (see *Defaults* below).
 | `topics[].type`              | yes (if `topics` is set) | Logical event-type label shown in the UI and used as the WebSocket `topicType`.                        |
 | `topics[].label`             | yes (if `topics` is set) | Display label in the dashboard.                                                                         |
 | `topics[].idleness`          | no       | Flink watermark idleness of this topic's source, e.g. `"5mn"`. Default `1mn`. Same format as `horizon.timeLimit` (`m` = months, use `mn` for minutes). Needed so quiet topics do not hold back event-time schedule timers. Read by the job, so it requires `topics` to be declared. See [§7.4](#74-scheduling). |
-| `outboundTopics[].name`      | yes (if `outboundTopics` is set) | Kafka topic carrying Agent output — mirrors an `outputs[].topic` in `agents`.                  |
-| `outboundTopics[].type`      | yes (if `outboundTopics` is set) | Logical event-type label for the output.                                                       |
-| `outboundTopics[].label`     | yes (if `outboundTopics` is set) | Display label in the dashboard.                                                                |
 
 ### Defaults
 
@@ -246,12 +242,25 @@ applied to agents created through the wizard / REST API):
 | `flinkJobName`    | `<use-case>-job`                                                                                                   |
 | `consumerGroupId` | `event-rule-bff-<use-case>`                                                                                        |
 | `topics`          | Every `subscriptions[].topic` of every agent (de-duplicated), labelled with its `eventType`.                       |
-| `outboundTopics`  | Every `outputs[].topic` plus every `stateConfig.changeLogTopic` (typed `entity-changelog`).                         |
 
-Declaring `topics` / `outboundTopics` explicitly lets you set friendlier labels, and — for
-`topics` — the source `idleness`. When an agent is added, replaced or removed through the BFF REST
-API, the declared `topics` / `outboundTopics` are dropped from the file (they would be stale) and
-derived again; re-add them by hand if you need custom labels or idleness.
+Declaring `topics` explicitly lets you set friendlier labels and the source `idleness`. When an
+agent is added, replaced or removed through the BFF REST API, the declared `topics` are dropped from
+the file (they would be stale) and derived again; re-add them by hand if you need custom labels or
+idleness.
+
+### Outbound topics
+
+Outbound topics are **not declared at the top level**. The BFF always derives them from the agents
+(any top-level `outboundTopics` in an older file is ignored):
+
+| Dashboard property | Derived from                                                                                                      |
+|--------------------|-------------------------------------------------------------------------------------------------------------------|
+| `name`             | `outputs[].topic`, or `stateConfig.changeLogTopic`                                                                |
+| `type`             | `outputs[].eventType`, or `entity-changelog` for a changelog topic (`entity-changelog-<agentId>` for the 2nd+)    |
+| `label`            | `outputs[].label`, else `outputs[].description`, else `eventType`; `Entity Changelog (<entityType>)` for a changelog topic |
+| `filterKey`, `filterValue`, `filterLabel` | Same-named optional properties of the `outputs[]` entry. They hide events whose `filterKey` field equals `filterValue` in the dashboard. |
+
+A topic shared by several agents (for example a common error topic) appears once.
 
 See [`event-rule-frontend/bff/README.md`](../event-rule-frontend/bff/README.md) for the full BFF REST API that reads
 and writes this file.
@@ -272,11 +281,11 @@ samples/<use-case>/agents.json
   history to keep, which Decision Service operation to invoke, and where to publish results.
 - The top-level use-case properties are the **presentation** contract: they tell the BFF/dashboard
   which of those same Kafka topics to display, and how to label them.
-- Topic names declared in `topics[]` / `outboundTopics[]` must agree with those used by the
-  agents. The agents are the source of truth for what actually runs; when the use-case properties
-  are omitted the BFF derives them from the agents.
+- Topic names declared in `topics[]` must agree with those used by the agents. The agents are
+  the source of truth for what actually runs; when the use-case properties are omitted the BFF
+  derives them from the agents. Outbound topics are always derived from the agents.
 - A single event's journey: **Kafka → Flink Agent (`agents`-driven) → Decision Service
-  archive → Kafka output topic → BFF (`topics` / `outboundTopics`-driven) → WebSocket → Dashboard.**
+  archive → Kafka output topic → BFF (`topics` / `outputs`-driven) → WebSocket → Dashboard.**
 
 ---
 
@@ -862,10 +871,246 @@ To make schedules more efficient, each time an event is received, the agent proc
 
 ---
 
-### 7.5 SQL-Based Enrichment
+### 7.5 Enrichment Mechanisms
+
+An agent can enrich the events it receives (per subscription) and the events it publishes (per
+output) with reference data. Two mechanisms exist, declared with different properties in
+`agents.json`:
+
+| | Reference-data enrichment ([§7.6](#76-reference-data-enrichment)) | SQL enrichment ([§7.7](#77-sql-based-enrichment)) |
+|---|---|---|
+| Declared with | `references` (agent level) + `enrichment` (subscription / output) | `sqlEnrichment` (subscription / output) |
+| Data sources | CSV files | Anything Flink SQL can read (CSV, JDBC, …) |
+| Logic | Declarative lookup steps (JSONPath) | Free-form Flink SQL script |
+| **PTF engine** | applied (`EVENT_ENRICH` scalar function; open source Flink and Confluent Cloud) | **not available** (ignored with a warning) |
+| **DataStream engine** | applied (`map` operator) | applied |
+
+> **SQL enrichment is only available when the DataStream runtime is used.** It needs the Flink
+> Table API, which the PTF engine does not rely on. Under the PTF engine a `sqlEnrichment` is
+> ignored and a warning is logged.
+
+The two mechanisms are alternatives, not complements. When both are declared on the same
+subscription or output:
+
+| Declared on a subscription or an output | PTF engine | DataStream engine |
+|---|---|---|
+| `enrichment` only | applied | applied |
+| `sqlEnrichment` only | ignored (warning) | applied |
+| **both** | `enrichment` applied, `sqlEnrichment` ignored (warning) | **`sqlEnrichment` applied, `enrichment` ignored (warning)** |
+
+In the DataStream engine `sqlEnrichment` therefore **takes precedence**: when it is declared on a
+subscription or an output, that subscription's or output's `enrichment` (and nothing else) is not
+taken into account. The decision is made per subscription and per output; `references` are not
+affected and other subscriptions and outputs of the same agent keep their own mechanism. The
+`airline-agent` sample declares both on purpose, so it uses `sqlEnrichment` in the DataStream
+engine and `enrichment` in the PTF engine.
+
+---
+
+### 7.6 Reference-Data Enrichment
+
+Reference-data enrichment is declared in `agents.json` with `references` and `enrichment`. It is
+available in both runtimes, which share the same engine (`Enricher`) and so behave identically:
+
+- **PTF engine**: inside the SQL pipeline, through one scalar function, `EVENT_ENRICH`. It works
+  on open source Flink and on Confluent Cloud for Apache Flink.
+- **DataStream engine**: through a plain `map` operator (`EnrichEnvelopeFunction`) before the
+  union of the subscriptions and before each Kafka sink. It does not use the Table API.
+
+#### Descriptor
+
+```json
+{
+  "agentId": "airline-agent",
+  "references": [
+    { "name": "flights",    "type": "csv", "file": "samples/airline-agent/enrichment/flights.csv" },
+    { "name": "roster",     "type": "csv", "file": "samples/airline-agent/enrichment/flight_passengers.csv" },
+    { "name": "passengers", "type": "csv", "file": "samples/airline-agent/enrichment/passengers.csv" }
+  ],
+  "subscriptions": [{
+    "eventType": "FlightEvent", "topic": "agent-flight-events", "operation": "ProcessFlightEvent",
+    "enrichment": [
+      { "reference": "flights", "key": "flightNumber", "on": "$.flightNumber",
+        "when": "$[?(@.type == 'FLIGHTOPEN')]",
+        "into": "$.flight", "fields": ["aircraftId", "origin", "destination"] },
+      { "reference": "roster", "key": "flightNumber", "on": "$.flightNumber",
+        "when": "$[?(@.type == 'FLIGHTOPEN')]",
+        "into": "$.flight.passengers", "cardinality": "many",
+        "fields": ["passengerId", { "checkInStatus": "check-inStatus" }, "travelClass"] },
+      { "reference": "passengers", "key": "passengerId", "on": "$.passengerId",
+        "into": "$.flight.passengers[*]", "fields": ["name", "loyaltyStatus"] }
+    ]
+  }],
+  "outputs": [{
+    "eventType": "PassengerNotification", "topic": "agent-passenger-notifications",
+    "enrichment": [
+      { "reference": "passengers", "key": "passengerId", "on": "$.passengerNumber",
+        "into": "$", "fields": ["name", "loyaltyStatus", "email", "contactPreference"] }
+    ]
+  }]
+}
+```
+
+The complete example is [`samples/airline-agent/agents.json`](../samples/airline-agent/agents.json).
+
+#### `references`
+
+| Property | Meaning |
+|---|---|
+| `name` | Unique within the agent. Used by `enrichment[].reference`. |
+| `type` | `csv` (default, the only type). |
+| `file` | Path of the file. Resolved from the **classpath** first, then the filesystem (as given, relative to the working directory, then to its parent). |
+| `types` | Optional `{ "column": "string\|long\|double\|boolean" }`. |
+
+The first line of the CSV holds the column names. RFC 4180 quoting, CRLF and a BOM are handled.
+A column that is not listed in `types` is typed from its values: `long`/`double` when every
+non-empty value is a canonical number, `boolean` for `true`/`false`, otherwise `string`. **A
+column used as `key` by any step is always written as a string** (an identifier must not become a
+number) unless its type is declared.
+
+#### `enrichment` steps
+
+| Property | Meaning |
+|---|---|
+| `reference` | Name of a reference. |
+| `key` | Column of the reference matched against the value found by `on`. |
+| `on` | JSONPath of the lookup value in the event. With a `[*]` target it is relative to each array element. |
+| `when` | Optional JSONPath filter, e.g. `$[?(@.type == 'FLIGHTOPEN')]`. The step runs when it selects something. Attributes of the current node are written `@.name` (`@name` is rejected). With a `[*]` target it is evaluated on each element. |
+| `into` | Where the fields are written: `$`, `$.a.b` or `$.a.b[*]` (see below). |
+| `fields` | Columns to copy: `"name"`, or `{ "column": "newName" }` to rename. |
+| `cardinality` | `one` or `many`. Absent: `many` when the reference has several rows for one key, else `one`. Not allowed with `$` or `[*]`. |
+
+`into`:
+
+- `$`: merged into the event itself.
+- `$.a.b`: merged into the object `a.b` (created when absent). With `cardinality: many`, `a.b`
+  becomes an **array** with one object per matching row.
+- `$.a.b[*]`: merged into **every object element** of the existing array `a.b`. The array itself
+  must be in the event or be created by another step.
+
+Only these three forms are supported for `into`.
+
+#### Where it applies
+
+| Section | Value enriched |
+|---|---|
+| `subscriptions[].enrichment` | The inbound event payload, **before** the agent receives it. |
+| `outputs[].enrichment` | The `payload` of the outbound event, **after** the agent produced it (the envelope is not touched). |
+
+#### Semantics
+
+- **Dependency order.** Steps are not necessarily run in declared order. A `[*]` step runs after
+  the step that fills that array, and a step whose `on` reads below the `into` of another step
+  runs after it. Otherwise declared order is kept. A cycle is rejected when the descriptor is
+  validated. In the example, `roster` always runs before `passengers`, wherever they are declared.
+- **No match leaves the event alone.** If the `when` does not match, the `on` value is missing,
+  or the CSV has no row for the key, the step does nothing and the **next steps still run**. In a
+  `[*]` step each element is handled independently: an element without a row stays un-enriched.
+- **Empty cells** are not written.
+- **Failures are fail-open.** A step that throws while enriching is logged and skipped; a value
+  that is not valid JSON is passed through unchanged. Configuration errors (unknown reference,
+  key or field column, bad path) are rejected when the descriptor is validated.
+- **First row wins** for `one`; a duplicate key does not fail.
+
+#### How it runs — PTF engine
+
+```mermaid
+flowchart LR
+  K[Kafka topic] --> S["source view<br/>EVENT_FIELD(...)"]
+  S --> E["EVENT_ENRICH(payload, spec)"]
+  E --> I["agent_in"]
+  I --> P["PTF event_rule_agent"]
+  P --> O["agent_out"]
+  O --> W["EVENT_ENRICH(envelope, spec)<br/>root = payload"]
+  W --> T[Kafka sink]
+```
+
+`AgentSqlPipelineBuilder` turns the steps of a subscription or output into an `EnrichmentSpec`
+(JSON: `root`, the references used, the steps) and passes it as a SQL literal to
+`EVENT_ENRICH(json, spec)` ([`EventEnrichFunction`](../event-rule-backend/src/main/java/com/ibm/di/event/agent/ptf/EventEnrichFunction.java)).
+The function is a **scalar** function: a table function would change the number of rows, and
+arrays are handled inside the function by building the JSON array. All the work is done by
+[`Enricher`](../event-rule-backend/src/main/java/com/ibm/di/event/agent/enrichment/Enricher.java),
+which does not depend on Flink. A CSV is loaded once per JVM and indexed by key column.
+
+The enrichment of a subscription keeps the time attribute `event_ts` untouched, so watermarks and
+timers are not affected. The step order is computed at build time by `EnrichmentPlanner`.
+
+#### How it runs — DataStream engine
+
+```mermaid
+flowchart LR
+  K[Kafka source] --> M["map: EnrichEnvelopeFunction<br/>(subscription enrichment)"]
+  M --> U[union] --> A[StatefulAgentProcessor]
+  A --> F[filter by eventType] --> N["map: EnrichEnvelopeFunction<br/>(output enrichment)"] --> T[Kafka sink]
+```
+
+`AgentBasedDataStreamJob.wireAgent` adds one `Enrich[<agent>/<eventType>]` operator per
+subscription or output with an `enrichment` **and without a `sqlEnrichment`** (when both are
+declared, `sqlEnrichment` wins and the `enrichment` is ignored with a warning, see
+[§7.5](#75-enrichment-mechanisms)). The operator builds its `Enricher` in `open()` from
+the serialised `EnrichmentSpec`, so the CSV files are read on the task manager (they must be
+reachable there, from the classpath or the filesystem). It enriches a copy of the payload and
+returns a new `EventEnvelope`; the entity id, timestamp and metadata are kept, and an event that
+needs no enrichment is passed on as it is. The entity id is extracted **before** enrichment, from
+the raw event.
+
+Migrating a subscription or output from `sqlEnrichment` to `enrichment` therefore means
+**removing** its `sqlEnrichment` (and, if nothing else uses them, its `schema` and SQL file).
+
+The same limits as the PTF engine apply: events received through an agent chain are not
+enriched, and an output without `eventType` is not enriched (a warning is logged). The output
+enrichment applies to the `payload` of the envelope written to the Kafka sink only: a chained
+downstream agent receives the event as the agent produced it, not enriched.
+
+#### Confluent Cloud
+
+- The function is created with `CREATE FUNCTION \`EVENT_ENRICH\` AS '...EventEnrichFunction' USING JAR ...`,
+  added to the generated script only when an agent uses enrichment.
+- Confluent Cloud functions have **no filesystem**: the CSV files must be **bundled in the UDF
+  JAR** at the path given in `file`, for instance `samples/airline-agent/enrichment/flights.csv`
+  at the root of the JAR. The reference data is therefore **static per deployment**: changing a
+  CSV means uploading a new artifact version and re-creating the function. Copying the CSVs into
+  the JAR is not automated yet.
+- The function uses no Flink class beyond the function API and has no dependency on `flink-csv`
+  (the CSV reader is built in).
+- Artifact size and runtime limits of Confluent Cloud UDFs have not been verified. Keep the CSVs
+  small: each file is held in memory in every task.
+
+#### Limits
+
+- Lookups are in memory and exact-match on a single column.
+- A chain of agents does not enrich the intermediate event types (a warning is logged).
+- A wildcard output (no `eventType`) cannot be enriched (a warning is logged).
+- Arrays inside arrays (`$.a[*].b[*]`) are not supported.
+
+#### Tests
+
+`event-rule-backend/src/test/java/com/ibm/di/event/agent/`:
+
+- `enrichment/EnricherTest`: the airline scenario end to end, ordering, no match, missing
+  elements, outbound merge, typing, configuration errors.
+- `enrichment/ReferenceTableTest`: CSV, typing, lookup, registry, `into` grammar, planner, field
+  mapping.
+- `enrichment/EnrichmentValidatorTest`: descriptor validation.
+- `ptf/AgentSqlPipelineBuilderTest`: `EVENT_ENRICH` in the generated SQL (both dialects).
+- `datastream/EnrichEnvelopeFunctionTest`: the DataStream operator (new envelope, unchanged cases,
+  a local job) and the operators `wireAgent` adds for the airline sample.
+- `ptf/PtfLocalRunTest`: `EVENT_ENRICH` executed in a local Flink SQL query, and the generated
+  SQL of every sample accepted by the planner.
+
+---
+
+
+### 7.7 SQL-Based Enrichment
+
+> **DataStream runtime only.** SQL enrichment needs the Flink Table API and is only available
+> when the DataStream runtime is used. The PTF engine ignores `sqlEnrichment` (with a warning);
+> use [reference-data enrichment](#76-reference-data-enrichment) there. See
+> [§7.5](#75-enrichment-mechanisms) for the comparison and the precedence rules.
 
 A subscription can optionally route its incoming Kafka events through a **Flink SQL enrichment
-step** before they reach the [`StatefulAgentProcessor`](../event-rule-backend/src/main/java/com/ibm/di/event/agent/StatefulAgentProcessor.java). This lets you join events against
+step** before they reach the [`StatefulAgentProcessor`](../event-rule-backend/src/main/java/com/ibm/di/event/agent/datastream/StatefulAgentProcessor.java). This lets you join events against
 reference data (CSV files, JDBC tables, other Flink-accessible data sources) and reshape payloads
 using standard Flink SQL — all without touching the Decision Intelligence archive or writing any
 Java code.
@@ -890,7 +1135,7 @@ If the raw event is already self-contained, you do not need SQL enrichment.
 
 When a subscription declares `sqlEnrichment`, `AgentBasedDataStreamJob` replaces the standard
 Kafka-source-to-envelope path for that subscription with a Flink Table/SQL subgraph wired by
-[`SqlEnrichmentRunner`](../event-rule-backend/src/main/java/com/ibm/di/event/sql/SqlEnrichmentRunner.java):
+[`SqlEnrichmentRunner`](../event-rule-backend/src/main/java/com/ibm/di/event/agent/enrichment/sql/SqlEnrichmentRunner.java):
 
 ```
 Kafka topic
@@ -1065,7 +1310,7 @@ once with its fully enriched content.
 #### Outbound enrichment
 
 An **output** can run the same kind of SQL step on the events the agent emits, after the
-[`StatefulAgentProcessor`](../event-rule-backend/src/main/java/com/ibm/di/event/agent/StatefulAgentProcessor.java)
+[`StatefulAgentProcessor`](../event-rule-backend/src/main/java/com/ibm/di/event/agent/datastream/StatefulAgentProcessor.java)
 and before the Kafka sink. Use it to add data the rules should not have to know about — for
 example contact details looked up from a reference file, or a payload reshaped for the consumer
 of the topic — without changing the Decision Service.
@@ -1229,7 +1474,7 @@ The [`samples/airline-agent`](../samples/airline-agent/) use case demonstrates b
              ▼
     ┌────────────────────────────────────────────────────┐
     │   Output Router — filter by declared outputs[]     │
-    │   (optional per-output SQL enrichment, see §7.5)   │
+    │   (optional per-output SQL enrichment, see §7.7)   │
     └─────┬──────────────┬──────────────┬────────────────┘
           ▼              ▼              ▼
     [fraud-alerts] [risk-scores] [approved-transactions]
@@ -1344,7 +1589,7 @@ Key points:
 | `subscriptions[].horizon.timeLimit`        | For `time`/`hybrid` | Max age: number + unit `s` (seconds), `mn` (minutes), `h` (hours), `d` (days) or `m` (**months**, 30 days), e.g. `30s`, `5mn`, `24h`, `7d`, `1m` |
 | `subscriptions[].horizon.description`      | No                  | Human-readable description for observability / logging                                          |
 | `subscriptions[].schema`                   | No                  | Path to the JSON Schema of the subscription's topic payload. Used by `sqlEnrichment`; takes precedence over the `schema` declared for the topic in `topics[]`. Written by the Agent Wizard. |
-| `subscriptions[].sqlEnrichment`            | No                  | Optional SQL enrichment step executed before the event reaches the Agent processor. Requires a JSON Schema, either `subscriptions[].schema` or a `schema` entry for the topic in `topics[]`. See [§7.5](#75-sql-based-pre-enrichment). |
+| `subscriptions[].sqlEnrichment`            | No                  | Optional SQL enrichment step executed before the event reaches the Agent processor. Requires a JSON Schema, either `subscriptions[].schema` or a `schema` entry for the topic in `topics[]`. See [§7.7](#77-sql-based-enrichment). |
 | `subscriptions[].sqlEnrichment.sqlFile`    | **Yes** (when set)  | Path to the `.sql` file. Resolved against the working directory, then the classpath. |
 | `subscriptions[].sqlEnrichment.inputViewName` | No              | Temporary view name for the raw incoming stream. Default: `"raw_events"`. |
 | `subscriptions[].sqlEnrichment.outputViewName` | No             | View name from which enriched rows are read. Must be defined by the SQL script. Default: `"enriched_events"`. |
@@ -1361,9 +1606,11 @@ Key points:
 | `ruleset.operations[].outbounds[].eventType` | No                | Event type assigned to every element emitted from that array. Defaults to `"object"` when blank. |
 | `outputs[].eventType`                      | **Yes**             | Event type to route to this Kafka topic                                                         |
 | `outputs[].topic`                          | **Yes**             | Kafka topic to publish matching output events to                                                |
+| `outputs[].label`                          | No                  | Name of this output in the dashboard (presentation only, ignored by the job). Defaults to `description`, then to `eventType`. |
 | `outputs[].description`                    | No                  | Human-readable description for logging and monitoring                                           |
-| `outputs[].schema`                         | When `sqlEnrichment` is set | Path to the JSON Schema of the output event payload. Types the columns of the input view of the outbound SQL script. See [§7.5](#outbound-enrichment). |
-| `outputs[].sqlEnrichment`                  | No                  | Optional SQL enrichment step applied to events of this `eventType` after the Agent processor and before the Kafka sink. Same fields as `subscriptions[].sqlEnrichment`. See [§7.5](#outbound-enrichment). |
+| `outputs[].schema`                         | When `sqlEnrichment` is set | Path to the JSON Schema of the output event payload. Types the columns of the input view of the outbound SQL script. See [§7.7](#outbound-enrichment). |
+| `outputs[].enrichment`                     | No                  | Optional reference-data enrichment steps applied to the `payload` of events of this `eventType` after the Agent processor and before the Kafka sink. Both engines. See [§7.6](#76-reference-data-enrichment). |
+| `outputs[].sqlEnrichment`                  | No                  | **DataStream runtime only.** Optional SQL enrichment step applied to events of this `eventType` after the Agent processor and before the Kafka sink. Same fields as `subscriptions[].sqlEnrichment`. See [§7.7](#outbound-enrichment). |
 | `stateConfig.ttl`                          | No                  | How long to retain entity state after last event (e.g. `"30d"`, `"24h"`). Default: no TTL (state retained indefinitely). |
 | `stateConfig.backend`                      | No                  | Preferred state backend hint: `"rocksdb"` or `"heap"`. Informational — actual backend is determined by the Flink job configuration. |
 | `stateConfig.checkpointInterval`           | No                  | Preferred checkpoint interval hint (same format as `ttl`, e.g. `"1m"`). Informational — the global `CHECKPOINT_INTERVAL_MS` env var always takes precedence. |
@@ -1371,12 +1618,12 @@ Key points:
 | `ruleset.operations[].scheduleRequestsField` | No               | JSON name of the Decision Service result attribute carrying the list of `ScheduleRequest` objects returned by the rule. Omit to disable scheduling for the operation. See [§7.4](#74-scheduling). |
 | `subscriptions[]` with `eventType: "Schedule"` | No             | Declares the event synthesised when a schedule fires. Must have **no** `topic` (no Kafka source is created) and needs no `horizon`. See [§7.4](#74-scheduling). |
 
-The top-level use-case properties of `agents.json` (`name`, `topics[]`, `outboundTopics[]`, …) are
+The top-level use-case properties of `agents.json` (`name`, `topics[]`, …) are
 described in [§4](#4-agentsjson--use-case-properties); they include an optional
 `topics[].idleness` (duration, default `1mn`) that sets the Flink watermark idleness of that
 topic's source. A JSON Schema file is required when a subscription declares `sqlEnrichment`:
 either `subscriptions[].schema` or the `topics[].schema` of its topic. An output that declares
-`sqlEnrichment` always needs its own `outputs[].schema`. See also [§7.4](#74-scheduling) and [§7.5](#75-sql-based-pre-enrichment).
+`sqlEnrichment` always needs its own `outputs[].schema`. See also [§7.4](#74-scheduling) and [§7.7](#77-sql-based-enrichment).
 
 
 

@@ -22,7 +22,7 @@ import java.io.Serializable;
 import java.time.Duration;
 
 /**
- * Flink state management configuration for a {@link StatefulAgentProcessor}.
+ * Flink state management configuration for a {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor}.
  *
  * <p>All fields are optional; safe defaults are applied when absent:
  * <ul>
@@ -60,7 +60,7 @@ public class StateConfig implements Serializable {
     /**
      * Optional Kafka topic name for entity-state change events.
      *
-     * <p>When set, the {@link StatefulAgentProcessor} emits a side-output record to this
+     * <p>When set, the {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor} emits a side-output record to this
      * topic every time the entity data is updated by the rule engine (i.e. the rule
      * returned a non-null entity that differs from the entity sent as input).
      *
@@ -89,7 +89,7 @@ public class StateConfig implements Serializable {
 
     /**
      * Returns the configured TTL as a {@link Duration}, or {@code null} when no TTL is set.
-     * Used by {@link StatefulAgentProcessor#open} to configure Flink {@code StateTtlConfig}.
+     * Used by {@link com.ibm.di.event.agent.datastream.StatefulAgentProcessor#open} to configure Flink {@code StateTtlConfig}.
      */
     public Duration ttlDuration() {
         if (ttl == null || ttl.isBlank()) return null;

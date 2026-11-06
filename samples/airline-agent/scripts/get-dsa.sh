@@ -45,10 +45,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OUTPUT_FILE="${OUTPUT_DIR}/AirlineDecisionService_${VERSION}.jar"
 
-# get access token for rtsadmin
-# Credentials must be supplied via RTSADMIN_USER / RTSADMIN_PASSWORD environment variables.
-if [ -z "${RTSADMIN_USER}" ] || [ -z "${RTSADMIN_PASSWORD}" ]; then
-    echo "ERROR: RTSADMIN_USER and RTSADMIN_PASSWORD environment variables must be set"
+# get access token for diadmin
+# Credentials must be supplied via DIADMIN_USER / DIADMIN_PASSWORD environment variables.
+if [ -z "${DIADMIN_USER}" ] || [ -z "${DIADMIN_PASSWORD}" ]; then
+    echo "ERROR: DIADMIN_USER and DIADMIN_PASSWORD environment variables must be set"
     exit 1
 fi
 
@@ -58,8 +58,8 @@ ACCESS_TOKEN=$(curl -s -k "${DI_TOKEN_URL}/token" \
     --data-urlencode "client_secret=secret" \
     --data-urlencode "grant_type=password" \
     --data-urlencode "scope=openid" \
-    --data-urlencode "username=${RTSADMIN_USER}" \
-    --data-urlencode "password=${RTSADMIN_PASSWORD}" | jq -r .access_token)
+    --data-urlencode "username=${DIADMIN_USER}" \
+    --data-urlencode "password=${DIADMIN_PASSWORD}" | jq -r .access_token)
 
 if [ -z "${ACCESS_TOKEN}" ] || [ "${ACCESS_TOKEN}" = "null" ]; then
     echo "ERROR: Failed to retrieve access token"

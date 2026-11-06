@@ -153,11 +153,15 @@ Publishes an `ArchiveControlCmd` JSON message to the archive-control Kafka topic
 | `--wait-timeout <secs>` | `120`                            | How long to wait for reload confirmation                                       |
 | `--dry-run`             | off                              | Print the Kafka command that would run; do not publish                         |
 
-**Default Kafka topic for the banking use case:**
+**Default Kafka topics by sample (automatically resolved from `agents.json`):**
 
-| Use case        | Default archive-control topic   |
-|-----------------|---------------------------------|
-| `agent-banking` | `agent-banking-archive-control` |
+| Sample / Use case      | Default archive-control topic   |
+|------------------------|---------------------------------|
+| `banking-fraud-agent`  | `agent-banking-archive-control` |
+| `retail-agent`         | `agent-retail-archive-control`  |
+| `airline-agent`        | `agent-airline-archive-control` |
+| `airtraffic-agent`     | `agent-atc-archive-control`     |
+| *Custom sample*        | Extracted from `agents.json` (`ruleset.archiveControlTopic`) |
 
 Override the topic for any use case with `--topic <name>`. Control topics are created
 automatically with 1 partition (ordered delivery) if they do not exist.

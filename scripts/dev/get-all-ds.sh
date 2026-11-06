@@ -8,10 +8,10 @@
 
 set -e
 
-# get access token for rtsadmin
-# Credentials must be supplied via RTSADMIN_USER / RTSADMIN_PASSWORD environment variables.
-if [ -z "${RTSADMIN_USER}" ] || [ -z "${RTSADMIN_PASSWORD}" ]; then
-    echo "ERROR: RTSADMIN_USER and RTSADMIN_PASSWORD environment variables must be set"
+# get access token for diadmin
+# Credentials must be supplied via DIADMIN_USER / DIADMIN_PASSWORD environment variables.
+if [ -z "${DIADMIN_USER}" ] || [ -z "${DIADMIN_PASSWORD}" ]; then
+    echo "ERROR: DIADMIN_USER and DIADMIN_PASSWORD environment variables must be set"
     exit 1
 fi
 
@@ -21,8 +21,8 @@ ACCESS_TOKEN=$(curl -s -k "https://localhost:18082/token"\
     --data-urlencode "client_secret=secret" \
     --data-urlencode "grant_type=password" \
     --data-urlencode "scope=openid"\
-    --data-urlencode "username=${RTSADMIN_USER}"\
-    --data-urlencode "password=${RTSADMIN_PASSWORD}" | jq -r .access_token)
+    --data-urlencode "username=${DIADMIN_USER}"\
+    --data-urlencode "password=${DIADMIN_PASSWORD}" | jq -r .access_token)
 
 curl -X "GET" -k "https://localhost:3000/ads/runtime/api/v1/decisionServices" \
     -H 'accept: */*' \

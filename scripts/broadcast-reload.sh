@@ -21,14 +21,23 @@
 # by publishing an ArchiveControlCmd JSON message to the domain archive-control
 # Kafka topic.  Supports PREFETCH, LOAD, ROLLBACK, and NOOP commands.
 #
-# Supports the following use cases:
-#   banking-fraud-agent   StatefulAgentProcessor — Banking Fraud Detection Agent
+# Supports any sample located in the samples directory (e.g. banking-fraud-agent,
+# retail-agent, airtraffic-agent, airline-agent, or any custom sample folder).
+#
+# Execution & Working Directory:
+#   This script can be executed from ANY directory — either the project root
+#   (e.g. ./scripts/broadcast-reload.sh) or the scripts/ directory (e.g. ./broadcast-reload.sh).
+#   Paths and the samples directory are resolved automatically relative to the project root.
 #
 # Usage:
+#   # From project root:
+#   ./scripts/broadcast-reload.sh --use-case <case> --jar <path> [OPTIONS]
+#
+#   # From scripts/ directory:
 #   ./broadcast-reload.sh --use-case <case> --jar <path> [OPTIONS]
 #
 # Required (for LOAD / PREFETCH):
-#   --use-case <name>       Domain: banking-fraud-agent
+#   --use-case <name>       Sample / use-case directory name (e.g. retail-agent, banking-fraud-agent)
 #   --jar     <path>        Path to the JAR on the HOST machine.
 #                           The script computes SHA-256 and resolves the container URL.
 #
@@ -36,10 +45,10 @@
 #   --version    <label>    Human-readable version label (default: derived from jar filename)
 #   --command    <type>     LOAD | PREFETCH | ROLLBACK | NOOP  (default: LOAD)
 #   --request-id <id>       Correlation ID for audit logs (default: auto-generated)
-#   --topic      <name>     Override the archive-control Kafka topic name
+#   --topic      <name>     Override the archive-control Kafka topic name (default: from agents.json)
 #   --bootstrap  <addr>     Kafka bootstrap server (default: localhost:9092)
 #   --container  <name>     Kafka Docker container name (default: kafka)
-#   --samples-dir <dir>     Samples directory mounted into Flink containers (default: ./samples)
+#   --samples-dir <dir>     Samples directory mounted into Flink containers (default: <project-root>/samples)
 #   --container-mount <p>   Container path where samples/ is mounted (default: /opt/flink/samples)
 #   --archive-url <url>     Full archive URL for ROLLBACK (skips jar-based URL resolution)
 #   --sha256 <hex>          SHA-256 hex for ROLLBACK (skips local computation)
@@ -51,26 +60,38 @@
 #   --dry-run               Print the command that would be published; do not publish
 #
 # Examples:
+#   # From project root:
+#   ./scripts/broadcast-reload.sh --use-case retail-agent \
+#       --jar samples/retail-agent/RetailDecisionService_1.2.1.jar
+#
+#   # From scripts/ directory:
+#   ./broadcast-reload.sh --use-case retail-agent \
+#       --jar ../samples/retail-agent/RetailDecisionService_1.2.1.jar
+#
 #   # Banking fraud agent: deploy a new fraud-detection JAR
-#   ./broadcast-reload.sh --use-case banking-fraud-agent \
-#       --jar samples/banking-fraud-agent/FraudDetectionService_1.3.1.jar
+#   ./scripts/broadcast-reload.sh --use-case banking-fraud-agent \
+#       --jar samples/banking-fraud-agent/FraudDetectionService_1.5.2.jar
 #
 #   # Prefetch, then load (minimises checkpoint-barrier blocking window)
-#   ./broadcast-reload.sh --use-case banking-fraud-agent \
-#       --jar samples/banking-fraud-agent/FraudDetectionService_1.3.1.jar --command PREFETCH
-#   ./broadcast-reload.sh --use-case banking-fraud-agent \
-#       --jar samples/banking-fraud-agent/FraudDetectionService_1.3.1.jar --command LOAD --wait
+#   ./scripts/broadcast-reload.sh --use-case retail-agent \
+#       --jar samples/retail-agent/RetailDecisionService_1.2.1.jar --command PREFETCH
+#   ./scripts/broadcast-reload.sh --use-case retail-agent \
+#       --jar samples/retail-agent/RetailDecisionService_1.2.1.jar --command LOAD --wait
 #
 #   # Rollback to a previous version
-#   ./broadcast-reload.sh --use-case banking-fraud-agent --command ROLLBACK \
-#       --archive-url file:///opt/flink/samples/banking-fraud-agent/old.jar \
-#       --sha256 3f9a1b2c... --version v1.0.1
+#   ./scripts/broadcast-reload.sh --use-case retail-agent --command ROLLBACK \
+#       --archive-url file:///opt/flink/samples/retail-agent/RetailDecisionService_1.2.0.jar \
+#       --sha256 3f9a1b2c... --version v1.2.0
 #
 #   # Preview message without publishing
-#   ./broadcast-reload.sh --use-case banking-fraud-agent \
-#       --jar samples/banking-fraud-agent/FraudDetectionService_1.3.1.jar --dry-run
+#   ./scripts/broadcast-reload.sh --use-case retail-agent \
+#       --jar samples/retail-agent/RetailDecisionService_1.2.1.jar --dry-run
 
 set -euo pipefail
+
+# ── Directory anchors ──────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # ── Colour helpers ─────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -88,7 +109,7 @@ REQUEST_ID="broadcast-reload-$(date +%s)"
 TOPIC_OVERRIDE=""
 BOOTSTRAP="localhost:9092"
 KAFKA_CONTAINER="kafka"
-SAMPLES_DIR="./samples"
+SAMPLES_DIR="${PROJECT_ROOT}/samples"
 CONTAINER_MOUNT="/opt/flink/samples"
 ARCHIVE_URL_OVERRIDE=""
 SHA256_OVERRIDE=""
@@ -99,8 +120,38 @@ DRY_RUN=false
 
 # ── Usage ──────────────────────────────────────────────────────────────────────
 usage() {
-    sed -n '3,57p' "$0" | sed 's/^# \?//'
-    exit 1
+    local code="${1:-1}"
+    cat <<'EOF'
+Usage:
+  ./broadcast-reload.sh --use-case <case> --jar <path> [OPTIONS]
+  (or from project root: ./scripts/broadcast-reload.sh --use-case <case> --jar <path> [OPTIONS])
+
+Working Directory:
+  Can be executed from ANY directory (project root, scripts/ directory, etc.).
+  Paths to --jar and --samples-dir are resolved automatically.
+
+Required (for LOAD / PREFETCH):
+  --use-case <name>       Sample name or folder (e.g. retail-agent, banking-fraud-agent, airline-agent, airtraffic-agent)
+  --jar     <path>        Path to the JAR on the HOST machine.
+
+Options:
+  --version    <label>    Human-readable version label (default: derived from jar filename)
+  --command    <type>     LOAD | PREFETCH | ROLLBACK | NOOP  (default: LOAD)
+  --request-id <id>       Correlation ID for audit logs (default: auto-generated)
+  --topic      <name>     Override the archive-control Kafka topic name (default: from agents.json)
+  --bootstrap  <addr>     Kafka bootstrap server (default: localhost:9092)
+  --container  <name>     Kafka Docker container name (default: kafka)
+  --samples-dir <dir>     Samples directory mounted into Flink containers (default: <project-root>/samples)
+  --container-mount <p>   Container path where samples/ is mounted (default: /opt/flink/samples)
+  --archive-url <url>     Full archive URL for ROLLBACK (skips jar-based URL resolution)
+  --sha256 <hex>          SHA-256 hex for ROLLBACK (skips local computation)
+  --wait                  After LOAD/ROLLBACK, tail TaskManager logs until reload is confirmed
+  --tm-container <name>   Flink TaskManager container name for --wait (default: event-rule-backend-taskmanager)
+  --wait-timeout <secs>   Seconds to wait for reload confirmation (default: 120)
+  --dry-run               Print the command that would be published; do not publish
+  --help, -h              Show this help message
+EOF
+    exit "$code"
 }
 
 # ── Argument parsing ───────────────────────────────────────────────────────────
@@ -122,28 +173,110 @@ while [[ $# -gt 0 ]]; do
         --tm-container)    TM_CONTAINER="$2";       shift 2 ;;
         --wait-timeout)    WAIT_TIMEOUT="$2";       shift 2 ;;
         --dry-run)         DRY_RUN=true;            shift   ;;
-        --help|-h)         usage ;;
-        *) error "Unknown argument: $1"; usage ;;
+        --help|-h)         usage 0 ;;
+        *) error "Unknown argument: $1"; usage 1 ;;
     esac
 done
 
-# ── Validate use-case and derive defaults ──────────────────────────────────────
-[[ -z "$USE_CASE" ]] && { error "--use-case is required (banking-fraud-agent)"; usage; }
+# ── Normalize JAR path if provided relative to project root or samples ─────────
+if [[ -n "$NEW_JAR" && ! -f "$NEW_JAR" ]]; then
+    if [[ -f "${PROJECT_ROOT}/${NEW_JAR}" ]]; then
+        NEW_JAR="${PROJECT_ROOT}/${NEW_JAR}"
+    elif [[ -f "${SAMPLES_DIR}/${NEW_JAR#samples/}" ]]; then
+        NEW_JAR="${SAMPLES_DIR}/${NEW_JAR#samples/}"
+    fi
+fi
 
-# DEFAULT_TOPIC: Kafka archive-control topic for this use case
-# SUCCESS_PATTERN: grep pattern in TaskManager logs indicating a successful reload
-case "$USE_CASE" in
-    banking-fraud-agent)
-        DEFAULT_TOPIC="agent-banking-archive-control"
-        SUCCESS_PATTERN="StatefulAgentProcessor\[fraud-detection-agent\].*Archive reloaded.*v="
-        ;;
-    *)
-        error "--use-case must be: banking-fraud-agent (got: '$USE_CASE')"
-        exit 1
-        ;;
-esac
+# ── Infer and resolve use-case directory ───────────────────────────────────────
+if [[ -z "$USE_CASE" && -n "$NEW_JAR" ]]; then
+    HOST_SAMPLES_ABS="$(cd "$SAMPLES_DIR" 2>/dev/null && pwd || true)"
+    if [[ -n "$HOST_SAMPLES_ABS" && -f "$NEW_JAR" ]]; then
+        JAR_ABS="$(cd "$(dirname "$NEW_JAR")" && pwd)/$(basename "$NEW_JAR")"
+        if [[ "$JAR_ABS" == "$HOST_SAMPLES_ABS"/* ]]; then
+            JAR_REL="${JAR_ABS#"$HOST_SAMPLES_ABS"/}"
+            USE_CASE="${JAR_REL%%/*}"
+            info "Inferred --use-case '$USE_CASE' from JAR path."
+        fi
+    fi
+fi
+
+if [[ -z "$USE_CASE" ]]; then
+    AVAILABLE_SAMPLES=$(find "$SAMPLES_DIR" -mindepth 1 -maxdepth 1 -type d ! -name ".*" -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ' || true)
+    error "--use-case is required."
+    if [[ -n "$AVAILABLE_SAMPLES" ]]; then
+        error "Available samples under $SAMPLES_DIR: $AVAILABLE_SAMPLES"
+    fi
+    usage
+fi
+
+# Clean use case string (strip leading/trailing slashes)
+USE_CASE_CLEAN="${USE_CASE%/}"
+USE_CASE_CLEAN="${USE_CASE_CLEAN##*/}"
+
+# Resolve the sample directory
+SAMPLE_DIR=""
+if [[ -d "$USE_CASE" ]]; then
+    SAMPLE_DIR="$USE_CASE"
+elif [[ -d "$SAMPLES_DIR/$USE_CASE" ]]; then
+    SAMPLE_DIR="$SAMPLES_DIR/$USE_CASE"
+elif [[ -d "$SAMPLES_DIR/$USE_CASE_CLEAN" ]]; then
+    SAMPLE_DIR="$SAMPLES_DIR/$USE_CASE_CLEAN"
+elif [[ -d "${PROJECT_ROOT}/samples/$USE_CASE_CLEAN" ]]; then
+    SAMPLE_DIR="${PROJECT_ROOT}/samples/$USE_CASE_CLEAN"
+elif [[ -d "samples/$USE_CASE_CLEAN" ]]; then
+    SAMPLE_DIR="samples/$USE_CASE_CLEAN"
+else
+    # Try fuzzy match in samples/ (e.g. "banking" -> "banking-fraud-agent", "agent-banking" -> "banking-fraud-agent", "retail" -> "retail-agent")
+    MATCHED_DIR=$(find "$SAMPLES_DIR" -mindepth 1 -maxdepth 1 -type d ! -name ".*" -name "*${USE_CASE_CLEAN#agent-}*" 2>/dev/null | head -n 1 || true)
+    if [[ -n "$MATCHED_DIR" && -d "$MATCHED_DIR" ]]; then
+        SAMPLE_DIR="$MATCHED_DIR"
+    else
+        SAMPLE_DIR="$SAMPLES_DIR/$USE_CASE_CLEAN"
+    fi
+fi
+
+USE_CASE_NAME="$(basename "$SAMPLE_DIR")"
+DESCRIPTOR_FILE="$SAMPLE_DIR/agents.json"
+
+# ── Discover archive-control topic & agent ID from descriptor ─────────────────
+DEFAULT_TOPIC=""
+PRIMARY_AGENT_ID=""
+AGENT_IDS=""
+
+if [[ -f "$DESCRIPTOR_FILE" ]]; then
+    if command -v jq &>/dev/null; then
+        DEFAULT_TOPIC="$(jq -r '[.agents[].ruleset.archiveControlTopic // empty][0] // empty' "$DESCRIPTOR_FILE" 2>/dev/null || true)"
+        PRIMARY_AGENT_ID="$(jq -r '[.agents[].agentId // empty][0] // empty' "$DESCRIPTOR_FILE" 2>/dev/null || true)"
+        AGENT_IDS="$(jq -r '[.agents[].agentId // empty] | join("|")' "$DESCRIPTOR_FILE" 2>/dev/null || true)"
+    fi
+
+    # Fallback if jq is not installed or did not find fields
+    if [[ -z "$DEFAULT_TOPIC" ]]; then
+        DEFAULT_TOPIC="$(grep -o '"archiveControlTopic"[[:space:]]*:[[:space:]]*"[^"]*"' "$DESCRIPTOR_FILE" 2>/dev/null | head -n 1 | sed -E 's/.*:[[:space:]]*"([^"]+)".*/\1/' || true)"
+    fi
+    if [[ -z "$PRIMARY_AGENT_ID" ]]; then
+        PRIMARY_AGENT_ID="$(grep -o '"agentId"[[:space:]]*:[[:space:]]*"[^"]*"' "$DESCRIPTOR_FILE" 2>/dev/null | head -n 1 | sed -E 's/.*:[[:space:]]*"([^"]+)".*/\1/' || true)"
+        AGENT_IDS="$PRIMARY_AGENT_ID"
+    fi
+fi
+
+# Fallback topic convention if not found in descriptor
+if [[ -z "$DEFAULT_TOPIC" ]]; then
+    DEFAULT_TOPIC="agent-${USE_CASE_NAME}-archive-control"
+fi
+
+if [[ -z "$PRIMARY_AGENT_ID" ]]; then
+    PRIMARY_AGENT_ID="$USE_CASE_NAME"
+    AGENT_IDS="$USE_CASE_NAME"
+fi
 
 TOPIC="${TOPIC_OVERRIDE:-$DEFAULT_TOPIC}"
+
+if [[ -n "$AGENT_IDS" ]]; then
+    SUCCESS_PATTERN="StatefulAgentProcessor(\[(${AGENT_IDS})\])?.*Archive reloaded.*v="
+else
+    SUCCESS_PATTERN="StatefulAgentProcessor.*Archive reloaded.*v="
+fi
 
 # ── Validate command ───────────────────────────────────────────────────────────
 case "$COMMAND" in
@@ -323,12 +456,12 @@ case "$COMMAND" in
 
         # StatefulAgentProcessor log markers
         info "Expected success log:"
-        echo "  [StatefulAgentProcessor[fraud-detection-agent]] ✓ Archive reloaded: v=${VERSION} requestId=${REQUEST_ID}"
+        echo "  [StatefulAgentProcessor[${PRIMARY_AGENT_ID}]] ✓ Archive reloaded: v=${VERSION} requestId=${REQUEST_ID}"
         echo ""
         info "On failure the error is logged at ERROR level on the TaskManager — there is"
         info "no DLQ topic.  The previous version stays active."
         info "Check logs for:"
-        echo "  [StatefulAgentProcessor[fraud-detection-agent]] ✗ Archive reload failed for requestId=${REQUEST_ID}"
+        echo "  [StatefulAgentProcessor[${PRIMARY_AGENT_ID}]] ✗ Archive reload failed for requestId=${REQUEST_ID}"
         echo ""
         info "To inspect raw TaskManager logs:"
         echo ""

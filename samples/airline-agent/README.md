@@ -254,42 +254,32 @@ entity. Each record has the form:
 ## 4. Decision rules
 
 All rules live in the Decision Intelligence archive (`AirlineDecisionService`). The decision project
-is organized in one rule project per operation, plus a shared data model (`AirlineDataModel`).
+has one rule project per operation (see [§1](#1-subscriptions-and-operations)) plus a shared data
+model, `AirlineDataModel`. The rules are described in detail in the documents under
+[`di-project/docs/`](di-project/docs/):
 
-| Rule project (operation) | Rule package | Rule | Purpose |
-|---|---|---|---|
-| Process Flight Event | Flight State Maintenance Rules | Flight Initialization Rule | On `FLIGHTOPEN`, store the validated flight and schedule the `CHECK-IN-OPEN` callback 48 h before departure |
-| | | Flight Delayed Rule | On `FLIGHTDELAYED`, store the new expected date on the flight |
-| | Flight Event Processing Rules | Flight Delayed Notification Rule | Notify of a delay, at most once per 30 minutes |
-| | | Detect Flight Possible Cancellation | Notify when a burst of delay events suggests a cancellation |
-| Process Schedule Event | Schedule Processing Rules | Check-In Open Rule | On `CHECK-IN-OPEN`, raise a flight notification |
-| | | Check-In Open Notify Passengers | On `CHECK-IN-OPEN`, notify every passenger of the flight |
-| Process Passenger Event | Initialization Rules | Find Passenger | Locate the passenger of the event in the flight |
-| | Passenger Event Processing Rules | Passenger Check-In | Check in the passenger if check-in is open (less than 48 h before departure) |
-| | | Early Passenger Check-In | Handle a check-in received more than 48 h before departure |
-| | | Passenger Cancel Check-In | Cancel the passenger check-in |
-| | Situation Detection Rules | Detect Meal Shortage Situation | Raise a `MealShortage` notification |
-| | | Meal Shortage Situation Cleared | Raise a `MealShortageCleared` notification |
-| Process Catering Event | Catering Event Rules | Save Catering Information | Store the received meal counts on the flight |
-| | Situation Detection | Detect Short Meal Situation | Raise a `MealShortage` notification |
-| | | Short Meal Situation Cleared | Raise a `MealShortageCleared` notification |
-
-### Meal shortage computation
-
-The catering situation of a flight is *good* unless one class is over its threshold, comparing the
-number of checked-in passengers to the number of meals loaded:
-
-| Class | Shortage when checked-in passengers exceed |
+| Document | Content |
 |---|---|
-| Economy | 95 % of the economy meals |
-| Business | 90 % of the business meals |
-| First | 85 % of the first-class meals |
+| [`ontology.md`](di-project/docs/ontology.md) | The business object model: concepts, properties, enumerations and helper functions used by the rules |
+| [`event-processing.md`](di-project/docs/event-processing.md) | The four operations, their ruleflows, and every rule package and rule (when it fires, what it does) |
+| [`situations.md`](di-project/docs/situations.md) | The business situations the rules detect: delay, possible cancellation, meal shortage (thresholds and state machine), early check-in, check-in opening |
 
-The flight keeps a `shortMealSituation` flag with start and end dates, so a notification is raised
-only when the situation changes, whether it is triggered by a passenger event (check-in or cancel
-check-in) or by a catering event (new meal counts).
+In short, the rules do the following:
+
+| Operation | What the rules do |
+|---|---|
+| `ProcessFlightEvent` | Initialize the flight on `FLIGHTOPEN` and schedule the `CHECK-IN-OPEN` callback 48 h before departure; store the new expected date and notify on `FLIGHTDELAYED` (at most once per 30 minutes, with a possible-cancellation warning on a burst of delays) |
+| `ProcessPassengerEvent` | Check in or cancel the check-in of the passenger, warn on a check-in more than 48 h before departure, and raise or clear the meal shortage |
+| `ProcessCateringEvent` | Store the received meal counts on the flight, then raise or clear the meal shortage |
+| `ProcessSchedule` | On `CHECK-IN-OPEN`, raise a flight notification and notify every passenger of the flight |
+
+The meal shortage is the only stateful situation: the flight keeps a `shortMealSituation` flag, so a
+notification is raised only when the situation changes, whichever event (passenger or catering)
+triggers it.
 
 ### Rule examples
+
+Rules are written in the Decision Intelligence business language. Three representative ones:
 
 ```
 // Flight Initialization Rule
@@ -325,21 +315,6 @@ then
 ```
 
 ```
-// Detect Flight Possible Cancellation
-if
-    the type of 'the flight event' is FLIGHT DELAYED
-  and
-    there are at least 2 Flight Events in 'the past flight events' during the period of 30 minutes before now where the type is FLIGHT DELAYED,
-then
-    define 'the notification' as a new Flight Notification where
-        the timestamp is now ,
-        the type is Information ,
-        the message is "Burst of Delay Event indicating a potential flight cancellation" ,
-        the flight number is the flight number of 'the flight' ;
-    add 'the notification' to the flight notifications of 'the result';
-```
-
-```
 // Detect Short Meal Situation (catering events)
 if
     'the flight' is not in short meal situation
@@ -353,36 +328,6 @@ then
       the message is `Meal shortage situation. Available meals: {the report of the catering information of 'the flight'}, Passenger information: {the passenger information of 'the flight' }` ,
       the flight number is the flight number of 'the flight';
     add 'the notification' to the flight notifications of 'the result' ;
-```
-
-```
-// Short Meal Situation Cleared (catering events)
-if
-    'the flight' is in short meal situation
-    and the catering situation for 'the flight' is good
-then
-    'the flight' does not get short meal situation ;
-    set the short meal situation end date of 'the flight' to now;
-    define 'the notification' as a new Flight Notification where
-      the timestamp is now ,
-      the type is Meal Shortage Cleared ,
-      the message is "Meal shortage situation is cleared" ,
-      the flight number is the flight number of 'the flight';
-    add 'the notification' to the flight notifications of 'the result' ;
-```
-
-```
-// Check-In Open Notify Passengers
-for each Passenger called 'the passenger' , in the passengers of 'the flight'
-if
-    the id of 'the schedule' is "CHECK-IN-OPEN"
-then
-    define 'the notification' as a new Passenger Notification where
-      the timestamp is now ,
-      the passenger number is the passenger id of 'the passenger' ,
-      the flight number is the flight number of 'the flight' ,
-      the message is `Checking for Flight: { the flight number of 'the flight'} is open. Please check-in online` ;
-    add 'the notification' to the passenger notifications of 'the result';
 ```
 
 ---
@@ -726,10 +671,10 @@ runtime, use [`scripts/get-dsa.sh`](scripts/get-dsa.sh). It saves
 `AirlineDecisionService_<version>.jar` into this directory:
 
 ```bash
-export RTSADMIN_USER=<user>
-export RTSADMIN_PASSWORD=<password>
+export DIADMIN_USER=<user>
+export DIADMIN_PASSWORD=<password>
 
-# Optional, defaults shown
+# Optional, defaults shown. Replace with URL of IBM DI CMS installation
 export DI_CMS_URL=https://localhost:3000
 export DI_TOKEN_URL=https://localhost:18082
 
@@ -751,7 +696,7 @@ topic `agent-airline-archive-control`.
 | Only one notification for several delay events | Expected: the *Flight Delayed Notification Rule* suppresses notifications when a delay was already received in the last 30 minutes |
 | Flink job fails at startup with the archive not found | `ruleset.path` in [`agents.json`](agents.json) must match the jar name present in this directory (currently `AirlineDecisionService_1.2.5.jar`) |
 | `409` when clicking **Deploy** | The job is already running. Stop it first, then redeploy |
-| Meal shortage not detected | Check that the catering counts and the `check-inStatus` / `checkinCounter` values lead to a count above the thresholds in [§4](#meal-shortage-computation) |
+| Meal shortage not detected | Check that the catering counts and the `check-inStatus` / `checkinCounter` values lead to a count above the thresholds described in [Situations — Meal shortage](di-project/docs/situations.md#3-meal-shortage) |
 | `FLIGHTOPEN` enrichment missing aircraft or passenger data | Verify the CSV files under `enrichment/` are present and the flight number in the event matches a row in `flights.csv` and `flight_passengers.csv`. Check the Flink TaskManager logs for enrichment warnings (or, with `agents-with-sql-enrichment.json`, for SQL startup errors). |
 | `sqlEnrichment` seems ignored | SQL enrichment only runs on the DataStream runtime. With `EVENT_RULE_RUNTIME=ptf` it is ignored (a warning is logged) and the CSV-based `enrichment` is used instead. |
 | Scenario re-run gives unexpected results | The flight entity state is kept for 7 months. Use the automatic entity-state reset after each scenario (default of `launch-demo-scenario.sh`, disabled by `--no-reset`) |

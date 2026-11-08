@@ -10,6 +10,7 @@ This directory contains operational scripts for managing Kafka topics, submittin
 | [`submit-events.sh`](submit-events.sh)                                       | Submit every object in a JSON array file as a separate Kafka message                                                                                     |
 | [`launch-demo-scenario.sh`](launch-demo-scenario.sh)                         | Run all or one named demo scenario from `samples/<use-case>/demo-scenarios.json`                                                                         |
 | [`broadcast-reload.sh`](broadcast-reload.sh)                                 | Publish an `ArchiveControlCmd` to trigger a live archive reload via Kafka broadcast state; supports `LOAD`, `PREFETCH`, `ROLLBACK`, and `NOOP`           |
+| [`get-dsa.sh`](get-dsa.sh)                                                   | Download a Decision Service Archive (`.jar`) from a DI runtime Zen API by use-case name or explicit archive name and version                            |
 | [`build-decision-service.sh`](build-decision-service.sh)                     | Build an IBM Decision Intelligence Decision Project directory or `.zip` file against a Decision Designer instance; outputs a ready-to-deploy archive JAR |
 | [`validate-deployment.sh`](validate-deployment.sh)                           | Validate the full deployment — checks infrastructure, descriptor integrity, Kafka topics, running Flink jobs, and reload configuration for each use case |
 | [`test-descriptor-loading.sh`](test-descriptor-loading.sh)                   | Run a lightweight test suite: checks `agents.json` presence, JSON syntax, required fields, `flinkJobName` values, Maven build, and FAT JAR              |
@@ -180,6 +181,45 @@ automatically with 1 partition (ordered delivery) if they do not exist.
 ```
 
 Agent pipeline errors are logged at ERROR level on the TaskManager (no DLQ topic). The previous version stays active on failure.
+
+---
+
+### `get-dsa.sh` — download Decision Service Archive from DI runtime
+
+Downloads a Decision Service Archive (`.jar`) from the IBM Decision Intelligence runtime via the Zen REST API.
+
+```bash
+# By use case (saves to samples/airline-agent/AirlineDecisionService_1.2.5.jar):
+./scripts/get-dsa.sh --use-case airline-agent --version 1.2.5
+
+# By archive name and output directory:
+./scripts/get-dsa.sh --archive Fraud_Detection_Service --version 1.5.2 --output samples/banking-fraud-agent
+
+# Positional shorthand:
+./scripts/get-dsa.sh banking-fraud-agent 1.5.2
+```
+
+**Required environment variables:**
+
+| Variable | Description | Example |
+|---|---|---|
+| `DI_ZEN_HOSTNAME` | Base URL of Zen REST API | `https://cpd-namespace.apps.example.com` |
+| `DI_ZEN_USERNAME` | Zen user name | `admin` |
+| `DI_ZEN_API_KEY` | Zen API key (plain text) | `xxxxxxxx` |
+
+**Options:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--use-case, -u <name>` | — | Sample / use-case directory name |
+| `--archive, -a <name>` | inferred from use-case / descriptor | Decision service archive name prefix |
+| `--version, -v <ver>` | — | Version string of the archive to fetch |
+| `--output, -o <path>` | sample directory or current dir | Output directory or `.jar` file path |
+| `--hostname <url>` | `DI_ZEN_HOSTNAME` | Zen REST API base URL |
+| `--username <user>` | `DI_ZEN_USERNAME` | Zen user name |
+| `--api-key <key>` | `DI_ZEN_API_KEY` | Zen API key |
+| `--deployment-space <s>` | `embedded` | Deployment space name |
+| `--skip-tls` | enabled (`-k`) | Disable TLS certificate verification |
 
 ---
 

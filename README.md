@@ -1,4 +1,4 @@
-# Event Rule
+# Event Rules
 
 > **Turn streaming event data into intelligent, real-time decisions — without touching application code.**
 
@@ -24,7 +24,7 @@
 9. [Running with Docker](#9-running-with-docker)
 10. [Running Locally](#10-running-locally)
 11. [Use Cases](#11-use-cases)
-12. [Generating an Event Rule Application with AI](#12-generating-an-event-rule-application-with-ai)
+12. [Generating an Event Rules Application with AI](#12-generating-an-event-rule-application-with-ai)
 13. [Demo Scenario Isolation](#13-demo-scenario-isolation)
 14. [Project Structure](#14-project-structure)
 15. [Monitoring and Troubleshooting](#15-monitoring-and-troubleshooting)
@@ -37,7 +37,7 @@
 
 ### What does this application do?
 
-Event Rule watches streams of business events in real time — transactions, orders, logins,
+Event Rules watches streams of business events in real time — transactions, orders, logins,
 account changes — and automatically makes decisions about each one.
 
 For example: when a bank transaction arrives, the application checks it against a set of
@@ -45,7 +45,7 @@ fraud-detection rules and immediately classifies it as **APPROVED**, **REQUIRES_
 **PENDING_REVIEW**, or **BLOCKED**. It does this continuously, for every event, with low latency
 (~100–150 ms end-to-end), and at scale.
 
-### What are Agent Event Rules?
+### What are Event Rules Agent?
 
 An **Agent** is a stateful processing unit that:
 
@@ -69,7 +69,7 @@ filtering.
 
 [IBM Decision Intelligence](https://www.ibm.com/products/decision-intelligence-client-managed-software)
 provides a visual authoring environment where business analysts write and manage rules using
-decision tables and natural-language sentences — no Java or Python required.
+decision tables and natural-language sentences — no Java, Python nor SQL required.
 
 Rules are packaged as a **Decision Service Archive** (a JAR file) and loaded directly into the
 running application. When rules change, the application automatically picks up the new archive —
@@ -77,7 +77,7 @@ running application. When rules change, the application automatically picks up t
 
 ### The core business value
 
-| Traditional Approach                                       | Agent Event Rules                                        |
+| Traditional Approach                                       | Event Rules Agent                                        |
 |--------------------------------------------------------------|--------------------------------------------------------------|
 | Business logic baked into application code                 | Logic lives in IBM Decision Intelligence Archives        |
 | Rule change = code change + build + test + redeploy (days) | Rule change = table edit + JAR export + `curl` (minutes) |
@@ -215,7 +215,7 @@ has two interchangeable Flink backends, selected at launch time (see
 
 ## 5. Flink Backends
 
-Event Rule has two Flink backends for the same `agents.json`. Both are supported and are selected
+Event Rules has two Flink backends for the same `agents.json`. Both are supported and are selected
 at launch time; the descriptor, the Decision Intelligence archive, the Kafka topics and the output
 events are identical.
 
@@ -829,7 +829,7 @@ Each component can also run outside Docker for local development:
 
 ## 11. Use Cases
 
-Event Rule ships with sample use cases under [`samples/`](samples/), each a self-contained
+Event Rules ships with sample use cases under [`samples/`](samples/), each a self-contained
 Agent descriptor, Decision Intelligence archive, and set of demo scenarios.
 
 **See [`samples/README.md`](samples/README.md)** for the full list of available use cases and
@@ -847,15 +847,15 @@ step-by-step guide, from creating the use-case directory through running and val
 
 ---
 
-## 12. Generating an Event Rule Application with AI
+## 12. Generating an Event Rules Application with AI
 
-You don't need to create every file of an Event Rule application by hand. Instead, you can
+You don't need to create every file of an Event Rules application by hand. Instead, you can
 describe the application you want in a **Markdown specification** and ask a capable coding AI
 assistant — such as [Claude](https://claude.ai) or [IBM Bob](https://ibm.com) — to generate
 the complete application configuration from that description.
 
 The AI reads your specification, studies the existing sample applications as worked examples,
-and produces the configuration file that every Event Rule application requires: `agents.json`.
+and produces the configuration file that every Event Rules application requires: `agents.json`.
 
 ---
 
@@ -945,7 +945,7 @@ Open the project in your AI coding assistant (Claude, Bob, or equivalent) and pr
 
 The prompt instructs the AI to:
 
-- Read your Event Rule Application specification.
+- Read your Event Rules Application specification.
 - Read the existing sample applications as worked examples.
 - Understand what files need to be generated and how they should be structured.
 - Generate `agents.json` for your application under a new directory inside `samples/`.
@@ -954,7 +954,7 @@ The prompt instructs the AI to:
 **Ready-to-copy prompt:**
 
 ````
-From samples/<YOUR-DIRECTORY>/<Your Application>.md, generate an Event Rule agents JSON
+From samples/<YOUR-DIRECTORY>/<Your Application>.md, generate an Event Rules agents JSON
 file in samples/<YOUR-DIRECTORY>/.
 
 Use the following existing samples as worked examples showing exactly how a Markdown
@@ -975,23 +975,18 @@ Replace `<YOUR-DIRECTORY>` with the folder name you chose (e.g. `my-app-agent`) 
 
 ### 12.3 Reference examples
 
-Two completed specifications are included in the repository. The Air Traffic Control example
+One completed specification is included in the repository. The Air Traffic Control example
 is paired with its fully generated output file:
 
 | Specification | Generated file |
 |---------------|----------------|
 | [`samples/airtraffic-agent/Air Traffic Control Application.md`](samples/airtraffic-agent/Air%20Traffic%20Control%20Application.md) | [`agents.json`](samples/airtraffic-agent/agents.json) |
-| [`samples/retail-agent/Retail Event Rule Application.md`](samples/retail-agent/Retail%20Event%20Rule%20Application.md) | *(specification only — useful as a second domain example)* |
 
 The **Air Traffic Control** example is the most complete reference: it contains two agents
 (`Aircraft Agent` and `Airport Agent`) that chain their output, uses multiple event horizons,
 and demonstrates every field that can appear in `agents.json`. Comparing
 the `.md` specification with the generated JSON file side by side is the fastest way to
 understand exactly how each section of the specification maps to the generated configuration.
-
-The **Retail Event Rule Application** specification illustrates a simpler single-agent application
-(a `Customer Agent` that tracks orders and generates promotions). Use it as an additional input
-example to confirm the AI generalises correctly to a different domain.
 
 ---
 

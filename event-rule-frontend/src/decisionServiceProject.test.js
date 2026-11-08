@@ -56,7 +56,7 @@ describe('decisionServiceProject', () => {
   it('explores the sample banking project zip', async () => {
     const zipPath = path.resolve(
       __dirname,
-      '../../samples/banking-fraud-agent/di-project/Fraud Detection Service.zip',
+      '../../samples/banking-fraud-agent/di-project/FraudDetectionService.zip',
     );
     const buf = fs.readFileSync(zipPath);
     const { operations, classes, attributes, operationVariables, operationOutputTypes } = await exploreDecisionServiceProject(buf);

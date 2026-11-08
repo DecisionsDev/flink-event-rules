@@ -56,8 +56,8 @@
         }
       ],
       "ruleset": {
-        "path": "samples/airtraffic-agent/AirTrafficControlService_1.2.1.jar",
-        "project": "samples/airtraffic-agent/di-project/Air Traffic Control Service.zip",
+        "path": "samples/airtraffic-agent/Air_Traffic_Control_Service_1.2.1.jar",
+        "project": "samples/airtraffic-agent/di-project/AirTrafficControlService.zip",
         "archiveControlTopic": "agent-atc-archive-control",
         "operations": [
           {
@@ -153,8 +153,8 @@
         }
       ],
       "ruleset": {
-        "path": "samples/airtraffic-agent/AirTrafficControlService_1.2.1.jar",
-        "project": "samples/airtraffic-agent/di-project/Air Traffic Control Service.zip",
+        "path": "samples/airtraffic-agent/Air_Traffic_Control_Service_1.2.1.jar",
+        "project": "samples/airtraffic-agent/di-project/AirTrafficControlService.zip",
         "archiveControlTopic": "agent-atc-archive-control",
         "operations": [
           {

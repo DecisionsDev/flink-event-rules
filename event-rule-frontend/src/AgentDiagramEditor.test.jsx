@@ -502,7 +502,7 @@ describe('AgentDiagramEditor', () => {
     });
 
     test('a registered Decision Service project is loaded when the editor opens', async () => {
-      const zipPath = path.resolve(__dirname, '../../samples/banking-fraud-agent/di-project/Fraud Detection Service.zip');
+      const zipPath = path.resolve(__dirname, '../../samples/banking-fraud-agent/di-project/FraudDetectionService.zip');
       const buf = fs.readFileSync(zipPath);
       const arrayBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       const fetchMock = vi.fn(async () => ({ ok: true, arrayBuffer: async () => arrayBuffer }));
@@ -513,11 +513,11 @@ describe('AgentDiagramEditor', () => {
           initialFolderName="orders"
           initialDescriptor={{
             ...descriptor,
-            agents: [{ ...descriptor.agents[0], ruleset: { ...descriptor.agents[0].ruleset, project: 'samples/orders/di-project/Fraud Detection Service.zip' } }],
+            agents: [{ ...descriptor.agents[0], ruleset: { ...descriptor.agents[0].ruleset, project: 'samples/orders/di-project/FraudDetectionService.zip' } }],
           }}
         />,
       );
-      expect(fetchMock.mock.calls[0][0]).toMatch(/\/api\/project-file\?path=samples%2Forders%2Fdi-project%2FFraud%20Detection%20Service\.zip$/);
+      expect(fetchMock.mock.calls[0][0]).toMatch(/\/api\/project-file\?path=samples%2Forders%2Fdi-project%2FFraudDetectionService\.zip$/);
       // selecting the linked topic shows its Event Type selector, fed by the project's classes
       fireEvent.click(screen.getAllByText('Orders', { selector: '.ade-node-name' })[0].closest('.ade-node'));
       await waitFor(() => expect(document.querySelector('option[value="AccountEvent"]')).not.toBeNull());

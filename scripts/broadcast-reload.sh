@@ -62,11 +62,11 @@
 # Examples:
 #   # From project root:
 #   ./scripts/broadcast-reload.sh --use-case retail-agent \
-#       --jar samples/retail-agent/RetailDecisionService_1.2.1.jar
+#       --jar samples/retail-agent/RetailPromotionService_1.2.1.jar
 #
 #   # From scripts/ directory:
 #   ./broadcast-reload.sh --use-case retail-agent \
-#       --jar ../samples/retail-agent/RetailDecisionService_1.2.1.jar
+#       --jar ../samples/retail-agent/RetailPromotionService_1.2.1.jar
 #
 #   # Banking fraud agent: deploy a new fraud-detection JAR
 #   ./scripts/broadcast-reload.sh --use-case banking-fraud-agent \
@@ -74,18 +74,18 @@
 #
 #   # Prefetch, then load (minimises checkpoint-barrier blocking window)
 #   ./scripts/broadcast-reload.sh --use-case retail-agent \
-#       --jar samples/retail-agent/RetailDecisionService_1.2.1.jar --command PREFETCH
+#       --jar samples/retail-agent/RetailPromotionService_1.2.1.jar --command PREFETCH
 #   ./scripts/broadcast-reload.sh --use-case retail-agent \
-#       --jar samples/retail-agent/RetailDecisionService_1.2.1.jar --command LOAD --wait
+#       --jar samples/retail-agent/RetailPromotionService_1.2.1.jar --command LOAD --wait
 #
 #   # Rollback to a previous version
 #   ./scripts/broadcast-reload.sh --use-case retail-agent --command ROLLBACK \
-#       --archive-url file:///opt/flink/samples/retail-agent/RetailDecisionService_1.2.0.jar \
+#       --archive-url file:///opt/flink/samples/retail-agent/RetailPromotionService_1.2.0.jar \
 #       --sha256 3f9a1b2c... --version v1.2.0
 #
 #   # Preview message without publishing
 #   ./scripts/broadcast-reload.sh --use-case retail-agent \
-#       --jar samples/retail-agent/RetailDecisionService_1.2.1.jar --dry-run
+#       --jar samples/retail-agent/RetailPromotionService_1.2.1.jar --dry-run
 
 set -euo pipefail
 

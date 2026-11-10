@@ -56,7 +56,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *   <li>POST /api/agents — 201, saved=true, useCaseId and path in response</li>
  *   <li>POST /api/agents — descriptor persisted: GET /api/agents/:id returns it</li>
  *   <li>POST /api/agents — new agent appears in GET /api/agents list</li>
- *   <li>POST /api/agents — agent-banking protected use case update while running rejected (if running)</li>
+ *   <li>POST /api/agents — banking-fraud-agent protected use case update while running rejected (if running)</li>
  *   <li>POST /api/agents — validation: missing useCaseId → 400</li>
  *   <li>POST /api/agents — validation: invalid useCaseId → 400</li>
  *   <li>POST /api/agents — validation: missing descriptor → 400</li>

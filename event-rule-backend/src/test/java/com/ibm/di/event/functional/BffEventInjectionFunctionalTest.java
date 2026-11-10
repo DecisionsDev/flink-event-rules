@@ -18,6 +18,8 @@
 package com.ibm.di.event.functional;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.*;
 
 import java.net.http.HttpResponse;
@@ -46,9 +48,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *   <li>Happy path: single transaction event injected → 200, published=1</li>
  *   <li>Happy path: batch of 3 events injected in one call → published=3</li>
  *   <li>Account-created event injected to correct topic → 200</li>
- *   <li>Order event injected to agent-orders topic → 200</li>
- *   <li>Product-view event injected to agent-product-views topic → 200</li>
- *   <li>Response body contains correct topic field</li>
+ *   <li>Order event injected to agent-purchases topic → 200</li>
+ *   <li>Product-view event injected to agent-browse-events topic → 200</li>
+ *   <li>Response body is {"published": n} (the topic is per event, so it is not echoed)</li>
  *   <li>Response body published count matches events array size</li>
  *   <li>Validation: missing topic field → 400</li>
  *   <li>Validation: topic is empty string → 400</li>
@@ -61,8 +63,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *   <li>Banking fraud scenario: large transaction injected to transactions topic</li>
  *   <li>Banking fraud scenario: frozen-account sequence (account + transaction) injected</li>
  *   <li>Banking fraud scenario: velocity-check sequence (6 transactions) injected</li>
- *   <li>Retail scenario: order event injected to agent-orders</li>
- *   <li>Retail scenario: product-view event injected to agent-product-views</li>
+ *   <li>Retail scenario: order event injected to agent-purchases</li>
+ *   <li>Retail scenario: product-view event injected to agent-browse-events</li>
  * </ul>
  */
 @DisplayName("BFF Event Injection — functional tests")
@@ -71,11 +73,11 @@ class BffEventInjectionFunctionalTest {
 
     // Banking topics from agents.json
     private static final String TOPIC_TRANSACTIONS    = "agent-transactions";
-    private static final String TOPIC_ACCOUNT_CREATED = "agent-account-created-events";
+    private static final String TOPIC_ACCOUNT_CREATED = "agent-account-events";
 
     // Retail topics from agents.json
-    private static final String TOPIC_ORDERS          = "agent-orders";
-    private static final String TOPIC_PRODUCT_VIEWS   = "agent-product-views";
+    private static final String TOPIC_ORDERS          = "agent-purchases";
+    private static final String TOPIC_PRODUCT_VIEWS   = "agent-browse-events";
 
     @BeforeAll
     static void requireStack() {
@@ -187,10 +189,14 @@ class BffEventInjectionFunctionalTest {
      */
     private static HttpResponse<String> injectEvents(String useCase, String topic,
                                                       String eventsArray) throws Exception {
-        String body = """
-            {"topic":"%s","events":%s}
-            """.formatted(topic, eventsArray);
-        return post("/api/use-cases/" + useCase + "/events", body);
+        // Current API: POST /api/use-cases/:id/events { events: [ { topic, payload }, ... ] }
+        // (the topic is per event, so one request can mix topics).
+        ObjectNode body = MAPPER.createObjectNode();
+        ArrayNode events = body.putArray("events");
+        for (JsonNode payload : MAPPER.readTree(eventsArray)) {
+            events.addObject().put("topic", topic).set("payload", payload);
+        }
+        return post("/api/use-cases/" + useCase + "/events", MAPPER.writeValueAsString(body));
     }
 
     // ── Happy-path: banking transactions ─────────────────────────────────────
@@ -200,20 +206,18 @@ class BffEventInjectionFunctionalTest {
     class BankingTransactionHappyPath {
 
         @Test
-        @DisplayName("single transaction event → 200, published=1, topic matches")
+        @DisplayName("single transaction event → 200, published=1")
         void singleTransactionInjected() throws Exception {
             String txId = "FT-SINGLE-" + UUID.randomUUID().toString().substring(0, 8);
             String eventsJson = "[" + transactionPayload(txId, "ACC-FT-001", 45.99) + "]";
 
-            HttpResponse<String> res = injectEvents("agent-banking", TOPIC_TRANSACTIONS, eventsJson);
+            HttpResponse<String> res = injectEvents("banking-fraud-agent", TOPIC_TRANSACTIONS, eventsJson);
 
             assertEquals(200, res.statusCode(),
                 "Expected 200 from event injection: " + res.body());
             JsonNode body = json(res);
             assertEquals(1, body.path("published").asInt(),
                 "Expected published=1: " + res.body());
-            assertEquals(TOPIC_TRANSACTIONS, body.path("topic").asText(),
-                "Response topic must match request topic");
         }
 
         @Test
@@ -226,7 +230,7 @@ class BffEventInjectionFunctionalTest {
                 transactionPayload("FT-B3", accountId, 30.00) +
                 "]";
 
-            HttpResponse<String> res = injectEvents("agent-banking", TOPIC_TRANSACTIONS, eventsJson);
+            HttpResponse<String> res = injectEvents("banking-fraud-agent", TOPIC_TRANSACTIONS, eventsJson);
 
             assertEquals(200, res.statusCode(),
                 "Expected 200 from batch injection: " + res.body());
@@ -240,7 +244,7 @@ class BffEventInjectionFunctionalTest {
             String txId = "FT-LARGE-" + UUID.randomUUID().toString().substring(0, 8);
             String eventsJson = "[" + transactionPayload(txId, "ACC-FT-LARGE-001", 14500.00) + "]";
 
-            HttpResponse<String> res = injectEvents("agent-banking", TOPIC_TRANSACTIONS, eventsJson);
+            HttpResponse<String> res = injectEvents("banking-fraud-agent", TOPIC_TRANSACTIONS, eventsJson);
 
             assertEquals(200, res.statusCode(),
                 "Large transaction injection must succeed: " + res.body());
@@ -260,7 +264,7 @@ class BffEventInjectionFunctionalTest {
             String accountId = "ACC-FT-AC-" + UUID.randomUUID().toString().substring(0, 8);
             String eventsJson = "[" + accountPayload(accountId, "ACTIVE") + "]";
 
-            HttpResponse<String> res = injectEvents("agent-banking", TOPIC_ACCOUNT_CREATED, eventsJson);
+            HttpResponse<String> res = injectEvents("banking-fraud-agent", TOPIC_ACCOUNT_CREATED, eventsJson);
 
             assertEquals(200, res.statusCode(),
                 "Expected 200 for account-created injection: " + res.body());
@@ -281,13 +285,13 @@ class BffEventInjectionFunctionalTest {
 
             // Step 1: inject account-created with FROZEN status
             String accountJson = "[" + accountPayload(accountId, "FROZEN") + "]";
-            HttpResponse<String> accountRes = injectEvents("agent-banking", TOPIC_ACCOUNT_CREATED, accountJson);
+            HttpResponse<String> accountRes = injectEvents("banking-fraud-agent", TOPIC_ACCOUNT_CREATED, accountJson);
             assertEquals(200, accountRes.statusCode(),
                 "Account injection must succeed: " + accountRes.body());
 
             // Step 2: inject transaction for that account
             String txJson = "[" + transactionPayload("FT-FRZ-TX", accountId, 75.00) + "]";
-            HttpResponse<String> txRes = injectEvents("agent-banking", TOPIC_TRANSACTIONS, txJson);
+            HttpResponse<String> txRes = injectEvents("banking-fraud-agent", TOPIC_TRANSACTIONS, txJson);
             assertEquals(200, txRes.statusCode(),
                 "Transaction injection must succeed after frozen account: " + txRes.body());
 
@@ -312,7 +316,7 @@ class BffEventInjectionFunctionalTest {
             }
             sb.append("]");
 
-            HttpResponse<String> res = injectEvents("agent-banking", TOPIC_TRANSACTIONS, sb.toString());
+            HttpResponse<String> res = injectEvents("banking-fraud-agent", TOPIC_TRANSACTIONS, sb.toString());
 
             assertEquals(200, res.statusCode(),
                 "6-transaction velocity batch must succeed: " + res.body());
@@ -334,12 +338,11 @@ class BffEventInjectionFunctionalTest {
             String customerId = "CUST-FT-" + UUID.randomUUID().toString().substring(0, 8);
             String eventsJson = "[" + orderPayload(orderId, customerId) + "]";
 
-            HttpResponse<String> res = injectEvents("agent-retail", TOPIC_ORDERS, eventsJson);
+            HttpResponse<String> res = injectEvents("retail-agent", TOPIC_ORDERS, eventsJson);
 
             assertEquals(200, res.statusCode(),
                 "Order injection must succeed: " + res.body());
             assertEquals(1, json(res).path("published").asInt());
-            assertEquals(TOPIC_ORDERS, json(res).path("topic").asText());
         }
 
         @Test
@@ -349,12 +352,11 @@ class BffEventInjectionFunctionalTest {
             String customerId = "CUST-FT-" + UUID.randomUUID().toString().substring(0, 8);
             String eventsJson = "[" + productViewPayload(productId, customerId) + "]";
 
-            HttpResponse<String> res = injectEvents("agent-retail", TOPIC_PRODUCT_VIEWS, eventsJson);
+            HttpResponse<String> res = injectEvents("retail-agent", TOPIC_PRODUCT_VIEWS, eventsJson);
 
             assertEquals(200, res.statusCode(),
                 "Product-view injection must succeed: " + res.body());
             assertEquals(1, json(res).path("published").asInt());
-            assertEquals(TOPIC_PRODUCT_VIEWS, json(res).path("topic").asText());
         }
 
         @Test
@@ -362,12 +364,12 @@ class BffEventInjectionFunctionalTest {
         void productViewThenOrder() throws Exception {
             String customerId = "CUST-FT-SEQ-" + UUID.randomUUID().toString().substring(0, 8);
 
-            HttpResponse<String> viewRes = injectEvents("agent-retail", TOPIC_PRODUCT_VIEWS,
+            HttpResponse<String> viewRes = injectEvents("retail-agent", TOPIC_PRODUCT_VIEWS,
                 "[" + productViewPayload("PROD-SEQ-001", customerId) + "]");
             assertEquals(200, viewRes.statusCode(),
                 "Product view injection must succeed: " + viewRes.body());
 
-            HttpResponse<String> orderRes = injectEvents("agent-retail", TOPIC_ORDERS,
+            HttpResponse<String> orderRes = injectEvents("retail-agent", TOPIC_ORDERS,
                 "[" + orderPayload("ORD-SEQ-001", customerId) + "]");
             assertEquals(200, orderRes.statusCode(),
                 "Order injection must succeed after product view: " + orderRes.body());
@@ -384,9 +386,9 @@ class BffEventInjectionFunctionalTest {
         @DisplayName("missing topic field → 400")
         void missingTopic400() throws Exception {
             String body = """
-                {"events":[{"key":"value"}]}
+                {"events":[{"payload":{"key":"value"}}]}
                 """;
-            HttpResponse<String> res = post("/api/use-cases/agent-banking/events", body);
+            HttpResponse<String> res = post("/api/use-cases/banking-fraud-agent/events", body);
             assertEquals(400, res.statusCode(),
                 "Expected 400 when topic is missing: " + res.body());
         }
@@ -395,9 +397,9 @@ class BffEventInjectionFunctionalTest {
         @DisplayName("topic is empty string → 400")
         void emptyTopic400() throws Exception {
             String body = """
-                {"topic":"","events":[{"key":"value"}]}
+                {"events":[{"topic":"","payload":{"key":"value"}}]}
                 """;
-            HttpResponse<String> res = post("/api/use-cases/agent-banking/events", body);
+            HttpResponse<String> res = post("/api/use-cases/banking-fraud-agent/events", body);
             assertEquals(400, res.statusCode(),
                 "Expected 400 when topic is empty: " + res.body());
         }
@@ -406,9 +408,9 @@ class BffEventInjectionFunctionalTest {
         @DisplayName("events is empty array → 400")
         void emptyEventsArray400() throws Exception {
             String body = """
-                {"topic":"agent-transactions","events":[]}
+                {"events":[]}
                 """;
-            HttpResponse<String> res = post("/api/use-cases/agent-banking/events", body);
+            HttpResponse<String> res = post("/api/use-cases/banking-fraud-agent/events", body);
             assertEquals(400, res.statusCode(),
                 "Expected 400 for empty events array: " + res.body());
         }
@@ -417,9 +419,9 @@ class BffEventInjectionFunctionalTest {
         @DisplayName("events field absent → 400")
         void missingEventsField400() throws Exception {
             String body = """
-                {"topic":"agent-transactions"}
+                {}
                 """;
-            HttpResponse<String> res = post("/api/use-cases/agent-banking/events", body);
+            HttpResponse<String> res = post("/api/use-cases/banking-fraud-agent/events", body);
             assertEquals(400, res.statusCode(),
                 "Expected 400 when events field is absent: " + res.body());
         }
@@ -427,12 +429,12 @@ class BffEventInjectionFunctionalTest {
         @Test
         @DisplayName("topic not declared in use-case descriptor → 400 with knownTopics")
         void unknownTopicForUseCase400() throws Exception {
-            // agent-banking only has agent-transactions and agent-account-created-events;
-            // injecting to agent-orders (a retail topic) must fail
+            // banking-fraud-agent only has agent-transactions and agent-account-events;
+            // injecting to agent-purchases (a retail topic) must fail
             String body = """
-                {"topic":"agent-orders","events":[{"key":"value"}]}
+                {"events":[{"topic":"agent-purchases","payload":{"key":"value"}}]}
                 """;
-            HttpResponse<String> res = post("/api/use-cases/agent-banking/events", body);
+            HttpResponse<String> res = post("/api/use-cases/banking-fraud-agent/events", body);
             assertEquals(400, res.statusCode(),
                 "Expected 400 for topic not in use-case descriptor: " + res.body());
             JsonNode bodyJson = json(res);
@@ -444,7 +446,7 @@ class BffEventInjectionFunctionalTest {
         @DisplayName("unknown use case → 404")
         void unknownUseCase404() throws Exception {
             String body = """
-                {"topic":"agent-transactions","events":[{"key":"value"}]}
+                {"events":[{"topic":"agent-transactions","payload":{"key":"value"}}]}
                 """;
             HttpResponse<String> res = post("/api/use-cases/no-such-use-case-xyz/events", body);
             assertEquals(404, res.statusCode(),
@@ -455,7 +457,7 @@ class BffEventInjectionFunctionalTest {
         @DisplayName("invalid use case id (path traversal) → 400")
         void invalidUseCaseId400() throws Exception {
             String body = """
-                {"topic":"agent-transactions","events":[{"key":"value"}]}
+                {"events":[{"topic":"agent-transactions","payload":{"key":"value"}}]}
                 """;
             HttpResponse<String> res = post("/api/use-cases/../etc/events", body);
             assertTrue(res.statusCode() == 400 || res.statusCode() == 404,
@@ -473,7 +475,7 @@ class BffEventInjectionFunctionalTest {
         @DisplayName("success response has 'published' integer field")
         void responseHasPublishedField() throws Exception {
             String eventsJson = "[" + transactionPayload("FT-RS-001", "ACC-FT-RS-001", 10.00) + "]";
-            HttpResponse<String> res = injectEvents("agent-banking", TOPIC_TRANSACTIONS, eventsJson);
+            HttpResponse<String> res = injectEvents("banking-fraud-agent", TOPIC_TRANSACTIONS, eventsJson);
             assertEquals(200, res.statusCode());
             JsonNode body = json(res);
             assertTrue(body.has("published") && body.path("published").isInt(),
@@ -481,20 +483,10 @@ class BffEventInjectionFunctionalTest {
         }
 
         @Test
-        @DisplayName("success response has 'topic' string field matching request")
-        void responseHasTopicField() throws Exception {
-            String eventsJson = "[" + transactionPayload("FT-RS-002", "ACC-FT-RS-002", 10.00) + "]";
-            HttpResponse<String> res = injectEvents("agent-banking", TOPIC_TRANSACTIONS, eventsJson);
-            assertEquals(200, res.statusCode());
-            assertEquals(TOPIC_TRANSACTIONS, json(res).path("topic").asText(),
-                "Response 'topic' must match the requested topic");
-        }
-
-        @Test
         @DisplayName("Content-Type is application/json on success")
         void contentTypeJson() throws Exception {
             String eventsJson = "[" + transactionPayload("FT-RS-003", "ACC-FT-RS-003", 10.00) + "]";
-            HttpResponse<String> res = injectEvents("agent-banking", TOPIC_TRANSACTIONS, eventsJson);
+            HttpResponse<String> res = injectEvents("banking-fraud-agent", TOPIC_TRANSACTIONS, eventsJson);
             assertTrue(res.headers().firstValue("Content-Type").orElse("").contains("application/json"),
                 "Expected Content-Type: application/json from event injection");
         }

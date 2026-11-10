@@ -721,7 +721,7 @@ export DI_USERNAME="<cp4ba-username>"
 export DI_API_KEY="<zen-api-key>"
 
 ./scripts/build-decision-service.sh \
-  --project "samples/banking-fraud-agent/di-project/Fraud Detection Service.zip" \
+  --project "samples/banking-fraud-agent/di-project/FraudDetectionService.zip" \
   --output ./dist \
   --di-url "https://cpd-cp4a.mycompany.com/ads"
 ```

@@ -124,12 +124,40 @@ echo ""
 # ─── Test 6: Maven build ───────────────────────────────────────────────────────
 # Uses 'compile' (not 'clean compile') so that a pre-existing FAT JAR checked by
 # Test 8 is not deleted by the clean phase.
+# Same Maven invocation as build.sh: the IBM Decision artifacts (foundation, engine-de-api,
+# execution-api and, transitively, annotations) are not on Maven Central; they are served by the
+# Decision Designer Maven repository declared in settings.xml (profile maven-designer), which needs
+# DI_ZEN_HOSTNAME and DI_ZEN_API_KEY_B64. When both are set the test builds exactly like build.sh.
+# Without them Maven uses the developer's own ~/.m2/settings.xml (which may already define an IBM
+# repository); if that cannot resolve the artifacts either, the failure explains what is missing.
 echo "Test 6: Maven build"
-cd event-rule-backend
-if mvn compile -q 2>/dev/null; then
+MVN_LOG="$(mktemp)"
+trap 'rm -f "$MVN_LOG"' EXIT
+MVN_ARGS=(compile -q --batch-mode)
+if [ -n "${DI_ZEN_HOSTNAME:-}" ] && [ -n "${DI_ZEN_API_KEY_B64:-}" ]; then
+  # --settings replaces ~/.m2/settings.xml, exactly as in build.sh.
+  MVN_ARGS+=(--settings "$PROJECT_ROOT/settings.xml" -P maven-designer)
+fi
+if [ "${DI_SKIP_TLS_VERIFY:-false}" = "true" ]; then
+  # Maven 3.9's default transport ignores maven.wagon.http.ssl.*: force Wagon, as resolve-di-dependencies.sh does.
+  MVN_ARGS+=(-Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true)
+fi
+if (cd event-rule-backend && mvn "${MVN_ARGS[@]}") >"$MVN_LOG" 2>&1; then
   pass "Maven build successful"
 else
   fail "Maven build failed"
+  # Show Maven's own error (no secret is printed by Maven: the API key is only sent as a header).
+  grep -E '^\[ERROR\]' "$MVN_LOG" | head -12 | sed 's/^/    /'
+  if grep -qE 'Could not (find|resolve)|was not found|could not be resolved|Could not transfer' "$MVN_LOG"; then
+    echo "    Dependency resolution failed. com.ibm.decision:* and com.ibm.decision.execution:* are not on Maven Central:"
+    echo "    they come from the Decision Designer Maven repository (settings.xml, profile maven-designer)."
+    if [ -z "${DI_ZEN_HOSTNAME:-}" ] || [ -z "${DI_ZEN_API_KEY_B64:-}" ]; then
+      echo "    DI_ZEN_HOSTNAME and/or DI_ZEN_API_KEY_B64 is not set: export both (see scripts/resolve-di-dependencies.sh)."
+    else
+      echo "    Check that https://${DI_ZEN_HOSTNAME}/ads/static/maven-releases is reachable from this host and that"
+      echo "    DI_ZEN_API_KEY_B64 = base64(username:apikey) is valid (and DI_SKIP_TLS_VERIFY=true for a self-signed certificate)."
+    fi
+  fi
 fi
 cd "$PROJECT_ROOT"
 echo ""

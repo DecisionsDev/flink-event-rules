@@ -42,19 +42,19 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * End-to-end integration test for the Retail Next Best Offer Agent.
+ * End-to-end integration test for the Retail Promotion Agent.
  *
  * <h2>What this test does</h2>
  * <ol>
- *   <li>Deploys the Retail Next Best Offer Agent sample by calling
+ *   <li>Deploys the Retail Promotion Agent sample by calling
  *       {@code POST /api/agents} on the running BFF, then
- *       {@code POST /api/agents/retail-next-best-offer-agent/start} to submit the Flink job.</li>
+ *       {@code POST /api/agents/retail-agent/start} to submit the Flink job.</li>
  *   <li>Waits until the Flink job is running (polls {@code GET /api/flink/status}).</li>
- *   <li>Injects multi-event context sequence (CustomerEvent -> ProductEvent -> InventoryEvent ->
- *       PromotionEvent -> ShoppingEvent) directly to Kafka topics.</li>
- *   <li>Waits for the agent to process the events and evaluate the decision pipeline to produce
- *       a {@code NextBestOffer} event on the {@code agent-next-best-offers} topic.</li>
- *   <li>Validates the presence and field assertions of the {@code NextBestOffer} event.</li>
+ *   <li>Injects the events of the {@code large-purchase-reward} scenario of
+ *       {@code samples/retail-agent/demo-scenarios.json} (onboarding + purchases) directly to Kafka,
+ *       for a customer id that is unique to this run.</li>
+ *   <li>Waits for the agent to publish a {@code Promotion} on the {@code agent-promotions} topic.</li>
+ *   <li>Validates the {@code Promotion} (10% discount, SPORT category, reward message).</li>
  *   <li>Cleans up the deployed agent via {@code POST /api/agents/:id/stop}
  *       then {@code DELETE /api/agents/:id}.</li>
  * </ol>
@@ -66,7 +66,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *
  * <p>This test is only activated by the {@code -Pe2e} Maven profile when live infrastructure is available.
  */
-@DisplayName("Retail Next Best Offer Agent — end-to-end test")
+@DisplayName("Retail Promotion Agent — end-to-end test")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class RetailAgentE2ETest {
 
@@ -82,17 +82,21 @@ class RetailAgentE2ETest {
 
     // ── Kafka topic names (must match agents.json) ───────────
 
-    private static final String TOPIC_CUSTOMER_EVENTS  = "agent-customer-events";
-    private static final String TOPIC_PRODUCT_EVENTS   = "agent-product-events";
-    private static final String TOPIC_INVENTORY_EVENTS = "agent-inventory-events";
-    private static final String TOPIC_PROMOTION_EVENTS = "agent-promotion-events";
-    private static final String TOPIC_SHOPPING_EVENTS  = "agent-shopping-events";
-    private static final String TOPIC_NEXT_BEST_OFFERS = "agent-next-best-offers";
+    private static final String TOPIC_PROMOTIONS = "agent-promotions";
+    private static final String TOPIC_CUSTOMER_CHANGELOG = "agent-customer-entity-changelog";
+    private static final long BARRIER_TIMEOUT_MS = 20_000;
+    private static final long BARRIER_GRACE_MS = 10_000;
 
     // ── Agent IDs ─────────────────────────────────────────────────────────────
 
     private static final String USE_CASE_ID = "retail-agent";
-    private static final String AGENT_NAME  = "Retail Next Best Offer Agent";
+    /** Flink job name: {@code flinkJobName} in samples/retail-agent/agents.json. */
+    private static final String AGENT_NAME  = "Retail Promotion Agent";
+
+    /** Scenario of samples/retail-agent/demo-scenarios.json used by this test. */
+    private static final String SCENARIO_ID = "large-purchase-reward";
+    /** Customer id hard-coded in that scenario; replaced by a unique id for each run. */
+    private static final String SCENARIO_CUSTOMER_ID = "WM";
 
     // ── Shared state ──────────────────────────────────────────────────────────
 
@@ -117,7 +121,7 @@ class RetailAgentE2ETest {
 
     @Test
     @Order(1)
-    @DisplayName("Step 1: POST /api/agents — deploy Retail Next Best Offer Agent")
+    @DisplayName("Step 1: POST /api/agents — deploy Retail Promotion Agent")
     void step1_deployAgent() throws Exception {
         String body = retailAgentBody();
         HttpResponse<String> res = post("/api/agents", body);
@@ -149,7 +153,7 @@ class RetailAgentE2ETest {
 
     @Test
     @Order(3)
-    @DisplayName("Step 3: Wait until the Retail Next Best Offer Agent job is RUNNING in Flink")
+    @DisplayName("Step 3: Wait until the Retail Promotion Agent job is RUNNING in Flink")
     void step3_waitForJobRunning() {
         assumeTrue(agentStarted, "Agent was not started — skipping");
         boolean running = waitForFlinkJob(AGENT_NAME, AGENT_STARTUP_TIMEOUT_MS);
@@ -158,116 +162,72 @@ class RetailAgentE2ETest {
             + (AGENT_STARTUP_TIMEOUT_MS / 1000) + "s. Check Flink UI at " + BFF_URL + "/api/flink/status");
     }
 
-    // ── Step 4: inject context events and shopping trigger ────────────────────
+    // ── Step 4: inject the scenario events ────────────────────────────────────
 
     @Test
     @Order(4)
-    @DisplayName("Step 4: Inject multi-context events and trigger shopping event to Kafka")
+    @DisplayName("Step 4: Inject the large-purchase-reward scenario events to Kafka")
     void step4_injectInputEvents() throws Exception {
         assumeTrue(agentStarted, "Agent was not started — skipping");
 
-        String customerId = "CUST-E2E-" + System.currentTimeMillis();
-
-        // 1. Customer Context
-        ObjectNode customerEvent = MAPPER.createObjectNode();
-        ObjectNode customerContext = customerEvent.putObject("customerContext");
-        customerContext.put("customerIdentifier", customerId);
-        customerContext.put("customerProfile", "premium");
-        ObjectNode loyalty = customerContext.putObject("loyaltyInformation");
-        loyalty.put("loyaltyPoints", 1500);
-        loyalty.put("loyaltyStatus", "Gold");
-        var history = customerContext.putArray("purchaseHistory");
-        history.add("headphones").add("laptop").add("tablet").add("speaker").add("keyboard").add("monitor");
-
-        // 2. Product Context
-        ObjectNode productEvent = MAPPER.createObjectNode();
-        productEvent.putObject("customerContext").put("customerIdentifier", customerId);
-        ObjectNode productContext = productEvent.putObject("productContext");
-        ObjectNode productDetails = productContext.putObject("productDetails");
-        productDetails.put("productId", "HEADPHONES-PRO-X1");
-        productDetails.put("productCategory", "Electronics");
-        productDetails.put("productPrice", 649.99);
-        var compProducts = productContext.putArray("complementaryProducts");
-        ObjectNode compItem = compProducts.addObject();
-        compItem.put("productId", "CARRYING-CASE-X1");
-        compItem.put("productCategory", "Accessories");
-        compItem.put("productPrice", 49.99);
-
-        // 3. Inventory Context
-        ObjectNode inventoryEvent = MAPPER.createObjectNode();
-        inventoryEvent.putObject("customerContext").put("customerIdentifier", customerId);
-        ObjectNode inventoryContext = inventoryEvent.putObject("inventoryContext");
-        inventoryContext.put("productAvailability", true);
-        inventoryContext.put("storeInventory", 12);
-        inventoryContext.put("inventoryConstraints", "None");
-
-        // 4. Promotion Context
-        ObjectNode promotionEvent = MAPPER.createObjectNode();
-        promotionEvent.putObject("customerContext").put("customerIdentifier", customerId);
-        ObjectNode promotionContext = promotionEvent.putObject("promotionContext");
-        var availPromos = promotionContext.putArray("availablePromotions");
-        ObjectNode promo = availPromos.addObject();
-        promo.put("product", "Carrying Case X1");
-        promo.put("discountPercentage", 15.0);
-        promo.put("promotionType", "ACCESSORY_DISCOUNT");
-        promotionContext.put("discountRules", "15% off carrying case with premium Electronics purchase");
-        promotionContext.put("promotionEligibility", "Gold loyalty members");
-        promotionContext.put("promotionValidity", "2026-12-31");
-
-        // 5. Shopping Event (Trigger)
-        ObjectNode shoppingEvent = MAPPER.createObjectNode();
-        shoppingEvent.putObject("customerContext").put("customerIdentifier", customerId);
-        ObjectNode shoppingContext = shoppingEvent.putObject("shoppingContext");
-        shoppingContext.put("eventType", "PRODUCT_VIEW");
-        ObjectNode shoppingProduct = shoppingContext.putObject("productInformation");
-        shoppingProduct.put("productId", "HEADPHONES-PRO-X1");
-        shoppingProduct.put("productCategory", "Electronics");
-        shoppingProduct.put("productPrice", 649.99);
-        shoppingContext.put("searchQuery", "wireless noise cancelling headphones");
-        ObjectNode store = shoppingContext.putObject("storeContext");
-        store.put("storeId", "STORE-NYC-001");
-        store.put("storeLocation", "New York, NY");
+        String customerId = "E2E-" + System.currentTimeMillis();
+        JsonNode events = loadScenarioEvents(customerId);
+        assertTrue(events.isArray() && events.size() > 0,
+            "Scenario '" + SCENARIO_ID + "' has no events");
 
         try (KafkaProducer<String, String> producer = newProducer()) {
-            producer.send(new ProducerRecord<>(TOPIC_CUSTOMER_EVENTS, customerId, MAPPER.writeValueAsString(customerEvent))).get();
-            Thread.sleep(300);
-
-            producer.send(new ProducerRecord<>(TOPIC_PRODUCT_EVENTS, customerId, MAPPER.writeValueAsString(productEvent))).get();
-            Thread.sleep(300);
-
-            producer.send(new ProducerRecord<>(TOPIC_INVENTORY_EVENTS, customerId, MAPPER.writeValueAsString(inventoryEvent))).get();
-            Thread.sleep(300);
-
-            producer.send(new ProducerRecord<>(TOPIC_PROMOTION_EVENTS, customerId, MAPPER.writeValueAsString(promotionEvent))).get();
-            Thread.sleep(300);
-
-            producer.send(new ProducerRecord<>(TOPIC_SHOPPING_EVENTS, customerId, MAPPER.writeValueAsString(shoppingEvent))).get();
-            producer.flush();
+            boolean first = true;
+            for (JsonNode event : events) {
+                producer.send(new ProducerRecord<>(
+                    event.path("topic").asText(), customerId,
+                    MAPPER.writeValueAsString(event.path("payload")))).get();
+                producer.flush();
+                if (first) {
+                    // The first event (customer onboarding) is on another topic than the purchases:
+                    // wait until the job has really processed it before the dependent events are
+                    // published (a fixed pause is not enough on a slow host).
+                    // The changelog record can be delayed by the Kafka sink on a slow host, so the wait is
+                    // bounded; on timeout a grace pause (the source is reading within seconds of RUNNING)
+                    // keeps the order, and step 5 still requires the real Promotion.
+                    if (!awaitEntityProcessed(TOPIC_CUSTOMER_CHANGELOG, customerId, BARRIER_TIMEOUT_MS)) {
+                        System.err.println("[e2e] No changelog record for " + customerId + " within "
+                            + (BARRIER_TIMEOUT_MS / 1000) + "s: continuing after a grace pause");
+                        Thread.sleep(BARRIER_GRACE_MS);
+                    }
+                    first = false;
+                } else {
+                    Thread.sleep(300);
+                }
+            }
         }
 
         System.setProperty("e2e.retail.customerId", customerId);
     }
 
-    // ── Step 5: verify NextBestOffer output ────────────────────────────────────
+    // ── Step 5: verify the Promotion output ───────────────────────────────────
 
     @Test
     @Order(5)
-    @DisplayName("Step 5: Verify NextBestOffer event produced on agent-next-best-offers topic")
-    void step5_verifyNextBestOfferOutput() {
+    @DisplayName("Step 5: Verify a Promotion is produced on agent-promotions")
+    void step5_verifyPromotionOutput() {
         assumeTrue(agentStarted, "Agent was not started — skipping");
         String customerId = System.getProperty("e2e.retail.customerId");
         assumeTrue(customerId != null, "No customer ID set by step4 — skipping");
 
-        JsonNode offerRecord = pollForNextBestOffer(customerId, OUTPUT_WAIT_TIMEOUT_MS);
-        assertNotNull(offerRecord,
-            "No NextBestOffer event found on topic '" + TOPIC_NEXT_BEST_OFFERS + "' for customerId '"
+        JsonNode promotion = pollForPromotion(customerId, OUTPUT_WAIT_TIMEOUT_MS);
+        assertNotNull(promotion,
+            "No Promotion found on topic '" + TOPIC_PROMOTIONS + "' for customerId '"
             + customerId + "' within " + (OUTPUT_WAIT_TIMEOUT_MS / 1000) + "s.");
 
-        // Validate payload structure and decision outcome
-        assertEquals("present offer", offerRecord.path("decision").asText(), "Decision should be 'present offer'");
-        assertEquals(15.0, offerRecord.path("discount").asDouble(), 0.01, "Discount should be 15%");
-        assertEquals("carrying case", offerRecord.path("recommendedProduct").asText(), "Recommended product should be 'carrying case'");
-        assertEquals("15% off carrying case", offerRecord.path("selectedPromotion").asText(), "Selected promotion should match");
+        // The agent publishes an envelope {agentEventType, entityId, sourceTopic, timestamp, payload:{...}}.
+        assertEquals("Promotion", promotion.path("agentEventType").asText(), "promotion.agentEventType");
+        assertEquals(customerId, promotion.path("entityId").asText(), "promotion.entityId");
+        JsonNode body = promotion.path("payload");
+        assertEquals(customerId, body.path("customerId").asText(), "promotion.customerId");
+        assertEquals(10, body.path("discount").asDouble(), 0.01, "Discount should be 10%");
+        assertEquals("SPORT", body.path("productCategory").asText(), "promotion.productCategory");
+        assertTrue(body.path("message").asText().contains("Thanks for your recent purchase"),
+            "Unexpected promotion message: " + body.path("message").asText());
     }
 
     // ── Step 6: clean up ──────────────────────────────────────────────────────
@@ -278,7 +238,13 @@ class RetailAgentE2ETest {
     void step6_cleanup() throws Exception {
         post("/api/agents/" + USE_CASE_ID + "/stop", "{}");
 
+        // Kafka may still be re-electing partition leaders right after the job stopped, which makes
+        // the topic purge/delete answer 500 "not the leader": retry such transient failures.
         HttpResponse<String> deleteRes = delete("/api/agents/" + USE_CASE_ID);
+        for (int attempt = 1; attempt < 6 && deleteRes.statusCode() == 500; attempt++) {
+            Thread.sleep(5_000);
+            deleteRes = delete("/api/agents/" + USE_CASE_ID);
+        }
         assertTrue(deleteRes.statusCode() == 200 || deleteRes.statusCode() == 404,
             "Unexpected status from DELETE: " + deleteRes.statusCode() + " " + deleteRes.body());
     }
@@ -296,6 +262,18 @@ class RetailAgentE2ETest {
         body.put("useCaseId", USE_CASE_ID);
         body.set("descriptor", MAPPER.readTree(descriptor));
         return MAPPER.writeValueAsString(body);
+    }
+
+    /** Events of {@link #SCENARIO_ID}, with the scenario customer id replaced by {@code customerId}. */
+    private static JsonNode loadScenarioEvents(String customerId) throws Exception {
+        java.nio.file.Path scenarios =
+            java.nio.file.Path.of("../samples/retail-agent/demo-scenarios.json");
+        String json = java.nio.file.Files.readString(scenarios)
+            .replace("\"" + SCENARIO_CUSTOMER_ID + "\"", "\"" + customerId + "\"");
+        for (JsonNode scenario : MAPPER.readTree(json)) {
+            if (SCENARIO_ID.equals(scenario.path("id").asText())) return scenario.path("events");
+        }
+        throw new IllegalStateException("Scenario not found: " + SCENARIO_ID);
     }
 
     private static boolean waitForFlinkJob(String jobName, long timeoutMs) {
@@ -321,7 +299,7 @@ class RetailAgentE2ETest {
         return false;
     }
 
-    private static JsonNode pollForNextBestOffer(String customerId, long timeoutMs) {
+    private static JsonNode pollForPromotion(String customerId, long timeoutMs) {
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_BOOTSTRAP);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "e2e-retail-verifier-" + System.nanoTime());
@@ -332,7 +310,7 @@ class RetailAgentE2ETest {
 
         long deadline = System.currentTimeMillis() + timeoutMs;
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
-            consumer.subscribe(Collections.singletonList(TOPIC_NEXT_BEST_OFFERS));
+            consumer.subscribe(Collections.singletonList(TOPIC_PROMOTIONS));
             while (System.currentTimeMillis() < deadline) {
                 long remaining = deadline - System.currentTimeMillis();
                 if (remaining <= 0) break;
@@ -346,9 +324,46 @@ class RetailAgentE2ETest {
                 }
             }
         } catch (Exception e) {
-            System.err.println("[E2E] Error polling " + TOPIC_NEXT_BEST_OFFERS + ": " + e.getMessage());
+            System.err.println("[E2E] Error polling " + TOPIC_PROMOTIONS + ": " + e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * Blocks until the job has <em>processed</em> the first event of an entity: the agent writes a
+     * record for the entity to its changelog topic once that event has updated the entity state.
+     *
+     * <p>"Job RUNNING" in Flink only means the tasks are deployed, not that the Kafka sources are
+     * already reading. The input topics are read in parallel, so events published right after the
+     * job starts can be consumed in any order: a dependent event (a transaction, a purchase) can
+     * be processed before the event that creates the entity, and then produces no output. Waiting
+     * for this record makes the publication order deterministic regardless of how fast the job
+     * starts (the E2E runs on a slower host failed on exactly this).
+     */
+    private static boolean awaitEntityProcessed(String changelogTopic, String entityId, long timeoutMs) {
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_BOOTSTRAP);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "e2e-barrier-" + System.nanoTime());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            consumer.subscribe(Collections.singletonList(changelogTopic));
+            while (System.currentTimeMillis() < deadline) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) break;
+                for (ConsumerRecord<String, String> record
+                        : consumer.poll(Duration.ofMillis(Math.min(remaining, 1000)))) {
+                    if (entityId.equals(record.key())
+                            || (record.value() != null && record.value().contains(entityId))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private static HttpResponse<String> get(String path) throws Exception {

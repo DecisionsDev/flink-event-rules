@@ -325,7 +325,7 @@ else
 cd "${PROJECT_ROOT}"
 
 # ── 4.1 — Existing ZIP: Fraud Detection Service (Layout B) ──────────────────
-BANKING_ZIP="samples/banking-fraud-agent/di-project/Fraud Detection Service.zip"
+BANKING_ZIP="samples/banking-fraud-agent/di-project/FraudDetectionService.zip"
 echo
 echo "  4.1 — ${BANKING_ZIP}"
 if [[ -f "${BANKING_ZIP}" ]]; then
@@ -546,10 +546,10 @@ else
   fail "6.4: expected skip/not-found message; got: ${OUT_64}"
 fi
 
-# 6.5 — Real-world Fraud Detection Service.zip: plugin 16.6.0+engine 3.12.1 → Designer 16.7.3+3.12.3
+# 6.5 — Real-world FraudDetectionService.zip: plugin 16.6.0+engine 3.12.1 → Designer 16.7.3+3.12.3
 echo
-echo "  6.5 — Real-world Fraud Detection Service.zip: all stale DI versions patched"
-DISAAS_ZIP="samples/banking-fraud-agent/di-project/Fraud Detection Service.zip"
+echo "  6.5 — Real-world FraudDetectionService.zip: all stale DI versions patched"
+DISAAS_ZIP="samples/banking-fraud-agent/di-project/FraudDetectionService.zip"
 if ! command -v unzip &>/dev/null; then
   skip "6.5: unzip not available"
 elif [[ ! -f "${PROJECT_ROOT}/${DISAAS_ZIP}" ]]; then

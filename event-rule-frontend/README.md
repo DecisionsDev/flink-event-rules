@@ -83,7 +83,7 @@ Available on both screens, on the right:
 
 - **Open Flink Dashboard** — opens the Flink web UI in a new browser tab (see `VITE_FLINK_DASHBOARD_URL`).
 - **Back to applications** (dashboard only) — returns to the landing screen. Clicking the
-  "Decision Intelligence - Event Rules" title does the same.
+  "Decision Intelligence - Event Rules (Tech Asset)" title does the same.
 - Settings, connections and theme buttons are placeholders (not implemented yet).
 
 ## Key Components

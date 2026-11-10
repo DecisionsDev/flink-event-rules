@@ -102,6 +102,7 @@ class BankingFraudAgentE2ETest {
     private static final String TOPIC_ACCOUNT_EVENTS = "agent-account-events";
     private static final String TOPIC_TRANSACTIONS   = "agent-transactions";
     private static final String TOPIC_FRAUD_ALERTS   = "agent-fraud-alerts";
+    private static final String TOPIC_ACCOUNT_CHANGELOG = "agent-account-entity-changelog";
 
     // ── Agent IDs ─────────────────────────────────────────────────────────────
 
@@ -155,7 +156,7 @@ class BankingFraudAgentE2ETest {
     @DisplayName("Step 2: POST /api/agents/:id/start — submit Flink job")
     void step2_startAgent() throws Exception {
         HttpResponse<String> res = post("/api/agents/" + USE_CASE_ID + "/start", "{}");
-        assumeTrue(res.statusCode() == 200,
+        assumeTrue(res.statusCode() == 200 || res.statusCode() == 202,
             "Skipping E2E: /start returned " + res.statusCode()
             + " — Flink may not be available: " + res.body());
         agentStarted = true;
@@ -217,8 +218,9 @@ class BankingFraudAgentE2ETest {
                 TOPIC_ACCOUNT_EVENTS, accountNumber,
                 MAPPER.writeValueAsString(accountEvent))).get();
 
-            // Small pause so the agent processes the AccountEvent before the transaction
-            Thread.sleep(500);
+            // The transaction is only evaluated correctly if the AccountEvent was processed first:
+            // wait until the job has really handled it (a fixed pause is not enough on a slow host).
+            awaitEntityProcessed(TOPIC_ACCOUNT_CHANGELOG, accountNumber, OUTPUT_WAIT_TIMEOUT_MS);
 
             // Publish transaction event
             producer.send(new ProducerRecord<>(
@@ -262,7 +264,13 @@ class BankingFraudAgentE2ETest {
                 "Unexpected status from /stop: " + stopRes.statusCode() + " " + stopRes.body());
         }
 
+        // Kafka may still be re-electing partition leaders right after the job stopped, which makes
+        // the topic purge/delete answer 500 "not the leader": retry such transient failures.
         HttpResponse<String> deleteRes = delete("/api/agents/" + USE_CASE_ID);
+        for (int attempt = 1; attempt < 6 && deleteRes.statusCode() == 500; attempt++) {
+            Thread.sleep(5_000);
+            deleteRes = delete("/api/agents/" + USE_CASE_ID);
+        }
         assertTrue(deleteRes.statusCode() == 200 || deleteRes.statusCode() == 404,
             "Unexpected status from DELETE: " + deleteRes.statusCode() + " " + deleteRes.body());
     }
@@ -312,6 +320,44 @@ class BankingFraudAgentE2ETest {
             }
         }
         return false;
+    }
+
+    /**
+     * Blocks until the job has <em>processed</em> the first event of an entity: the agent writes a
+     * record for the entity to its changelog topic once that event has updated the entity state.
+     *
+     * <p>"Job RUNNING" in Flink only means the tasks are deployed, not that the Kafka sources are
+     * already reading. The input topics are read in parallel, so events published right after the
+     * job starts can be consumed in any order: a dependent event (a transaction, a purchase) can
+     * be processed before the event that creates the entity, and then produces no output. Waiting
+     * for this record makes the publication order deterministic regardless of how fast the job
+     * starts (the E2E runs on a slower host failed on exactly this).
+     */
+    private static void awaitEntityProcessed(String changelogTopic, String entityId, long timeoutMs) {
+        Properties props = new Properties();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA_BOOTSTRAP);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "e2e-barrier-" + System.nanoTime());
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+            consumer.subscribe(Collections.singletonList(changelogTopic));
+            while (System.currentTimeMillis() < deadline) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) break;
+                for (ConsumerRecord<String, String> record
+                        : consumer.poll(Duration.ofMillis(Math.min(remaining, 1000)))) {
+                    if (entityId.equals(record.key())
+                            || (record.value() != null && record.value().contains(entityId))) {
+                        return;
+                    }
+                }
+            }
+        }
+        fail("The job did not process the first event of entity '" + entityId + "' (no record on '"
+            + changelogTopic + "') within " + (timeoutMs / 1000) + "s: the Kafka sources are not reading.");
     }
 
     /**

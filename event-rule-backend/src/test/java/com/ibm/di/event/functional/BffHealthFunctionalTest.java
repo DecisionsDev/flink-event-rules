@@ -46,16 +46,16 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * <p>Scenarios covered:
  * <ul>
  *   <li>GET /health — 200, status=ok, JSON body structure</li>
- *   <li>GET /health — connectedClients and activeUseCases are numeric fields</li>
+ *   <li>GET /health — kafka status and activeUseCases (numeric) fields</li>
  *   <li>GET /api/use-cases — 200, JSON array (may be empty if no Flink jobs running)</li>
- *   <li>GET /api/use-cases/:id/descriptor — 200 for agent-banking, known fields present</li>
+ *   <li>GET /api/use-cases/:id/descriptor — 200 for banking-fraud-agent, known fields present</li>
  *   <li>GET /api/use-cases/:id/descriptor — 404 for unknown use case</li>
  *   <li>GET /api/use-cases/:id/descriptor — 400 for path-traversal/invalid use case id</li>
- *   <li>GET /api/use-cases/:id/scenarios — 200 array for agent-banking (9 scenarios)</li>
+ *   <li>GET /api/use-cases/:id/scenarios — 200 array for banking-fraud-agent (9 scenarios)</li>
  *   <li>GET /api/use-cases/:id/scenarios — 200 empty array for use case without scenarios file</li>
  *   <li>GET /api/use-cases/:id/scenarios — 400 for invalid use case id</li>
  *   <li>GET /api/flink/status — 200, jobs array present</li>
- *   <li>GET /api/agents — 200, JSON array, agent-banking and agent-retail entries present</li>
+ *   <li>GET /api/agents — 200, JSON array, banking-fraud-agent and retail-agent entries present</li>
  *   <li>GET /api/agents/:id — 200, agents.json content returned</li>
  *   <li>GET /api/agents/:id — 404 for unknown agent</li>
  *   <li>GET /api/agents/:id — 400 for invalid agent id</li>
@@ -100,12 +100,13 @@ class BffHealthFunctionalTest {
 
         @Test
         @Order(3)
-        @DisplayName("body contains connectedClients (integer >= 0)")
-        void bodyConnectedClients() throws Exception {
+        @DisplayName("body contains kafka status (ok when the broker is reachable)")
+        void bodyKafkaStatus() throws Exception {
             JsonNode body = json(get("/health"));
-            assertTrue(body.has("connectedClients"),
-                "Expected 'connectedClients' field in /health response");
-            assertTrue(body.path("connectedClients").asInt(-1) >= 0);
+            assertTrue(body.has("kafka"),
+                "Expected 'kafka' field in /health response");
+            assertEquals("ok", body.path("kafka").asText(),
+                "Kafka must be reported reachable when the stack is up: " + body);
         }
 
         @Test
@@ -192,11 +193,11 @@ class BffHealthFunctionalTest {
     class Descriptor {
 
         @Test
-        @DisplayName("agent-banking descriptor — 200 with expected fields")
+        @DisplayName("banking-fraud-agent descriptor — 200 with expected fields")
         void bankingDescriptor200() throws Exception {
-            HttpResponse<String> res = get("/api/use-cases/agent-banking/descriptor");
+            HttpResponse<String> res = get("/api/use-cases/banking-fraud-agent/descriptor");
             assertEquals(200, res.statusCode(),
-                "Expected 200 for agent-banking descriptor, got: " + res.body());
+                "Expected 200 for banking-fraud-agent descriptor, got: " + res.body());
             JsonNode body = json(res);
             assertFalse(body.path("name").asText().isBlank(),
                 "Descriptor must have non-blank 'name' field");
@@ -207,9 +208,9 @@ class BffHealthFunctionalTest {
         }
 
         @Test
-        @DisplayName("agent-banking descriptor — topics have name, type, label fields")
+        @DisplayName("banking-fraud-agent descriptor — topics have name, type, label fields")
         void bankingDescriptorTopicsWellFormed() throws Exception {
-            JsonNode topics = json(get("/api/use-cases/agent-banking/descriptor")).path("topics");
+            JsonNode topics = json(get("/api/use-cases/banking-fraud-agent/descriptor")).path("topics");
             assertTrue(topics.isArray() && topics.size() > 0, "Must have at least one topic");
             for (JsonNode t : topics) {
                 assertFalse(t.path("name").asText().isBlank(), "Topic must have 'name'");
@@ -218,11 +219,11 @@ class BffHealthFunctionalTest {
         }
 
         @Test
-        @DisplayName("agent-retail descriptor — 200 with expected fields")
+        @DisplayName("retail-agent descriptor — 200 with expected fields")
         void retailDescriptor200() throws Exception {
-            HttpResponse<String> res = get("/api/use-cases/agent-retail/descriptor");
+            HttpResponse<String> res = get("/api/use-cases/retail-agent/descriptor");
             assertEquals(200, res.statusCode(),
-                "Expected 200 for agent-retail descriptor, got: " + res.body());
+                "Expected 200 for retail-agent descriptor, got: " + res.body());
             JsonNode body = json(res);
             assertFalse(body.path("name").asText().isBlank());
             assertTrue(body.has("topics") && body.path("topics").isArray());
@@ -253,11 +254,11 @@ class BffHealthFunctionalTest {
     class Scenarios {
 
         @Test
-        @DisplayName("agent-banking scenarios — 200 with at least 9 entries")
+        @DisplayName("banking-fraud-agent scenarios — 200 with at least 9 entries")
         void bankingScenarios200() throws Exception {
-            HttpResponse<String> res = get("/api/use-cases/agent-banking/scenarios");
+            HttpResponse<String> res = get("/api/use-cases/banking-fraud-agent/scenarios");
             assertEquals(200, res.statusCode(),
-                "Expected 200 for agent-banking scenarios: " + res.body());
+                "Expected 200 for banking-fraud-agent scenarios: " + res.body());
             JsonNode body = json(res);
             assertTrue(body.isArray(), "Scenarios must be a JSON array");
             // The banking demo-scenarios.json ships with ≥9 scenarios; the exact count
@@ -268,9 +269,9 @@ class BffHealthFunctionalTest {
         }
 
         @Test
-        @DisplayName("agent-banking scenarios — each entry has id and label")
+        @DisplayName("banking-fraud-agent scenarios — each entry has id and label")
         void bankingScenarioSchema() throws Exception {
-            JsonNode scenarios = json(get("/api/use-cases/agent-banking/scenarios"));
+            JsonNode scenarios = json(get("/api/use-cases/banking-fraud-agent/scenarios"));
             for (JsonNode s : scenarios) {
                 assertFalse(s.path("id").asText().isBlank(),    "Scenario must have 'id'");
                 assertFalse(s.path("label").asText().isBlank(), "Scenario must have 'label'");
@@ -278,9 +279,9 @@ class BffHealthFunctionalTest {
         }
 
         @Test
-        @DisplayName("agent-retail scenarios — 200 with array")
+        @DisplayName("retail-agent scenarios — 200 with array")
         void retailScenarios200() throws Exception {
-            HttpResponse<String> res = get("/api/use-cases/agent-retail/scenarios");
+            HttpResponse<String> res = get("/api/use-cases/retail-agent/scenarios");
             assertEquals(200, res.statusCode());
             assertTrue(json(res).isArray());
         }
@@ -310,25 +311,25 @@ class BffHealthFunctionalTest {
         }
 
         @Test
-        @DisplayName("agent-banking entry present in list")
+        @DisplayName("banking-fraud-agent entry present in list")
         void bankingAgentPresent() throws Exception {
             JsonNode agents = json(get("/api/agents"));
             boolean found = false;
             for (JsonNode a : agents) {
-                if ("agent-banking".equals(a.path("id").asText())) { found = true; break; }
+                if ("banking-fraud-agent".equals(a.path("id").asText())) { found = true; break; }
             }
-            assertTrue(found, "Expected 'agent-banking' entry in /api/agents list");
+            assertTrue(found, "Expected 'banking-fraud-agent' entry in /api/agents list");
         }
 
         @Test
-        @DisplayName("agent-retail entry present in list")
+        @DisplayName("retail-agent entry present in list")
         void retailAgentPresent() throws Exception {
             JsonNode agents = json(get("/api/agents"));
             boolean found = false;
             for (JsonNode a : agents) {
-                if ("agent-retail".equals(a.path("id").asText())) { found = true; break; }
+                if ("retail-agent".equals(a.path("id").asText())) { found = true; break; }
             }
-            assertTrue(found, "Expected 'agent-retail' entry in /api/agents list");
+            assertTrue(found, "Expected 'retail-agent' entry in /api/agents list");
         }
 
         @Test
@@ -350,16 +351,16 @@ class BffHealthFunctionalTest {
     class AgentById {
 
         @Test
-        @DisplayName("agent-banking — 200 with agents array")
+        @DisplayName("banking-fraud-agent — 200 with agents array")
         void banking200() throws Exception {
-            HttpResponse<String> res = get("/api/agents/agent-banking");
+            HttpResponse<String> res = get("/api/agents/banking-fraud-agent");
             assertEquals(200, res.statusCode(),
-                "Expected 200 for GET /api/agents/agent-banking: " + res.body());
+                "Expected 200 for GET /api/agents/banking-fraud-agent: " + res.body());
             JsonNode body = json(res);
             assertTrue(body.has("agents") && body.path("agents").isArray(),
                 "Response must contain 'agents' array");
             assertTrue(body.path("agents").size() > 0,
-                "agents array must not be empty for agent-banking");
+                "agents array must not be empty for banking-fraud-agent");
         }
 
         @Test

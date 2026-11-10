@@ -51,12 +51,16 @@ echo "Building & Testing Backend (Apache Flink)"
 echo "=========================================="
 cd "$PROJECT_ROOT/event-rule-backend"
 
-# Suppress JVM unsafe memory access warnings (e.g. Java 23+)
-export MAVEN_OPTS="${MAVEN_OPTS:-} --sun-misc-unsafe-memory-access=allow"
+# Suppress JVM unsafe memory access warnings (Java 23+). Older JVMs (e.g. the documented
+# JDK 21) reject this option and would fail to start Maven, so it is only added when supported.
+if java --sun-misc-unsafe-memory-access=allow -version >/dev/null 2>&1; then
+    export MAVEN_OPTS="${MAVEN_OPTS:-} --sun-misc-unsafe-memory-access=allow"
+fi
 
 MVN_EXTRA_FLAGS=""
 if [ "${DI_SKIP_TLS_VERIFY:-false}" = "true" ]; then
-    MVN_EXTRA_FLAGS="-Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true"
+    # Maven 3.9's default transport ignores maven.wagon.http.ssl.*: force Wagon (as resolve-di-dependencies.sh does).
+    MVN_EXTRA_FLAGS="-Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true"
 fi
 
 # Run Maven clean package (which compiles, runs all unit/regression tests, and packages the fat JAR)

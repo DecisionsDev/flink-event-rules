@@ -32,7 +32,7 @@ function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onCreateDiagram,
         <div className="di-header-left">
           <div className="di-header-brand">
             <span className="di-header-brand-ibm">IBM</span>
-            <span className="di-header-brand-title">Decision Intelligence - Event Rules</span>
+            <span className="di-header-brand-title">Decision Intelligence - Event Rules (Tech Asset)</span>
           </div>
         </div>
         <div className="di-header-right">

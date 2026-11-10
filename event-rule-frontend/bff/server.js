@@ -1944,10 +1944,16 @@ function collectTopicsFromAgentsJson(agentsJson) {
 }
 
 // Returns true when a KafkaJS error signals that a topic is already absent.
+// A retriable UNKNOWN_TOPIC_OR_PARTITION that exhausts the client retries is re-thrown wrapped in
+// KafkaJSNumberOfRetriesExceeded (no `type`; `cause` holds the original error), and the broker's own
+// message is "This server does not host this topic-partition": check both, and the wrapped cause.
 function isUnknownTopicError(err) {
+  if (!err) return false;
   return (
     err.type === 'UNKNOWN_TOPIC_OR_PARTITION' ||
-    (err.message || '').includes('UnknownTopicOrPartition')
+    (err.message || '').includes('UnknownTopicOrPartition') ||
+    (err.message || '').includes('does not host this topic-partition') ||
+    (err.cause != null && err.cause !== err && isUnknownTopicError(err.cause))
   );
 }
 
@@ -2025,17 +2031,27 @@ async function deleteTopicsForAgent(agentId) {
   try {
     await admin.connect();
 
+    // Only touch topics that still exist: a missing topic makes KafkaJS retry UNKNOWN_TOPIC_OR_PARTITION
+    // for ~10 s per topic before giving up, which would make this call (and the DELETE request) take minutes
+    // when /stop already removed the topics.
+    const existing = new Set(await admin.listTopics());
+    const present = topics.filter(t => existing.has(t));
+    for (const t of topics) {
+      if (!existing.has(t)) console.log(`[topics] Purge skipped for topic=${t} (already absent)`);
+    }
+    if (present.length === 0) return topics;
+
     // ── Step A: Purge messages from every topic ────────────────────────────
     // All purges run sequentially so a failure on one topic stops the loop
     // and prevents the subsequent deleteTopics call.
-    for (const topic of topics) {
+    for (const topic of present) {
       await purgeTopicMessages(admin, topic);
     }
 
     // ── Step B: Delete the topics ─────────────────────────────────────────
     try {
-      await admin.deleteTopics({ topics });
-      console.log(`[topics] Deleted for agentId=${agentId}: ${topics.join(', ')}`);
+      await admin.deleteTopics({ topics: present });
+      console.log(`[topics] Deleted for agentId=${agentId}: ${present.join(', ')}`);
     } catch (err) {
       if (isUnknownTopicError(err)) {
         console.log(`[topics] Some topics already absent for agentId=${agentId} (non-fatal)`);
@@ -3790,6 +3806,7 @@ if (typeof module !== 'undefined') {
     dropDeclaredTopics,
     applyUseCaseProperties,
     collectTopicsFromAgentsJson,
+    isUnknownTopicError,
     resolveFlinkEntryClass,
     runtimeOfJobState,
     getFlinkRuntime,

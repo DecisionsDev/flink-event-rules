@@ -52,17 +52,19 @@ log_step()    { echo -e "${_BOLD}  ▶ $*${_NC}"; }
 # ── Assertion primitives ──────────────────────────────────────────────────────
 
 # Record a named test result.
+# Counters use plain assignment: `(( N++ ))` returns status 1 while N is 0, which aborts a script
+# running under `set -e` (bash >= 4.1; macOS bash 3.2 tolerates it) on the very first assertion.
 # Usage: _record_result <name> <passed:0|1> [failure_detail]
 _record_result() {
     local name="$1"
     local passed="$2"
     local detail="${3:-}"
-    (( TESTS_RUN++ ))
+    TESTS_RUN=$(( TESTS_RUN + 1 ))
     if [[ "$passed" == "0" ]]; then
-        (( TESTS_PASSED++ ))
+        TESTS_PASSED=$(( TESTS_PASSED + 1 ))
         log_pass "$name"
     else
-        (( TESTS_FAILED++ ))
+        TESTS_FAILED=$(( TESTS_FAILED + 1 ))
         log_error "FAIL: $name"
         [[ -n "$detail" ]] && log_error "      $detail"
         FAILURES+=("$name${detail:+ — $detail}")

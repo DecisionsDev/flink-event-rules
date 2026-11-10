@@ -51,7 +51,7 @@
 #   ./build-decision-service.sh \
 #       --project  /path/to/decision-project-or.zip \
 #       --output   /path/to/output \
-#       --di-url  https://cpd-cp4a.apps.ads-dev.cp.fyre.ibm.com/ads
+#       --di-url  https://cpd-cp4a.apps.example.com/ads
 #
 # Full option reference: run with --help.
 # =============================================================================
@@ -92,7 +92,7 @@ ${BOLD}Required:${NC}
   --project   <path>   Path to the Decision Project directory or ZIP file.
   --output    <dir>    Output directory for the generated archive.
   --di-url   <url>    Base URL of the DI instance, e.g.
-                       https://cpd-cp4a.apps.ads-dev.cp.fyre.ibm.com/ads
+                       https://cpd-cp4a.apps.example.com/ads
 
 ${BOLD}Authentication (ADS Zen API key — required):${NC}
   Set via environment variables (preferred — keeps credentials out of history):
@@ -123,13 +123,13 @@ ${BOLD}Examples:${NC}
   ${SCRIPT_NAME} \\
     --project ./my-decision-project \\
     --output  ./dist \\
-    --di-url https://cpd-cp4a.apps.ads-dev.cp.fyre.ibm.com/ads
+    --di-url https://cpd-cp4a.apps.example.com/ads
 
   # ZIP input, custom version, verbose:
   ${SCRIPT_NAME} \\
     --project  "Fraud Detection Service.zip" \\
     --output   ./dist \\
-    --di-url  https://cpd-cp4a.apps.ads-dev.cp.fyre.ibm.com/ads \\
+    --di-url  https://cpd-cp4a.apps.example.com/ads \\
     --version  1.5.2 \\
     --verbose
 

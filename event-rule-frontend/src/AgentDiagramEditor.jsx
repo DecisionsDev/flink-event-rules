@@ -78,6 +78,11 @@ function slugifyAgentId(name) {
     .replace(/^-+|-+$/g, '');
 }
 
+/** Default decision archive control topic of an agent: agent-<agentId>-archive-control. */
+function archiveControlTopicFor(agentId) {
+  return agentId ? `agent-${agentId}-archive-control` : '';
+}
+
 /** Slug of `name` that does not collide with the agentId of any existing agent node. */
 function uniqueAgentId(name, nodes) {
   const taken = new Set((nodes || []).filter(n => n.type === 'agent').map(n => n.data?.agentId));
@@ -91,6 +96,7 @@ function uniqueAgentId(name, nodes) {
 function newAgentData(agentId, label = 'New Agent') {
   return {
     label, agentId, description: '', ruleJar: '', ruleProject: '',
+    archiveControlTopic: archiveControlTopicFor(agentId),
     ruleOperations: [], operationConfigs: {}, references: [], topiclessSubscriptions: [],
     errorOutput: { eventType: 'agent-error', topic: '', label: '', description: '' },
     stateConfig: {},
@@ -851,8 +857,8 @@ function OperationEditor({ operation, config, onChange, onRename, onDelete }) {
         <button className="ade-pair-add" onClick={onDelete}>Delete operation</button>
       </div>
       <div className="ade-field-section-title">Input</div>
-      {textField('entityField', 'Entity Field', 'e.g. theAccount', 'Operation parameter that receives the entity.')}
-      {textField('currentEventField', 'Event Field', 'e.g. theTransaction', 'Operation parameter that receives the event being processed.')}
+      {textField('entityField', 'Entity Field (required)', 'e.g. theAccount', 'Operation parameter that receives the entity.')}
+      {textField('currentEventField', 'Event Field (required)', 'e.g. theTransaction', 'Operation parameter that receives the event being processed.')}
       {pairList('history', 'History Fields', 'eventType', 'Event type', 'field', 'Rule field', 'Operation parameter that receives historical events of this type (e.g. Transaction → thePastTransactions).')}
       <div className="ade-field-section-title">Output</div>
       {textField('outboundEntityField', 'Outbound Entity Field', 'e.g. theUpdatedAccount', 'Field of the decision service result that holds the updated entity. Use Entity Field if blank.', 'output-field')}
@@ -961,8 +967,8 @@ function SubscriptionLinkEditor({
         )}
       </div>
       <TextField
-        label="Entity Key Extractor (optional)"
-        hint="JSONPath of the entity key; overrides the agent-level extractor. Blank inherits it."
+        label="Entity Key Extractor"
+        hint="JSONPath of the entity key; overrides the agent-level extractor. Required here when the agent has none; blank inherits the agent's."
         value={d.entityKeyExtractor}
         placeholder="Inherit the agent extractor"
         onChange={v => set('entityKeyExtractor', v === '' ? undefined : v)}
@@ -1080,13 +1086,21 @@ function DetailEditor({ node, onUpdate, agentsMeta, onMetaUpdate, selectedOperat
   }
 
   // Editing a Topic that was only implied by a subscription declares it in topics[].
-  const set = (key, val) => onUpdate(node.id, {
-    ...data,
-    [key]: val,
-    ...(type === 'topic' && { implicit: false }),
-    // The Agent ID follows the Name until it has been edited by hand.
-    ...(type === 'agent' && key === 'label' && (data.agentId || '') === slugifyAgentId(data.label) && { agentId: slugifyAgentId(val) }),
-  });
+  const set = (key, val) => {
+    const next = {
+      ...data,
+      [key]: val,
+      ...(type === 'topic' && { implicit: false }),
+      // The Agent ID follows the Name until it has been edited by hand.
+      ...(type === 'agent' && key === 'label' && (data.agentId || '') === slugifyAgentId(data.label) && { agentId: slugifyAgentId(val) }),
+    };
+    // The archive control topic is derived from the Agent ID while it is empty or still the derived default.
+    if (type === 'agent' && next.agentId !== data.agentId
+        && (!data.archiveControlTopic || data.archiveControlTopic === archiveControlTopicFor(data.agentId))) {
+      next.archiveControlTopic = archiveControlTopicFor(next.agentId);
+    }
+    onUpdate(node.id, next);
+  };
 
   // Decision Service Project: on zip selection, explore it and store the
   // operations / classes found on the agent node.
@@ -1240,7 +1254,11 @@ function DetailEditor({ node, onUpdate, agentsMeta, onMetaUpdate, selectedOperat
             ext=".jar"
             accept=".jar,application/java-archive"
             value={data.ruleJar || ''}
-            onChange={val => set('ruleJar', val)}
+            onChange={(val, file) => {
+              // A picked jar is stored under the application folder: samples/<folderName>/<jar>.
+              const folder = agentsMeta?.folderName?.trim();
+              set('ruleJar', file && folder ? `samples/${folder}/${val}` : val);
+            }}
             pathPlaceholder="e.g. samples/my-agent/rules.jar"
           />
           <ArchiveFileField
@@ -1257,8 +1275,8 @@ function DetailEditor({ node, onUpdate, agentsMeta, onMetaUpdate, selectedOperat
           )}
 
           <TextField
-            label="Decision Archive Control Topic (optional)"
-            hint="Kafka topic that controls decision archive updates."
+            label="Decision Archive Control Topic (required)"
+            hint="Kafka topic that controls decision archive updates. Derived from the Agent ID when empty."
             value={data.archiveControlTopic}
             placeholder="e.g. agent-archive-control"
             onChange={v => set('archiveControlTopic', v)}
@@ -1385,6 +1403,8 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
   const [detailWidth, setDetailWidth] = useState(420);
   const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
   const [saveError, setSaveError] = useState(null);
+  const saveResetTimer = useRef(null);
+  useEffect(() => () => clearTimeout(saveResetTimer.current), []);
   const [showClearModal, setShowClearModal] = useState(false);
 
   // Top-level agents.json metadata (edited in the detail panel when no node is selected)
@@ -2067,7 +2087,8 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
       }
 
       setSaveState('saved');
-      setTimeout(() => {
+      clearTimeout(saveResetTimer.current);
+      saveResetTimer.current = setTimeout(() => {
         setSaveState(s => (s === 'saved' ? 'idle' : s));
       }, 2500);
     } catch (err) {
@@ -2084,7 +2105,7 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
         <div className="di-header-left">
           <div className="di-header-brand">
             <span className="di-header-brand-ibm">IBM</span>
-            <span className="di-header-brand-title">Decision Intelligence - Event Rules</span>
+            <span className="di-header-brand-title">Decision Intelligence - Event Rules (Tech Asset)</span>
           </div>
           <div className="di-header-brand">
             <span className="ade-header-sep">/</span>

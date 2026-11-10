@@ -901,3 +901,34 @@ describe('generatePtfSql', () => {
     expect(child.kill).toHaveBeenCalled();
   });
 });
+
+// ── isUnknownTopicError — wrapped retriable errors (regression) ───────────────
+// A retriable UNKNOWN_TOPIC_OR_PARTITION that exhausts KafkaJS' retries is thrown as
+// KafkaJSNumberOfRetriesExceeded: no `type`, the broker message only. DELETE /api/agents/:id
+// (after /stop already deleted the topics) must treat it as "topic already absent", not as a 500.
+
+describe('isUnknownTopicError', () => {
+  const fn = server.isUnknownTopicError;
+
+  it('recognises the typed KafkaJS error', () => {
+    expect(fn({ type: 'UNKNOWN_TOPIC_OR_PARTITION', message: 'x' })).toBe(true);
+  });
+
+  it('recognises the broker message without a type (KafkaJSNumberOfRetriesExceeded)', () => {
+    const err = new Error('This server does not host this topic-partition');
+    err.name = 'KafkaJSNumberOfRetriesExceeded';
+    expect(fn(err)).toBe(true);
+  });
+
+  it('recognises a wrapped cause', () => {
+    const inner = { type: 'UNKNOWN_TOPIC_OR_PARTITION', message: 'inner' };
+    expect(fn({ message: 'outer', cause: inner })).toBe(true);
+  });
+
+  it('does not match unrelated errors, null or a self-referencing cause', () => {
+    expect(fn(new Error('Connection error'))).toBe(false);
+    expect(fn(null)).toBe(false);
+    const loop = new Error('loop'); loop.cause = loop;
+    expect(fn(loop)).toBe(false);
+  });
+});

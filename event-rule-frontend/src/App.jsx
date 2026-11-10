@@ -634,7 +634,7 @@ function App() {
         <div className="di-header-left">
           <button className="di-header-brand di-header-brand--clickable" onClick={handleChangeUseCase}>
             <span className="di-header-brand-ibm">IBM</span>
-            <span className="di-header-brand-title">Decision Intelligence - Event Rules</span>
+            <span className="di-header-brand-title">Decision Intelligence - Event Rules - (Tech Asset)</span>
           </button>
           {descriptor?.name && (
             <div className="di-header-brand">

@@ -712,6 +712,11 @@ export function validateDescriptor(descriptor) {
     agentIds.add(a.agentId);
 
     if (!a.ruleset?.path) problems.push(`${who}: the Rule JAR path is required.`);
+    if (!a.ruleset?.archiveControlTopic) problems.push(`${who}: the Decision Archive Control Topic is required.`);
+    for (const op of list(a.ruleset?.operations)) {
+      if (!op.entityField) problems.push(`${who}, operation '${op.operation || '?'}': the Entity Field is required.`);
+      if (!op.currentEventField) problems.push(`${who}, operation '${op.operation || '?'}': the Event Field (currentEventField) is required.`);
+    }
 
     const refNames = new Set();
     for (const r of list(a.references)) {
@@ -738,7 +743,8 @@ export function validateDescriptor(descriptor) {
       if (isScheduleEvent(s.eventType) && s.topic) problems.push(`${who}: the Schedule subscription must not have a topic.`);
       if (s.operation && operations.has(s.operation)) problems.push(`${who}: operation '${s.operation}' is subscribed twice.`);
       if (s.operation) operations.add(s.operation);
-      if (!isScheduleEvent(s.eventType) && s.entityKeyExtractor == null && a.entityKeyExtractor == null) {
+      // Required on the agent or, when the agent has none, on every (non-Schedule) subscription; blank counts as unset.
+      if (!isScheduleEvent(s.eventType) && !text(s.entityKeyExtractor) && !text(a.entityKeyExtractor)) {
         problems.push(`${who}, ${where}: an entity key extractor is required (on the subscription or on the agent).`);
       }
       checkSteps(where, s.enrichment);

@@ -553,7 +553,7 @@ function AgentScenarioListRowWithState({ agent, onEditDiagram, onSelectUseCase }
               ? `Open application '${agent.id}' in the diagram editor (read-only while deployed)`
               : `Edit the whole application '${agent.id}' in the diagram editor`}
           >
-            Edit diagram
+            <IconEdit /> Edit
           </button>
         )}
       </div>

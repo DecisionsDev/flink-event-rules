@@ -19,6 +19,7 @@ import React, { useState } from 'react';
 import './UseCaseSelector.css';
 import { FLINK_DASHBOARD_URL } from './config';
 import AgentScenariosPanel from './AgentScenariosPanel';
+import CollapsibleBanner from './CollapsibleBanner';
 
 function UseCaseSelector({ onSelectUseCase, onCreateDiagram, onEditDiagram, onDeleteAgent, refreshToken, flinkRuntime = 'datastream', onFlinkRuntimeChange }) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -64,6 +65,9 @@ function UseCaseSelector({ onSelectUseCase, onCreateDiagram, onEditDiagram, onDe
           </div>
         </div>
       </header>
+
+      {/* ── Collapsible Decision Intelligence Hero Banner ── */}
+      <CollapsibleBanner onNewApplication={onCreateDiagram} />
 
       {/* ── Title Bar ── */}
       <div className="di-title-bar">

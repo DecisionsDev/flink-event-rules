@@ -5,7 +5,7 @@
    ───────────────────────────────────────────────────────────────────────────── */
 
 /* ── Full-screen wrapper ────────────────────────────────────────────────────
-   Mirrors how AgentWizard takes over the full viewport.                       */
+   Takes over the full viewport.                       */
 .ade-root {
   display: flex;
   flex-direction: column;
@@ -901,6 +901,50 @@
 .ade-jar-clear:hover {
   color: var(--red, #b91c1c);
   background: var(--red-soft, #fef2f2);
+}
+
+/* ── Fetch decision archive from a DI runtime ────────────────────────────────── */
+.ade-di-fetch-toggle,
+.ade-di-fetch-btn {
+  padding: 5px 10px;
+  font-size: 0.75rem;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-alt, #f8fafc);
+  color: inherit;
+  cursor: pointer;
+}
+.ade-di-fetch-toggle:hover,
+.ade-di-fetch-btn:hover:not(:disabled) {
+  border-color: var(--accent-border, #bfdbfe);
+  background: var(--accent-soft, #eff6ff);
+}
+.ade-di-fetch-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ade-di-fetch-btn--primary {
+  border-color: #0f62fe;
+  background: #0f62fe;
+  color: #fff;
+}
+.ade-di-fetch-btn--primary:hover:not(:disabled) {
+  background: #0353e9;
+  border-color: #0353e9;
+}
+.ade-di-fetch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 6px);
+}
+.ade-di-fetch-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 /* ── Override ReactFlow built-in controls (position only, keep Carbon feel) ── */

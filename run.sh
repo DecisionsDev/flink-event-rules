@@ -42,6 +42,15 @@ cd "$PROJECT_ROOT"
 
 COMPOSE_FILE="docker-compose.yml"
 
+# Load local environment variables, if present. Docker Compose
+# substitutes these from the shell environment into the container definitions.
+if [ -f "$PROJECT_ROOT/.env.local" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$PROJECT_ROOT/.env.local"
+    set +a
+fi
+
 # Colors for output
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'

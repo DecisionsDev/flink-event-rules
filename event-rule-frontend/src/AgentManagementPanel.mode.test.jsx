@@ -49,7 +49,7 @@ const NONE = { agentId: 'uc', jobId: null, state: 'NOT_STARTED', runtime: 'ptf' 
 function panel(props = {}) {
   return (
     <AgentManagementPanel
-      agentId="uc" useCaseId="uc" onEdit={vi.fn()} onNavigateBack={vi.fn()}
+      agentId="uc" useCaseId="uc" onNavigateBack={vi.fn()}
       agentsJson={{ agents: [] }} flinkRuntime="datastream" {...props}
     />
   );
@@ -106,7 +106,7 @@ describe('AgentManagementPanel — deployment mode', () => {
       status = s; installFetch();
       const { unmount } = render(panel());
       await act(async () => {});
-      for (const name of ['Edit Agent', 'Diagram View', 'Delete Agent', 'Undeploy Agent']) {
+      for (const name of ['Diagram View', 'Delete Agent', 'Undeploy Agent']) {
         expect(screen.getByRole('button', { name })).toBeInTheDocument();
       }
       unmount();

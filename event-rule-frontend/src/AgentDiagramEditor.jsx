@@ -735,6 +735,183 @@ function ArchiveFileField({ label, hint, ext, accept, value, onChange, pathPlace
   );
 }
 
+// ─── Fetch a decision archive from a Decision Intelligence runtime ──────────
+// Same runtime/decision listing as the Agent Wizard. The archive is downloaded into
+// the browser only (GET, nothing is written on the server) and handed to onFetched as
+// a File; it is uploaded next to agents.json when the diagram is saved, and simply
+// dropped if the editor is closed without saving.
+function DiRuntimeArchiveFetch({ onFetched }) {
+  const [open, setOpen]                 = useState(false);
+  const [runtimes, setRuntimes]         = useState(null); // null = not loaded
+  const [runtimesError, setRuntimesError] = useState(null);
+  const [runtimeId, setRuntimeId]       = useState('');
+  const [space, setSpace]               = useState('');
+  const [decisions, setDecisions]       = useState([]);
+  const [decisionsState, setDecisionsState] = useState('idle'); // idle|loading|ready|error
+  const [decisionsError, setDecisionsError] = useState(null);
+  const [decisionId, setDecisionId]     = useState('');
+  const [fetchState, setFetchState]     = useState('idle'); // idle|fetching|fetched|error
+  const [fetchMsg, setFetchMsg]         = useState(null);
+
+  useEffect(() => {
+    if (!open || runtimes !== null) return;
+    fetch(`${API_URL}/api/ads-runtimes`)
+      .then(r => (r.ok ? r.json() : r.json().then(b => Promise.reject(new Error(b.error || r.statusText)))))
+      .then(setRuntimes)
+      .catch(err => { setRuntimes([]); setRuntimesError(err.message); });
+  }, [open, runtimes]);
+
+  const resetSelection = () => { setDecisionId(''); setFetchState('idle'); setFetchMsg(null); };
+
+  const loadDecisions = async (rtId, spaceValue) => {
+    setDecisionsState('loading');
+    setDecisionsError(null);
+    setDecisions([]);
+    resetSelection();
+    try {
+      const sp = (spaceValue || '').trim();
+      const query = sp ? `?deploymentSpace=${encodeURIComponent(sp)}` : '';
+      const r = await fetch(`${API_URL}/api/ads-runtimes/${encodeURIComponent(rtId)}/decisions${query}`);
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      setDecisions(body);
+      setDecisionsState('ready');
+    } catch (err) {
+      setDecisionsState('error');
+      setDecisionsError(err.message);
+    }
+  };
+
+  const onRuntimeChange = (rtId) => {
+    setRuntimeId(rtId);
+    resetSelection();
+    setDecisions([]);
+    setDecisionsState('idle');
+    if (!rtId) { setSpace(''); return; }
+    const seed = (runtimes || []).find(r => r.id === rtId)?.deploymentSpace || '';
+    setSpace(seed);
+    loadDecisions(rtId, seed);
+  };
+
+  const handleFetch = async () => {
+    if (!runtimeId || !decisionId) return;
+    setFetchState('fetching');
+    setFetchMsg(null);
+    try {
+      const sp = space.trim();
+      const spaceQuery = sp ? `&deploymentSpace=${encodeURIComponent(sp)}` : '';
+      const r = await fetch(
+        `${API_URL}/api/ads-runtimes/${encodeURIComponent(runtimeId)}/archive?decisionId=${encodeURIComponent(decisionId)}${spaceQuery}`,
+      );
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || r.statusText);
+      }
+      const filename = r.headers.get('X-Archive-Filename') || 'archive.jar';
+      const file = new File([await r.blob()], filename, { type: 'application/java-archive' });
+      onFetched(file);
+      setFetchState('fetched');
+      setFetchMsg(`Archive fetched (${filename}) — it is stored when you save the diagram.`);
+    } catch (err) {
+      setFetchState('error');
+      setFetchMsg(`Fetch failed: ${err.message}`);
+    }
+  };
+
+  return (
+    <div className="ade-field-group">
+      <button
+        type="button"
+        className="ade-di-fetch-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
+      >
+        ⬇ Fetch from DI Runtime
+      </button>
+      {open && (
+        <div className="ade-di-fetch-panel">
+          {runtimesError && <div className="ade-field-error">Could not load runtimes: {runtimesError}</div>}
+          {runtimes === null && !runtimesError && <div className="ade-field-hint">Loading runtimes…</div>}
+          {runtimes !== null && runtimes.length === 0 && !runtimesError && (
+            <div className="ade-field-hint">
+              No DI runtimes configured. Add entries to <code>DI_RUNTIMES</code> in your <code>.env</code> file.
+            </div>
+          )}
+          {runtimes !== null && runtimes.length > 0 && (
+            <>
+              <label className="ade-field-label">DI Runtime</label>
+              <select
+                className="ade-field-input"
+                aria-label="Select DI runtime"
+                value={runtimeId}
+                onChange={e => onRuntimeChange(e.target.value)}
+              >
+                <option value="">— select a runtime —</option>
+                {runtimes.map(rt => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
+              </select>
+            </>
+          )}
+          {runtimeId && (
+            <>
+              <label className="ade-field-label">Deployment Space</label>
+              <div className="ade-di-fetch-row">
+                <input
+                  className="ade-field-input"
+                  type="text"
+                  aria-label="Deployment space"
+                  value={space}
+                  placeholder="embedded"
+                  spellCheck={false}
+                  onChange={e => setSpace(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="ade-di-fetch-btn"
+                  disabled={!space.trim() || decisionsState === 'loading'}
+                  onClick={() => loadDecisions(runtimeId, space)}
+                >
+                  {decisionsState === 'loading' ? 'Loading…' : 'Load Decisions'}
+                </button>
+              </div>
+              <label className="ade-field-label">Decision</label>
+              {decisionsState === 'error' && <div className="ade-field-error">Could not load decisions: {decisionsError}</div>}
+              {decisionsState === 'ready' && decisions.length === 0 && (
+                <div className="ade-field-hint">No decisions deployed on this runtime.</div>
+              )}
+              {decisionsState === 'ready' && decisions.length > 0 && (
+                <select
+                  className="ade-field-input"
+                  aria-label="Select decision"
+                  value={decisionId}
+                  onChange={e => { setDecisionId(e.target.value); setFetchState('idle'); setFetchMsg(null); }}
+                >
+                  <option value="">— select a decision —</option>
+                  {decisions.map(d => <option key={d.id} value={d.id}>{d.name || d.id}</option>)}
+                </select>
+              )}
+            </>
+          )}
+          {decisionId && (
+            <div className="ade-di-fetch-row">
+              <button
+                type="button"
+                className="ade-di-fetch-btn ade-di-fetch-btn--primary"
+                disabled={fetchState === 'fetching'}
+                onClick={handleFetch}
+              >
+                {fetchState === 'fetching' ? 'Fetching…' : fetchState === 'fetched' ? '✓ Fetched' : '⬇ Fetch Archive'}
+              </button>
+            </div>
+          )}
+          {fetchMsg && (
+            <div className={fetchState === 'error' ? 'ade-field-error' : 'ade-field-hint'}>{fetchMsg}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 // ─── Type / Field combo boxes ───────────────────────────────────────────────
 // Options come from the Decision Service Project(s) of the agent(s) in scope
@@ -1102,6 +1279,17 @@ function DetailEditor({ node, onUpdate, agentsMeta, onMetaUpdate, selectedOperat
     onUpdate(node.id, next);
   };
 
+  // A picked / fetched jar is kept as a pending File on the agent node and uploaded to
+  // samples/<folderName>/ on save; a typed or cleared path supersedes any pending file.
+  const setRuleJar = (val, file) => {
+    const folder = agentsMeta?.folderName?.trim();
+    onUpdate(node.id, {
+      ...data,
+      ruleJar: file && folder ? `samples/${folder}/${val}` : val,
+      ruleJarFile: file || undefined,
+    });
+  };
+
   // Decision Service Project: on zip selection, explore it and store the
   // operations / classes found on the agent node.
   const onProjectChange = async (name, file) => {
@@ -1254,13 +1442,10 @@ function DetailEditor({ node, onUpdate, agentsMeta, onMetaUpdate, selectedOperat
             ext=".jar"
             accept=".jar,application/java-archive"
             value={data.ruleJar || ''}
-            onChange={(val, file) => {
-              // A picked jar is stored under the application folder: samples/<folderName>/<jar>.
-              const folder = agentsMeta?.folderName?.trim();
-              set('ruleJar', file && folder ? `samples/${folder}/${val}` : val);
-            }}
+            onChange={(val, file) => setRuleJar(val, file)}
             pathPlaceholder="e.g. samples/my-agent/rules.jar"
           />
+          <DiRuntimeArchiveFetch onFetched={file => setRuleJar(file.name, file)} />
           <ArchiveFileField
             label="Decision Service Project"
             hint={`Decision Service project zip, stored in the ${PROJECT_DIR} sub-folder of the application folder when the diagram is saved.`}
@@ -1389,7 +1574,7 @@ const DEFAULT_APPLICATION_FOLDER = 'my-application';
 
 // ─── Inner editor — needs to be inside ReactFlowProvider ───────────────────
 // Receives callbacks from the outer shell to update nodes/selection.
-function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null }) {
+function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null, saveDisabled = false }) {
   // An existing descriptor is converted once, when the editor opens.
   const initial = useMemo(
     () => (initialDescriptor ? loadDiagram(initialDescriptor) : null),
@@ -2032,6 +2217,20 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
         }
         uploaded.set(n.id, (await up.json()).path);
       }
+      // Same for pending decision archive jars (picked or fetched from a DI runtime).
+      const uploadedJars = new Map(); // nodeId -> stored path
+      for (const n of nodes) {
+        const file = n.type === 'agent' ? n.data.ruleJarFile : null;
+        if (!file) continue;
+        const fd = new FormData();
+        fd.append('jar', file);
+        const up = await fetch(`${API_URL}/api/agents/${encodeURIComponent(useCaseId)}/jar`, { method: 'POST', body: fd });
+        if (!up.ok) {
+          const body = await up.json().catch(() => ({}));
+          throw new Error(`Decision archive upload failed: ${body.error || `HTTP ${up.status}`}`);
+        }
+        uploadedJars.set(n.id, (await up.json()).path);
+      }
       // Same for the reference CSV files picked from disk (stored in <application>/enrichment).
       const uploadedRefs = new Map(); // `${nodeId}:${index}` -> stored path
       for (const n of nodes) {
@@ -2049,8 +2248,11 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
           uploadedRefs.set(`${n.id}:${i}`, (await up.json()).path);
         }
       }
-      const savedNodes = (uploaded.size === 0 && uploadedRefs.size === 0) ? nodes : nodes.map(n => {
+      const savedNodes = (uploaded.size === 0 && uploadedJars.size === 0 && uploadedRefs.size === 0) ? nodes : nodes.map(n => {
         let data = n.data;
+        if (uploadedJars.has(n.id)) {
+          data = { ...data, ruleJar: uploadedJars.get(n.id), ruleJarFile: undefined };
+        }
         if (uploaded.has(n.id)) {
           data = { ...data, ruleProject: uploaded.get(n.id), ruleProjectFile: undefined };
         }
@@ -2141,8 +2343,10 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
             <button
               className={`ade-header-btn ade-header-btn--save${saveState === 'saved' ? ' ade-header-btn--saved' : ''}${saveState === 'error' ? ' ade-header-btn--error' : ''}`}
               onClick={handleSave}
-              disabled={saveState === 'saving'}
-              title="Save agents.json to backend"
+              disabled={saveState === 'saving' || saveDisabled}
+              title={saveDisabled
+                ? 'Saving is disabled while the application is deployed. Stop the Flink job to save changes.'
+                : 'Save agents.json to backend'}
             >
               {saveState === 'saving' ? (
                 'Saving…'
@@ -2469,10 +2673,10 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
 }
 
 // ─── Public export — wraps InnerEditor in the required ReactFlowProvider ────
-export default function AgentDiagramEditor({ onClose, initialFolderName, initialDescriptor }) {
+export default function AgentDiagramEditor({ onClose, initialFolderName, initialDescriptor, saveDisabled = false }) {
   return (
     <ReactFlowProvider>
-      <InnerEditor onClose={onClose} initialFolderName={initialFolderName} initialDescriptor={initialDescriptor} />
+      <InnerEditor onClose={onClose} initialFolderName={initialFolderName} initialDescriptor={initialDescriptor} saveDisabled={saveDisabled} />
     </ReactFlowProvider>
   );
 }

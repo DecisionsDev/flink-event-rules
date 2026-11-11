@@ -19,8 +19,10 @@ event-rule-frontend/
 │   ├── App.jsx                  # Root component: screen routing, agent management panel, live dashboard
 │   ├── config.js                # Build-time configuration (API_URL, FLINK_DASHBOARD_URL)
 │   ├── UseCaseSelector.jsx      # Landing screen: header, search/sort/view toggle, application list
-│   ├── AgentScenariosPanel.jsx  # Application cards/rows: deploy, edit, delete, open dashboard
-│   ├── AgentWizard.jsx          # Multi-step wizard to create/edit an application and deploy it
+│   ├── AgentScenariosPanel.jsx  # Application cards/rows: deploy, edit diagram, delete, open dashboard
+│   ├── AgentDiagramEditor.jsx   # Full-screen graphical editor to create/edit an application (agents.json), incl. DI runtime archive fetch
+│   ├── AgentDiagramFields.jsx   # Shared editor fields (references, enrichment, errors, state)
+│   ├── agentDiagramDescriptor.js# Diagram <-> agents.json conversion and validation
 │   ├── AgentDiagramModal.jsx    # Architecture diagram of an application (subscriptions, entity, outputs)
 │   ├── SendEventsPanel.jsx      # Run/edit/create test scenarios; "Generate Sample Event"
 │   ├── SampleEventModal.jsx     # Edit and send a custom sample event to an input topic
@@ -51,21 +53,16 @@ event-rule-frontend/
 
 - Lists every event rule application discovered by the BFF (`GET /api/agents`), as cards or as a list
   (view toggle), with **search** and **sort** (recently updated, name A–Z, name Z–A).
-- **New Event Rules Application** opens the wizard.
+- **New Event Rules Application** opens the Agent Diagram Editor.
 - Each application shows its agents and its Flink job state, with these actions:
   - **Deploy** — uploads/submits the Flink job (`POST /api/agents/:id/start`) and polls until it is running.
   - **Open dashboard** — available only while the job is running.
-  - **Edit** / **Delete** — available only while the job is not running; applications with several agents
-    offer per-agent edit/delete and **+ Add Agent**.
-
-### Wizard
-
-Steps: **Job & Identity → Ruleset → Subscriptions → Outputs → State & Review → Publish & Deploy**.
-The wizard is also used to edit an application, edit a single agent, or add an agent to an existing job.
+  - **Edit diagram** / **Delete** — available only while the job is not running; applications with several agents
+    offer per-agent delete.
 
 ### Application dashboard
 
-- **Agent Management** (left pane): **Edit Agent**, **Diagram View**, **Delete Agent**, **Undeploy Agent**.
+- **Agent Management** (left pane): **Diagram View**, **Delete Agent**, **Undeploy Agent**.
 - **Send Events** (left pane): select a scenario, preview/edit its payload and **Run Scenario**;
   **Save Scenario**, **+ New Scenario**, delete and reset are supported; **Generate Sample Event** opens an
   editor pre-filled from the agent's schema and sends the event to a chosen input topic.
@@ -92,8 +89,8 @@ Available on both screens, on the right:
 |--------------------------|-----------------------------------------------------------------------------------------------------------------|
 | `App`                    | Screen routing, BFF config, descriptor loading, topic panels, notifications                                     |
 | `UseCaseSelector`        | Landing screen shell; renders `AgentScenariosPanel`                                                             |
-| `AgentScenariosPanel`    | Lists applications from `GET /api/agents`; polls `GET /api/flink/status`; deploy/edit/delete actions            |
-| `AgentWizard`            | Create/edit/append flows via `POST /api/agents`, `PATCH /api/agents/:id/agents/:agentId`; start/stop/jar upload |
+| `AgentScenariosPanel`    | Lists applications from `GET /api/agents`; polls `GET /api/flink/status`; deploy/edit diagram/delete actions |
+| `AgentDiagramEditor`     | Graphical create/edit flow: palette, canvas, detail panels; saves via `POST /api/agents` and `/api/agents/:id/jar,project,reference` uploads |
 | `SendEventsPanel`        | Loads scenarios from `GET /api/use-cases/:id/scenarios` and publishes via `POST /api/use-cases/:id/events`      |
 | `eventCardRegistry`      | Chooses `ProcessingErrorCard`, `DecisionResultCard`, `EntityEventCard` or `JsonCardRenderer` for each event      |
 | `useEventStream`         | WebSocket subscription (`/ws`) with HTTP polling fallback (`GET /api/use-cases/:id/events`)                     |
@@ -179,9 +176,9 @@ VITE_FLINK_DASHBOARD_URL=http://localhost:8081
 
 ## Features
 
-- **Application management**: Create, edit, deploy, undeploy and delete event rule applications from the UI
-- **Multi-agent applications**: Several agents can share one Flink job; each can be edited or deleted individually
-- **Guided wizard**: Six-step flow from identity and ruleset to publishing and deploying the Flink job
+- **Application management**: Create and edit (Agent Diagram Editor), deploy, undeploy and delete event rule applications from the UI
+- **Multi-agent applications**: Several agents can share one Flink job; each can be deleted individually
+- **Agent Diagram Editor**: Drag-and-drop canvas to model topics, agents, entities and outbounds, fetch decision archives from a DI runtime, and save `agents.json`
 - **Architecture diagram**: Per-application view of subscriptions, entity state and outputs
 - **Send Events**: Run, edit, save and create test scenarios, or send a custom sample event
 - **Adaptive event cards**: Decision results, entity events and processing errors rendered by shape, with a generic JSON fallback

@@ -28,6 +28,8 @@
  *        → proxy decision list from the DI runtime
  *   POST /api/ads-runtimes/:id/archive?decisionId=<id>&agentId=<id>[&deploymentSpace=<space>]
  *        → download decision archive and save under samples/<agentId>/
+ *   GET  /api/ads-runtimes/:id/archive?decisionId=<id>[&deploymentSpace=<space>]
+ *        → stream decision archive to the caller without storing it
  *
  * Factory export: createAdsRouter({ diRuntimes, samplesDir, isValidAgentId })
  */
@@ -48,18 +50,19 @@ function diDeploymentSpace(runtime) {
 }
 
 /**
- * Makes an HTTP/HTTPS GET request to the given URL with optional Basic auth.
+ * Makes an HTTP/HTTPS GET request to the given URL, authenticated with a Zen API key
+ * ("Authorization: ZenApiKey base64(<username>:<apiKey>)") when both are provided.
  * Returns a Promise that resolves with { statusCode, body } where body is a
  * Buffer for binary responses or a parsed JS object for JSON.
  *
  * @param {string}  url                   Full URL to request
- * @param {string}  [username]
- * @param {string}  [password]
+ * @param {string}  [username]            Zen user name the API key belongs to
+ * @param {string}  [apiKey]              Zen API key
  * @param {boolean} [binary]              If true, resolve body as Buffer (for archive download)
  * @param {boolean} [rejectUnauthorized]  Set false to allow self-signed TLS certs
  * @returns {Promise<{statusCode: number, body: Buffer|object}>}
  */
-function diRequest(url, username, password, binary = false, rejectUnauthorized = true) {
+function diRequest(url, username, apiKey, binary = false, rejectUnauthorized = true) {
   return new Promise((resolve, reject) => {
     const parsed  = new URL(url);
     const lib     = parsed.protocol === 'https:' ? https : http;
@@ -71,9 +74,9 @@ function diRequest(url, username, password, binary = false, rejectUnauthorized =
       headers:            { Accept: binary ? 'application/octet-stream' : 'application/json' },
       rejectUnauthorized: rejectUnauthorized !== false,
     };
-    if (username) {
-      const creds = Buffer.from(`${username}:${password || ''}`).toString('base64');
-      options.headers['Authorization'] = `Basic ${creds}`;
+    if (username && apiKey) {
+      const creds = Buffer.from(`${username}:${apiKey}`).toString('base64');
+      options.headers['Authorization'] = `ZenApiKey ${creds}`;
     }
     const req = lib.request(options, (res) => {
       const chunks = [];
@@ -143,12 +146,12 @@ function createAdsRouter({ diRuntimes, samplesDir, isValidAgentId }) {
       const { statusCode, body } = await diRequest(
         listUrl,
         runtime.username,
-        runtime.password,
+        runtime.apiKey,
         /* binary */ false,
         runtime.rejectUnauthorized,
       );
       if (statusCode === 401) {
-        return res.status(401).json({ error: 'DI runtime authentication failed. Check username/password in DI_RUNTIMES config.' });
+        return res.status(401).json({ error: 'DI runtime authentication failed. Check username/apiKey in DI_RUNTIMES config.' });
       }
       if (statusCode < 200 || statusCode >= 300) {
         return res.status(502).json({ error: `DI runtime returned status ${statusCode}` });
@@ -184,22 +187,20 @@ function createAdsRouter({ diRuntimes, samplesDir, isValidAgentId }) {
   });
 
   /**
-   * POST /api/ads-runtimes/:id/archive?decisionId=<encoded>&agentId=<agentId>[&deploymentSpace=<space>]
-   * Downloads the decision archive from the DI runtime and saves it under
-   * samples/<agentId>/<safeId>.jar.
+   * Downloads the archive of req.query.decisionId from the DI runtime req.params.id.
+   * Returns { buffer, filename } on success; on failure it has already answered
+   * the request and returns null.
    */
-  router.post('/:id/archive', async (req, res) => {
+  async function downloadArchive(req, res) {
     const { id: runtimeId } = req.params;
-    const { agentId, decisionId, deploymentSpace: deploymentSpaceOverride } = req.query;
+    const { decisionId, deploymentSpace: deploymentSpaceOverride } = req.query;
 
     const runtime = findRuntime(runtimeId);
-    if (!runtime) return res.status(404).json({ error: `DI runtime '${runtimeId}' not configured` });
+    if (!runtime) { res.status(404).json({ error: `DI runtime '${runtimeId}' not configured` }); return null; }
 
-    if (!agentId || !isValidAgentId(agentId)) {
-      return res.status(400).json({ error: 'agentId query parameter is required and must be a valid agent id' });
-    }
     if (!decisionId || decisionId.length > 512) {
-      return res.status(400).json({ error: 'decisionId is required and must not exceed 512 characters' });
+      res.status(400).json({ error: 'decisionId is required and must not exceed 512 characters' });
+      return null;
     }
 
     const spaceOverride = (deploymentSpaceOverride || '').trim();
@@ -210,42 +211,82 @@ function createAdsRouter({ diRuntimes, samplesDir, isValidAgentId }) {
       const { statusCode, body: archiveBuffer } = await diRequest(
         archiveUrl,
         runtime.username,
-        runtime.password,
+        runtime.apiKey,
         /* binary */ true,
         runtime.rejectUnauthorized,
       );
       if (statusCode === 401) {
-        return res.status(401).json({ error: 'DI runtime authentication failed.' });
+        res.status(401).json({ error: 'DI runtime authentication failed.' });
+        return null;
       }
       if (statusCode === 404) {
-        return res.status(404).json({ error: `Decision '${decisionId}' not found on DI runtime '${runtimeId}'` });
+        res.status(404).json({ error: `Decision '${decisionId}' not found on DI runtime '${runtimeId}'` });
+        return null;
       }
       if (statusCode < 200 || statusCode >= 300) {
-        return res.status(502).json({ error: `DI runtime returned status ${statusCode} for archive download` });
+        res.status(502).json({ error: `DI runtime returned status ${statusCode} for archive download` });
+        return null;
       }
       if (!archiveBuffer || archiveBuffer.length === 0) {
-        return res.status(502).json({ error: 'DI runtime returned an empty archive' });
+        res.status(502).json({ error: 'DI runtime returned an empty archive' });
+        return null;
       }
 
       // Derive a safe filename from the last two path segments of the decision ID.
-      const parts    = decisionId.split('/');
-      const ver      = parts[parts.length - 1] || 'archive';
-      const svc      = parts[parts.length - 2] || '';
-      const base     = svc ? `${svc}_${ver}` : ver;
-      const safeId   = base.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const filename = `${safeId}.jar`;
-      const dir      = path.join(samplesDir, agentId);
-      const filePath = path.join(dir, filename);
-      const relPath  = `samples/${agentId}/${filename}`;
-      await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(filePath, archiveBuffer);
-
-      console.log(`[di] Archive for decision '${decisionId}' saved to ${relPath} (${archiveBuffer.length} bytes)`);
-      res.status(201).json({ saved: true, filename, path: relPath });
+      const parts  = decisionId.split('/');
+      const ver    = parts[parts.length - 1] || 'archive';
+      const svc    = parts[parts.length - 2] || '';
+      const base   = svc ? `${svc}_${ver}` : ver;
+      const safeId = base.replace(/[^a-zA-Z0-9._-]/g, '_');
+      return { buffer: archiveBuffer, filename: `${safeId}.jar` };
     } catch (err) {
       console.error(`[di] Archive download failed for decision '${decisionId}' from runtime '${runtimeId}':`, err.message);
       res.status(502).json({ error: `Archive download failed: ${err.message}` });
+      return null;
     }
+  }
+
+  /**
+   * POST /api/ads-runtimes/:id/archive?decisionId=<encoded>&agentId=<agentId>[&deploymentSpace=<space>]
+   * Downloads the decision archive from the DI runtime and saves it under
+   * samples/<agentId>/<safeId>.jar.
+   */
+  router.post('/:id/archive', async (req, res) => {
+    const { agentId, decisionId } = req.query;
+    if (!findRuntime(req.params.id)) {
+      return res.status(404).json({ error: `DI runtime '${req.params.id}' not configured` });
+    }
+    if (!agentId || !isValidAgentId(agentId)) {
+      return res.status(400).json({ error: 'agentId query parameter is required and must be a valid agent id' });
+    }
+    const archive = await downloadArchive(req, res);
+    if (!archive) return undefined;
+    try {
+      const dir      = path.join(samplesDir, agentId);
+      const relPath  = `samples/${agentId}/${archive.filename}`;
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, archive.filename), archive.buffer);
+      console.log(`[di] Archive for decision '${decisionId}' saved to ${relPath} (${archive.buffer.length} bytes)`);
+      return res.status(201).json({ saved: true, filename: archive.filename, path: relPath });
+    } catch (err) {
+      console.error(`[di] Could not store archive for decision '${decisionId}':`, err.message);
+      return res.status(500).json({ error: `Could not store archive: ${err.message}` });
+    }
+  });
+
+  /**
+   * GET /api/ads-runtimes/:id/archive?decisionId=<encoded>[&deploymentSpace=<space>]
+   * Streams the decision archive to the caller without storing it, so the Agent
+   * Diagram Editor can keep it pending until the diagram is saved.
+   * The file name is returned in the X-Archive-Filename header.
+   */
+  router.get('/:id/archive', async (req, res) => {
+    const archive = await downloadArchive(req, res);
+    if (!archive) return undefined;
+    res.set('Content-Type', 'application/java-archive');
+    res.set('X-Archive-Filename', archive.filename);
+    res.set('Access-Control-Expose-Headers', 'X-Archive-Filename');
+    return res.status(200).send(archive.buffer);
   });
 
   return router;

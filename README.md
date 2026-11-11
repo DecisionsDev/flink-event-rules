@@ -19,7 +19,7 @@
 4. [Architecture Overview](#4-architecture-overview)
 5. [Flink Backends](#5-flink-backends)
 6. [How Event Rules Work](#6-how-event-rules-work)
-7. [Descriptor Wizard](#7-descriptor-wizard)
+7. [Agent Diagram Editor](#7-agent-diagram-editor)
 8. [Building and Testing](#8-building-and-testing)
 9. [Running with Docker](#9-running-with-docker)
 10. [Running Locally](#10-running-locally)
@@ -470,38 +470,46 @@ agent processing a single event type, see
 
 ---
 
-## 7. Descriptor Wizard
+## 7. Agent Diagram Editor
 
-The **Descriptor Wizard** is a multi-step form built into the dashboard that lets you create or
-edit an agent descriptor entirely from the UI — no manual JSON editing required.
+The **Agent Diagram Editor** is a full-screen graphical editor built into the dashboard that lets you
+create or edit an `agents.json` descriptor entirely from the UI — no manual JSON editing required.
+It replaces the former multi-step Descriptor Wizard.
 
-Open it from the use-case selector by clicking **New Agent Descriptor** (or **✎ Edit** on an
-existing card).
+Open it from the application list by clicking **New Event Rules Application**, or **Edit diagram** on an
+existing card. Editing is available only while the application's Flink job is not running; a deployed
+application opens read-only (saving is disabled until the job is stopped).
 
-### Steps
+### Building a diagram
 
-| Step | Name               | What you configure                                                                        |
-|------|--------------------|-------------------------------------------------------------------------------------------|
-| 1    | Job & Identity     | Use-case name, Flink job name, description and consumer group ID (optional, stored at the top level of `agents.json`; the use case is stored in `samples/<slug of the use-case name>/`, or `samples/<agent ID>/` when no name is given), agent ID, display name, entity type, entity key extractor, parallelism, agent chaining |
-| 2    | Subscriptions      | Kafka input topics, event types, operations, event-history horizon                        |
-| 3    | Ruleset            | Decision archive source, archive-control topic, operation field mappings                  |
-| 4    | Outputs            | Output event types and Kafka topics                                                       |
-| 5    | State & Review     | State TTL, backend, entity changelog topic, full JSON preview                             |
-| 6    | Publish & Deploy   | Upload JAR, save descriptor, start/stop Flink job                                         |
+Drag nodes from the **Palette** onto the canvas, link them, and click a node to edit its properties in the
+detail panel on the right. Clicking an empty part of the canvas shows the application-level properties.
 
-### Step 3 — Ruleset: two ways to provide a decision archive
+| Node / panel         | What you configure                                                                                         |
+|----------------------|------------------------------------------------------------------------------------------------------------|
+| Application          | Name, folder name (`samples/<folder>/agents.json`), description, Flink job name, consumer group ID, job parallelism |
+| **Topic** (inbound)  | Kafka topic name, event type, optional JSON event schema, topic idleness                                   |
+| **Agent**            | Agent ID, name, description, entity key extractor, chaining, agent parallelism, rule engine (see below), decision operations, reference data, schedules, error output, state configuration |
+| **Entity**           | Entity type and changelog topic (`stateConfig.changeLogTopic`)                                             |
+| **Outbound**         | Output Kafka topic, event type, description, enrichment steps                                              |
 
-The Ruleset step supports two paths for supplying the Decision Intelligence archive.
-Both paths set the same `ruleset.path` field in `agents.json`; all downstream
-processing (Step 6 upload, Flink job, hot-swap) is identical regardless of how the
-archive was obtained.
+Link a Topic to an operation's left handle (subscription) and an Outbound to its right handle (output).
+Event-history horizons are set on the subscription links. The toolbar offers zoom, fit view, **Auto layout**,
+undo/redo and clear; **Export JSON** downloads the generated `agents.json`. The header lists any
+**problems** the backend validator would reject.
+
+### Agent rule engine: providing a decision archive
+
+The **Rule Engine** section of an Agent node supports two ways of supplying the Decision Intelligence
+archive. Both set the same `ruleset.path` field in `agents.json`; all downstream processing (Flink job,
+hot-swap) is identical regardless of how the archive was obtained.
 
 ```
-Ruleset Step
+Agent node → Rule Engine
      │
      ┌─────────────────────┬──────────────────────────┐
      ▼                     ▼
-Upload Decision Archive   Fetch from DI Runtime
+Pick / drop a local jar   Fetch from DI Runtime
      │                          │
      │                   Select runtime instance
      │                          │
@@ -510,33 +518,35 @@ Upload Decision Archive   Fetch from DI Runtime
      │                   Select Decision ID
      │                          │
      │                   ⬇ Fetch Archive
-     │                   (saved to samples/<agentId>/)
      │                          │
      └──────────┬───────────────┘
                 ▼
-     Existing Ruleset Processing
-     (validateStep, buildDescriptor, StepPublish)
+     Archive staged in the browser;
+     uploaded to samples/<folder>/ on Save
 ```
 
-#### Option A — Upload a local archive
+#### Option A — Local archive
 
-Click **↑ Upload Decision Archive**, choose a `.jar` file from your local filesystem.
-The file is staged in the browser and uploaded to `samples/<agentId>/` on the BFF server
-at Step 6.
+In **Decision Service Archive (Jar)**, click to browse (or drop) a `.jar` file, or type an existing path
+such as `samples/my-agent/rules.jar`. A picked file is uploaded to `samples/<folder>/` when you save the diagram.
 
 #### Option B — Fetch from a DI Runtime
 
-Click **⬇ Fetch from DI Runtime** to browse decisions deployed on a configured IBM
-Automation Decision Services instance:
+Use **Fetch from DI Runtime** to browse decisions deployed on a configured IBM Decision Intelligence runtime:
 
-1. **Select runtime** — choose from the list of configured DI runtimes.
-2. **Browse decisions** — the wizard loads the list of deployed decisions from the runtime.
+1. **Select runtime** — choose from the list of configured DI runtimes (and, optionally, a deployment space).
+2. **Browse decisions** — the editor loads the list of deployed decisions from the runtime.
 3. **Select a decision** — pick by Decision ID (name and status are shown for context).
-4. **Fetch archive** — the BFF downloads the archive directly from the runtime and saves
-   it to `samples/<agentId>/<decisionId>.jar`. The path is set automatically.
+4. **Fetch archive** — the BFF streams the archive from the runtime to the editor, which stages it like a
+   local file and stores it under `samples/<folder>/` when the diagram is saved.
 
-> **No local file is required.** The archive is downloaded server-side by the BFF, so the
-> browser never handles the binary payload.
+The optional **Decision Service Project** zip is stored in the `di-project` sub-folder on save and is used
+to discover operations, classes and attributes for the editor's dropdowns.
+
+### Saving
+
+**Save** (available once the application has a folder name) uploads any pending archive, project and
+reference files, then writes the descriptor through `POST /api/agents` (`mode: replace`).
 
 ### Configuring DI runtimes
 
@@ -550,7 +560,7 @@ startup). Each entry is a JSON object:
     "name":     "DI Development",
     "url":      "http://ads-dev:9060",
     "username": "admin",
-    "password": "secret"
+    "apiKey":   "<zen api key>"
   }
 ]
 ```
@@ -558,23 +568,26 @@ startup). Each entry is a JSON object:
 | Field      | Required | Description                                              |
 |------------|----------|----------------------------------------------------------|
 | `id`       | ✓        | Unique identifier used in BFF API routes                 |
-| `name`     | ✓        | Display name shown in the wizard                         |
+| `name`     | ✓        | Display name shown in the editor                         |
 | `url`      | ✓        | Base URL of the DI runtime (no trailing slash)          |
-| `username` |          | HTTP Basic auth username (omit if no auth)               |
-| `password` |          | HTTP Basic auth password                                 |
+| `username` |          | Zen user name the API key belongs to                     |
+| `apiKey`   |          | Zen API key; sent as `Authorization: ZenApiKey base64(<username>:<apiKey>)` (both `username` and `apiKey` are needed to authenticate) |
 
 Credentials are consumed server-side only and are **never sent to the browser**.
 
 See [`.env.example`](.env.example) for the full configuration block and
 [`event-rule-frontend/bff/README.md`](event-rule-frontend/bff/README.md) for the BFF API reference.
 
-### BFF API endpoints added
+### BFF API endpoints used
 
-| Method | Path                                                            | Description                                       |
-|--------|-----------------------------------------------------------------|---------------------------------------------------|
-| `GET`  | `/api/ads-runtimes`                                             | List configured DI runtimes (no credentials)     |
-| `GET`  | `/api/ads-runtimes/:id/decisions`                               | List decisions deployed on a runtime              |
-| `POST` | `/api/ads-runtimes/:id/decisions/:decisionId/archive?agentId=` | Download and save an archive from a runtime       |
+| Method | Path                                                              | Description                                                |
+|--------|-------------------------------------------------------------------|------------------------------------------------------------|
+| `GET`  | `/api/ads-runtimes`                                               | List configured DI runtimes (no credentials)               |
+| `GET`  | `/api/ads-runtimes/:id/decisions`                                 | List decisions deployed on a runtime                       |
+| `GET`  | `/api/ads-runtimes/:id/archive?decisionId=`                       | Stream an archive from a runtime to the editor             |
+| `POST` | `/api/ads-runtimes/:id/archive?decisionId=&agentId=`              | Download an archive server-side and save it under `samples/<agentId>/` |
+| `POST` | `/api/agents`                                                     | Save the descriptor                                        |
+| `POST` | `/api/agents/:id/jar`, `/project`, `/reference`                   | Upload decision archive, Decision Service project and reference CSV files |
 
 ---
 
@@ -626,7 +639,8 @@ cd event-rule-frontend && npm test -- --run
 
 | File                            | What it tests                                                                                                                         |
 |---------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| `AgentWizard.test.jsx`          | `descriptorToForm`, `buildDescriptor`, round-trips, step validation, edit-agent URL, `jarState` derivation, `chainingEnabled` mapping |
+| `AgentDiagramEditor.test.jsx`    | Diagram editor UI: nodes, links, save/export, error handling                                                                          |
+| `agentDiagramDescriptor.test.js` | Diagram <-> `agents.json` round-trips and descriptor validation                                                                     |
 | `DIRuntimeFetch.test.jsx`       | BFF DI routes (runtime list, decision list, archive download), error paths, agentId validation, pipeline integration                  |
 | `AgentManagementPanel.test.jsx` | Stop/delete fetch URL, `useCaseId` vs `agentId` prop separation                                                                       |
 | `KafkaNotifications.test.jsx`   | WebSocket notification hook, `prevCountsRef` reset on use-case switch                                                                 |
@@ -1018,7 +1032,7 @@ understand exactly how each section of the specification maps to the generated c
      - Every subscription horizon → correct "horizon" block
      - Every operation input/output → "history" / "outbounds" arrays
 
-8. Load the application through the Descriptor Wizard (§7),
+8. Load the application through the Agent Diagram Editor (§7),
    or place the files in your sample directory and restart
    the BFF to pick them up automatically.
 ```
@@ -1119,9 +1133,9 @@ event-rule/
 │   │   └── server.js                    # Kafka consumer + WebSocket bridge + REST API
 │   │                                    #   includes /api/ads-runtimes/* routes
 │   └── src/                             # React 18 dashboard (Vite)
-│       ├── AgentWizard.js               # Descriptor Wizard (all steps incl. Ruleset DI fetch, chainingEnabled)
-│       ├── AgentWizard.css              # Wizard styles (incl. source-selector, DI panel)
-│       ├── AgentWizard.test.js          # Wizard unit tests
+│       ├── AgentDiagramEditor.jsx       # Agent Diagram Editor (canvas, node detail panels, DI runtime archive fetch, save)
+│       ├── AgentDiagramFields.jsx       # Shared editor fields (references, enrichment, errors, state)
+│       ├── agentDiagramDescriptor.js    # Diagram <-> agents.json conversion and validation
 │       └── DIRuntimeFetch.test.js       # DI runtime fetch unit tests
 │
 ├── samples/
@@ -1190,9 +1204,9 @@ throughput, backpressure indicators.
 | Rules not firing                            | Check for smoke-test warnings in TaskManager logs; verify `ruleset.path` points to an existing JAR                            |
 | `Could not find decision runner` error      | The `operation` in each subscription must match the operation name exported by IBM Decision Designer exactly (case-sensitive). Verify the operation's decision flow is registered in the JAR's `META-INF/services/com.ibm.decision.run.DecisionServiceProvider` — a missing service entry is the most common cause. |
 | State lost after restart                    | Flink restores from the last checkpoint; allow at least one checkpoint interval (60 s) before restarting                      |
-| DI wizard shows "No DI runtimes configured" | Set `DI_RUNTIMES` in `.env` (see [§7](#7-descriptor-wizard)) and restart the BFF                                             |
-| DI wizard shows "Could not load runtimes"   | BFF cannot reach `GET /api/ads-runtimes` — check BFF logs; if running locally, ensure BFF is started                          |
-| DI fetch returns "authentication failed"    | `username`/`password` in `DI_RUNTIMES` do not match the DI runtime — check credentials in `.env`                            |
+| DI archive fetch shows "No DI runtimes configured" | Set `DI_RUNTIMES` in `.env` (see [§7](#7-agent-diagram-editor)) and restart the BFF |
+| DI archive fetch shows "Could not load runtimes"   | BFF cannot reach `GET /api/ads-runtimes` — check BFF logs; if running locally, ensure BFF is started                          |
+| DI fetch returns "authentication failed"    | `username`/`apiKey` in `DI_RUNTIMES` do not match the DI runtime — check credentials in `.env`                              |
 | DI fetch returns "Failed to connect"        | DI runtime is unreachable from the BFF — check `url` in `DI_RUNTIMES` and network/firewall rules                             |
 
 For use-case-specific troubleshooting (e.g. banking fraud scenarios), see

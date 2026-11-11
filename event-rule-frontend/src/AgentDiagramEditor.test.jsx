@@ -257,6 +257,11 @@ describe('AgentDiagramEditor', () => {
       expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
     });
 
+    test('Save button is disabled when saveDisabled is set (application deployed)', () => {
+      render(<AgentDiagramEditor onClose={vi.fn()} initialFolderName="banking-fraud-agent" saveDisabled />);
+      expect(screen.getByRole('button', { name: /save/i })).toBeDisabled();
+    });
+
     test('Save button appears when user enters folder name in properties panel', () => {
       render(<AgentDiagramEditor onClose={vi.fn()} />);
       const folderInput = screen.getByPlaceholderText(/e\.g\. banking-fraud-agent/i);
@@ -457,6 +462,74 @@ describe('AgentDiagramEditor', () => {
       await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
       expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
         useCaseId: 'orders', descriptor, mode: 'replace',
+      });
+    });
+
+    describe('decision archive fetched from a DI runtime', () => {
+      const mockFetch = () => {
+        const fetchMock = vi.fn(async (url) => {
+          if (url.endsWith('/api/ads-runtimes')) {
+            return { ok: true, json: async () => [{ id: 'rt1', name: 'Runtime 1', deploymentSpace: 'embedded' }] };
+          }
+          if (url.includes('/decisions')) {
+            return { ok: true, json: async () => [{ id: 'svc/1.0', name: 'Service 1.0' }] };
+          }
+          if (url.includes('/api/ads-runtimes/rt1/archive')) {
+            return {
+              ok: true,
+              headers: { get: (h) => (h === 'X-Archive-Filename' ? 'svc_1.0.jar' : null) },
+              blob: async () => new Blob(['jar-bytes']),
+            };
+          }
+          if (url.endsWith('/jar')) {
+            return { ok: true, json: async () => ({ path: 'samples/orders/svc_1.0.jar' }) };
+          }
+          return { ok: true, json: async () => ({}) };
+        });
+        global.fetch = fetchMock;
+        return fetchMock;
+      };
+
+      const fetchArchive = async () => {
+        openEditor();
+        selectNode('Order Agent');
+        fireEvent.click(screen.getByRole('button', { name: /Fetch from DI Runtime/i }));
+        fireEvent.change(await screen.findByLabelText('Select DI runtime'), { target: { value: 'rt1' } });
+        fireEvent.change(await screen.findByLabelText('Select decision'), { target: { value: 'svc/1.0' } });
+        fireEvent.click(screen.getByRole('button', { name: /Fetch Archive/i }));
+        expect(await screen.findByText(/Archive fetched \(svc_1\.0\.jar\)/)).toBeInTheDocument();
+      };
+
+      test('is kept pending in the browser: nothing is written to the server until Save', async () => {
+        const fetchMock = mockFetch();
+        await fetchArchive();
+        expect(screen.getByDisplayValue('samples/orders/svc_1.0.jar')).toBeInTheDocument();
+        const archiveCall = fetchMock.mock.calls.find(([u]) => u.includes('/api/ads-runtimes/rt1/archive'));
+        expect(archiveCall[0]).toContain('decisionId=svc%2F1.0');
+        expect(archiveCall[1]?.method).toBeUndefined(); // GET: the BFF stores nothing
+        expect(fetchMock.mock.calls.some(([u]) => u.endsWith('/jar'))).toBe(false);
+        expect(fetchMock.mock.calls.some(([, o]) => o?.method === 'POST')).toBe(false);
+      });
+
+      test('is uploaded next to agents.json when the diagram is saved', async () => {
+        const fetchMock = mockFetch();
+        await fetchArchive();
+        fireEvent.click(screen.getByRole('button', { name: /save/i }));
+        await waitFor(() => expect(fetchMock.mock.calls.some(([, o]) => o?.method === 'POST' && o.body && !(typeof o.body === 'string'))).toBe(true));
+        const jarCall = fetchMock.mock.calls.find(([u]) => u.endsWith('/api/agents/orders/jar'));
+        expect(jarCall[1].method).toBe('POST');
+        expect(jarCall[1].body.get('jar').name).toBe('svc_1.0.jar');
+        await waitFor(() => expect(fetchMock.mock.calls.some(([u, o]) => u.endsWith('/api/agents') && o?.method === 'POST')).toBe(true));
+        const saveCall = fetchMock.mock.calls.find(([u, o]) => u.endsWith('/api/agents') && o?.method === 'POST');
+        expect(JSON.parse(saveCall[1].body).descriptor.agents[0].ruleset.path).toBe('samples/orders/svc_1.0.jar');
+      });
+
+      test('is discarded when the editor is closed without saving', async () => {
+        const fetchMock = mockFetch();
+        await fetchArchive();
+        fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+        expect(fetchMock.mock.calls.some(([u]) => u.endsWith('/jar'))).toBe(false);
+        expect(fetchMock.mock.calls.some(([u, o]) => u.endsWith('/api/agents') && o?.method === 'POST')).toBe(false);
       });
     });
 

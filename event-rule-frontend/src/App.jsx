@@ -20,7 +20,6 @@ import './App.css';
 import './UseCaseSelector.css';
 import { API_URL as API_URL_APP, FLINK_DASHBOARD_URL } from './config.js';
 import UseCaseSelector from './UseCaseSelector';
-import AgentWizard from './AgentWizard';
 import AgentDiagramEditor from './AgentDiagramEditor';
 import SendEventsPanel from './SendEventsPanel';
 import AgentDiagramModal from './AgentDiagramModal';
@@ -107,7 +106,7 @@ function ConfirmDialog({ message, confirmLabel, confirmDanger, onConfirm, onCanc
 
 // agentId   — human-readable name shown in confirm dialogs (agents[0].agentId or folder name)
 // useCaseId — use-case folder name used as the :id key in all BFF API calls
-export function AgentManagementPanel({ agentId, useCaseId, onEdit, onNavigateBack, agentsJson, flinkRuntime }) {
+export function AgentManagementPanel({ agentId, useCaseId, onNavigateBack, agentsJson, flinkRuntime }) {
   const [confirm, setConfirm] = useState(null);          // null | 'cancel' | 'delete'
   const [cancelState, setCancelState] = useState('idle'); // idle | stopping | error
   const [deleteState, setDeleteState] = useState('idle'); // idle | deleting | error
@@ -205,14 +204,6 @@ export function AgentManagementPanel({ agentId, useCaseId, onEdit, onNavigateBac
         </div>
         <div className="agent-mgmt-actions">
           <button
-            className="agent-mgmt-btn agent-mgmt-btn-primary"
-            onClick={onEdit}
-            disabled={!hasUseCaseId || isBusy}
-            title="Edit the agent descriptor"
-          >
-            Edit Agent
-          </button>
-          <button
             className="agent-mgmt-btn agent-mgmt-btn-ghost"
             onClick={() => setShowDiagram(true)}
             disabled={!agentsJson}
@@ -266,16 +257,9 @@ const NOTIFICATION_CONFIG = {
 function App() {
   const [maxEventsDisplay, setMaxEventsDisplay] = useState(50);
   const [selectedUseCase, setSelectedUseCase] = useState(null);
-  const [showWizard, setShowWizard] = useState(false);
   const [showDiagramEditor, setShowDiagramEditor] = useState(false);
   // Existing use case opened in the diagram editor: { useCaseId, descriptor } | null (new diagram)
   const [diagramEdit, setDiagramEdit] = useState(null);
-  const [editDescriptor, setEditDescriptor] = useState(null);
-  // useCaseId, targetAgentId, and wizardMode are passed to the wizard when opening in
-  // edit mode (useCaseId + targetAgentId) or append mode (useCaseId + wizardMode="append").
-  const [wizardUseCaseId, setWizardUseCaseId] = useState(null);
-  const [wizardTargetAgentId, setWizardTargetAgentId] = useState(null);
-  const [wizardMode, setWizardMode] = useState('replace');
   // refreshToken — bumped whenever the agent list should be re-fetched (after
   // create, edit, or delete). AgentScenariosPanel watches this value and calls
   // fetchAgents() when it changes.
@@ -453,111 +437,29 @@ function App() {
 
 
 
-  // handleEditAgent — opens the wizard to edit the first (or only) agent in a use-case.
-  // Called from the dashboard "Edit Agent" button and from failed-job cards.
-  // Guard against SyntheticEvent being passed as the first argument.
-  const handleEditAgent = async (useCaseId) => {
-    const id = (typeof useCaseId === 'string' ? useCaseId : null) || selectedUseCase;
-    try {
-      const r = await fetch(`${API_URL_APP}/api/agents/${id}`);
-      if (!r.ok) throw new Error(r.statusText);
-      const agentsJson = await r.json();
-      setEditDescriptor(agentsJson);
-      // Determine the correct save mode:
-      //   - single-agent use-case → replace (overwrite entire file)
-      //   - multi-agent use-case  → patch   (update only agents[0], preserve siblings)
-      const isMulti = (agentsJson.agents || []).length > 1;
-      setWizardTargetAgentId(isMulti ? agentsJson.agents[0].agentId : null);
-      setWizardMode(isMulti ? 'patch' : 'replace');
-      setWizardUseCaseId(id);
-      setShowWizard(true);
-    } catch (err) {
-      setError(`Failed to load agent for editing: ${err.message}`);
-    }
-  };
-
   // handleEditDiagram — opens the whole use-case descriptor in the Agent Diagram Editor.
-  const handleEditDiagram = async (useCaseId) => {
+  const handleEditDiagram = async (useCaseId, { readOnly = false } = {}) => {
     try {
       const r = await fetch(`${API_URL_APP}/api/agents/${useCaseId}`);
       if (!r.ok) throw new Error(r.statusText);
-      setDiagramEdit({ useCaseId, descriptor: await r.json() });
+      setDiagramEdit({ useCaseId, descriptor: await r.json(), readOnly });
       setShowDiagramEditor(true);
     } catch (err) {
       setError(`Failed to load the application for editing: ${err.message}`);
     }
   };
 
-  // handleEditSpecificAgent — opens the wizard to edit a named agent within a use-case.
-  // Called from AgentScenariosPanel when the user clicks "✎ Edit" on a specific agent card.
-  // useCaseId: folder key; targetAgentId: the agentId to edit within the file.
-  const handleEditSpecificAgent = async (useCaseId, targetAgentId) => {
-    try {
-      const r = await fetch(`${API_URL_APP}/api/agents/${useCaseId}`);
-      if (!r.ok) throw new Error(r.statusText);
-      const agentsJson = await r.json();
-      setEditDescriptor(agentsJson);
-    } catch {
-      setEditDescriptor(null);
-    }
-    setWizardUseCaseId(useCaseId);
-    setWizardTargetAgentId(targetAgentId);
-    // Always use patch mode when editing a specific named agent —
-    // this ensures siblings are never disturbed regardless of agent count.
-    setWizardMode('patch');
-    setShowWizard(true);
-  };
-
   // handleDeleteAgent — deletes the entire use-case (single-agent).
   // Calls DELETE /api/agents/:useCaseId which stops the job, purges topics,
   // removes all descriptor files, and tears down the folder.
-  // On success: closes the wizard (if open) and bumps refreshToken so the panel re-fetches.
-  // Throws on failure so the card can surface the error inline (wizard stays open).
+  // On success: bumps refreshToken so the panel re-fetches.
+  // Throws on failure so the card can surface the error inline.
   const handleDeleteAgent = async (useCaseId) => {
     const r = await fetch(`${API_URL_APP}/api/agents/${useCaseId}`, { method: 'DELETE' });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
       throw new Error(body.error || r.statusText);
     }
-    // Close the wizard if it was open for this use-case (or any use-case — a
-    // deleted agent's wizard should never remain visible).
-    if (showWizard) handleWizardClose();
-    setRefreshToken(t => t + 1);
-  };
-
-  // handleDeleteSpecificAgent — removes one agent from a multi-agent use-case.
-  // Calls DELETE /api/agents/:useCaseId/agents/:agentId which updates agents.json
-  // in-place (or does a full teardown when the last agent is removed).
-  // On success: closes the wizard (if open) and bumps refreshToken.
-  // Throws on failure so the card can surface the error inline (wizard stays open).
-  const handleDeleteSpecificAgent = async (useCaseId, agentId) => {
-    const r = await fetch(`${API_URL_APP}/api/agents/${useCaseId}/agents/${agentId}`, { method: 'DELETE' });
-    if (!r.ok) {
-      const body = await r.json().catch(() => ({}));
-      throw new Error(body.error || r.statusText);
-    }
-    if (showWizard) handleWizardClose();
-    setRefreshToken(t => t + 1);
-  };
-
-  // Opens the wizard in append mode pre-filled with the given use-case id,
-  // so the user adds a second agent to an existing Flink Job.
-  const handleAddAgentToJob = (useCaseId) => {
-    setEditDescriptor(null);          // blank form — new agent
-    setWizardUseCaseId(useCaseId);
-    setWizardTargetAgentId(null);
-    setWizardMode('append');
-    setShowWizard(true);
-  };
-
-  const handleWizardClose = () => {
-    setShowWizard(false);
-    setEditDescriptor(null);
-    setWizardUseCaseId(null);
-    setWizardTargetAgentId(null);
-    setWizardMode('replace');
-    // Bump the refresh token so AgentScenariosPanel re-fetches after every
-    // wizard session (create, edit, or cancel — harmless to re-fetch on cancel).
     setRefreshToken(t => t + 1);
   };
 
@@ -569,23 +471,12 @@ function App() {
         key={diagramEdit?.useCaseId || 'new'}
         initialFolderName={diagramEdit?.useCaseId}
         initialDescriptor={diagramEdit?.descriptor}
+        saveDisabled={!!diagramEdit?.readOnly}
         onClose={() => {
           setShowDiagramEditor(false);
           setDiagramEdit(null);
           setRefreshToken(t => t + 1);
         }}
-      />
-    );
-  }
-
-  if (showWizard) {
-    return (
-      <AgentWizard
-        onClose={handleWizardClose}
-        initialDescriptor={editDescriptor}
-        initialUseCaseId={wizardUseCaseId}
-        initialTargetAgentId={wizardTargetAgentId}
-        initialMode={wizardMode}
       />
     );
   }
@@ -598,18 +489,7 @@ function App() {
             onSelectUseCase={handleUseCaseSelect}
             onCreateDiagram={() => { setDiagramEdit(null); setShowDiagramEditor(true); }}
             onEditDiagram={handleEditDiagram}
-            onCreateDescriptor={() => {
-              setEditDescriptor(null);
-              setWizardUseCaseId(null);
-              setWizardTargetAgentId(null);
-              setWizardMode('replace');
-              setShowWizard(true);
-            }}
-            onEditAgent={handleEditAgent}
-            onEditSpecificAgent={handleEditSpecificAgent}
-            onAddAgentToJob={handleAddAgentToJob}
             onDeleteAgent={handleDeleteAgent}
-            onDeleteSpecificAgent={handleDeleteSpecificAgent}
             refreshToken={refreshToken}
             flinkRuntime={flinkRuntime}
             onFlinkRuntimeChange={updateFlinkRuntime}
@@ -687,7 +567,6 @@ function App() {
               <AgentManagementPanel
                 agentId={descriptor?.name || selectedUseCase}
                 useCaseId={selectedUseCase}
-                onEdit={handleEditAgent}
                 onNavigateBack={handleChangeUseCase}
                 agentsJson={agentsJson}
                 flinkRuntime={flinkRuntime}

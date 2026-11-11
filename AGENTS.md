@@ -71,7 +71,7 @@ make functional-tests                              # needs Docker + built JAR; s
 
 | Task | Start here |
 |---|---|
-| New/changed descriptor field | `agent/AgentDescriptor.java` + relevant `*Config`, `AgentDescriptorValidator`, then both backends, `AgentWizard.jsx`, docs |
+| New/changed descriptor field | `agent/AgentDescriptor.java` + relevant `*Config`, `AgentDescriptorValidator`, then both backends, `AgentDiagramEditor.jsx`, docs |
 | Per-event processing behaviour | `StatefulAgentProcessor.processElement` and `AgentEventProcessor` |
 | Rule engine / archive loading | `rule/RuleEngineRunner.java`, `rule/broadcast/` |
 | Enrichment | `agent/enrichment/` (+ `enrichment/sql/`) |
@@ -79,7 +79,6 @@ make functional-tests                              # needs Docker + built JAR; s
 | Dashboard UI | `event-rule-frontend/src/*.jsx`; event cards registered in `eventCardRegistry.jsx` |
 | Agent diagram editor | `AgentDiagram*.jsx`, `agentDiagramDescriptor.js`, `useDiagramHistory.js` |
 | SQL pipeline view | `sqlGraph.js`, `SqlGraphView.jsx`, `SqlViewModal.jsx` |
-| Descriptor wizard | `AgentWizard.jsx` (+ `.test.jsx`) |
 | New sample use case | copy a `samples/*` dir; follow `TUTORIAL.md` |
 
 ## Token-saving rules

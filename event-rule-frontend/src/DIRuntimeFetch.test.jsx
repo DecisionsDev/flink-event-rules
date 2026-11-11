@@ -29,13 +29,6 @@
  * All tests use mocked fetch — no live server is required.
  */
 
-import { descriptorToForm, buildDescriptor as _buildDescriptor } from './AgentWizard';
-
-// buildDescriptor now returns { descriptor, useCaseId }.
-// Tests were written against the old API that returned the descriptor object directly.
-// This wrapper restores the old calling convention for all existing tests.
-const buildDescriptor = (form) => _buildDescriptor(form).descriptor;
-
 const API_URL = import.meta.env?.VITE_API_URL || 'http://localhost:8080';
 
 afterEach(() => {
@@ -330,80 +323,6 @@ describe('POST /api/ads-runtimes/:id/decisions/*/archive — archive fetch', () 
 
     expect(r.status).toBe(502);
     expect(body.error).toMatch(/empty archive/i);
-  });
-});
-
-// ─── 4. Integration: DI-fetched archive enters the same ruleset pipeline ──────
-
-describe('DI-fetched archive — ruleset pipeline integration', () => {
-  /**
-   * After a successful DI fetch the wizard sets:
-   *   form.ruleset._jarFile = null   (no browser file object)
-   *   form.ruleset.path = 'samples/<agentId>/<decisionId>.jar'
-   *
-   * Verify that buildDescriptor produces a valid ruleset and that
-   * descriptorToForm can round-trip it back.
-   */
-  const FORM_AFTER_DI_FETCH = {
-    parallelism: 0,
-    agentId: 'my-agent',
-    name: 'My Agent',
-    entityType: 'account',
-    entityKeyExtractor: '$.id',
-    agentParallelism: 0,
-    subscriptions: [
-      {
-        eventType: 'transaction',
-        topic: 'agent-transactions',
-        operation: 'ScoreTransaction',
-        horizonType: 'hybrid',
-        horizonValue: 10,
-        horizonCountLimit: 100,
-        horizonTimeLimit: '24h',
-        horizonDescription: '',
-      },
-    ],
-    ruleset: {
-      _jarFile: null,   // no browser file — archive was fetched server-side
-      path: 'samples/my-agent/fraudDetectionService.jar',
-      outputField: '',
-      archiveControlTopic: '',
-      operations: [],
-    },
-    outputs: [{ eventType: 'scored', topic: 'agent-scored', description: '' }],
-    stateConfig: { ttl: '30d', backend: 'rocksdb' },
-  };
-
-  test('buildDescriptor includes the DI-fetched archive path in ruleset.path', () => {
-    const descriptor = buildDescriptor(FORM_AFTER_DI_FETCH);
-    expect(descriptor.agents[0].ruleset.path).toBe('samples/my-agent/fraudDetectionService.jar');
-  });
-
-  test('buildDescriptor does not include _jarFile in the output JSON', () => {
-    const descriptor = buildDescriptor(FORM_AFTER_DI_FETCH);
-    expect(descriptor.agents[0].ruleset).not.toHaveProperty('_jarFile');
-  });
-
-  test('buildDescriptor produces a descriptor that passes descriptorToForm round-trip', () => {
-    const descriptor = buildDescriptor(FORM_AFTER_DI_FETCH);
-    const form       = descriptorToForm(descriptor);
-    expect(form.ruleset.path).toBe('samples/my-agent/fraudDetectionService.jar');
-    expect(form.agentId).toBe('my-agent');
-  });
-
-  test('descriptorToForm restores a DI-fetched path (real IBM DI decisionId) correctly', () => {
-    const descriptor = {
-      agents: [{
-        agentId: 'my-agent',
-        subscriptions: [{ eventType: 'e', topic: 't', operation: 'op', horizon: { type: 'count', value: 1 } }],
-        ruleset: { path: 'samples/my-agent/fraudDetectionService.jar' },
-        outputs: [{ eventType: 'out', topic: 'out-t' }],
-      }],
-    };
-    const form = descriptorToForm(descriptor);
-    expect(form.ruleset.path).toBe('samples/my-agent/fraudDetectionService.jar');
-    // _jarFile is not in the descriptor — should be absent / undefined in form
-    expect(form.ruleset._jarFile).toBeUndefined();
   });
 });
 

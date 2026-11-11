@@ -137,12 +137,7 @@ describe('Frontend Component Regression Suite', () => {
       render(
         <UseCaseSelector
           onSelectUseCase={vi.fn()}
-          onCreateDescriptor={vi.fn()}
-          onEditAgent={vi.fn()}
-          onEditSpecificAgent={vi.fn()}
-          onAddAgentToJob={vi.fn()}
           onDeleteAgent={vi.fn()}
-          onDeleteSpecificAgent={vi.fn()}
           refreshToken={0}
           flinkRuntime="datastream"
           onFlinkRuntimeChange={onFlinkRuntimeChange}
@@ -165,12 +160,7 @@ describe('Frontend Component Regression Suite', () => {
       render(
         <UseCaseSelector
           onSelectUseCase={vi.fn()}
-          onCreateDescriptor={vi.fn()}
-          onEditAgent={vi.fn()}
-          onEditSpecificAgent={vi.fn()}
-          onAddAgentToJob={vi.fn()}
           onDeleteAgent={vi.fn()}
-          onDeleteSpecificAgent={vi.fn()}
           refreshToken={0}
           flinkRuntime="ptf"
           onFlinkRuntimeChange={vi.fn()}

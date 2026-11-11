@@ -632,37 +632,6 @@
   font-weight: 500;
 }
 
-.di-agent-sub-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.di-sub-btn {
-  background: transparent;
-  border: none;
-  color: var(--cds-link-primary);
-  cursor: pointer;
-  font-size: 0.75rem;
-  padding: 2px 6px;
-  border-radius: 2px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.di-sub-btn:hover {
-  background: #edf5ff;
-}
-
-.di-sub-btn--danger {
-  color: #da1e28;
-}
-
-.di-sub-btn--danger:hover {
-  background: #fff1f1;
-}
-
 .di-agent-error {
   font-size: 0.75rem;
   color: #da1e28;

@@ -20,7 +20,7 @@ import './UseCaseSelector.css';
 import { FLINK_DASHBOARD_URL } from './config';
 import AgentScenariosPanel from './AgentScenariosPanel';
 
-function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onCreateDiagram, onEditDiagram, onEditAgent, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, refreshToken, flinkRuntime = 'datastream', onFlinkRuntimeChange }) {
+function UseCaseSelector({ onSelectUseCase, onCreateDiagram, onEditDiagram, onDeleteAgent, refreshToken, flinkRuntime = 'datastream', onFlinkRuntimeChange }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recently_updated');
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
@@ -69,15 +69,11 @@ function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onCreateDiagram,
       <div className="di-title-bar">
         <h1 className="di-page-title">Event Rules Applications</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="di-btn-primary" onClick={onCreateDescriptor}>
-            <span>New Event Rules Application</span>
-            <span className="di-btn-icon">+</span>
-          </button>
-          <button className="di-btn-primary" onClick={onCreateDiagram} style={{ background: '#6929c4', borderColor: '#6929c4' }} title="Open the graphical Agent Diagram Editor">
+          <button className="di-btn-primary" onClick={onCreateDiagram} title="Open the graphical Agent Diagram Editor">
             <svg width="14" height="14" viewBox="0 0 32 32" fill="currentColor" style={{ flexShrink: 0 }}>
               <path d="M27 22.14V9.86A4 4 0 1022.14 5H9.86A4 4 0 105 9.86v12.28A4 4 0 109.86 27h12.28A4 4 0 1027 22.14zM25 4a2 2 0 11-2 2 2 2 0 012-2zM4 7a2 2 0 112 2A2 2 0 014 7zm3 18a2 2 0 11-2-2 2 2 0 012 2zm18.14-4A4 4 0 0022 23.86v.14H9.86A4 4 0 008 22.14V9.86A4 4 0 0010.14 8H22a4 4 0 001.86.14V22a4 4 0 00-.72.14zM25 28a2 2 0 112-2 2 2 0 01-2 2z"/>
             </svg>
-            <span>New Event Rules Application (Diagram)</span>
+            <span>New Event Rules Application</span>
           </button>
         </div>
       </div>
@@ -171,12 +167,8 @@ function UseCaseSelector({ onSelectUseCase, onCreateDescriptor, onCreateDiagram,
       {/* ── Main Content Area: Agent Scenarios in Decision Automation style ── */}
       <div className="di-main-content">
         <AgentScenariosPanel
-          onEditAgent={onEditAgent}
           onEditDiagram={onEditDiagram}
-          onEditSpecificAgent={onEditSpecificAgent}
-          onAddAgentToJob={onAddAgentToJob}
           onDeleteAgent={onDeleteAgent}
-          onDeleteSpecificAgent={onDeleteSpecificAgent}
           onSelectUseCase={onSelectUseCase}
           refreshToken={refreshToken}
           searchQuery={searchQuery}

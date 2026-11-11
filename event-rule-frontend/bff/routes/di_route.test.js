@@ -27,7 +27,7 @@ describe('DI Runtime (IBM Decision Intelligence) Router', () => {
         url: 'http://localhost:9999',
         deploymentSpace: 'custom-space',
         username: 'admin',
-        password: 'secretpassword'
+        apiKey: 'secret-api-key'
       },
       {
         id: 'runtime-2',
@@ -74,7 +74,7 @@ describe('DI Runtime (IBM Decision Intelligence) Router', () => {
         url: 'http://localhost:9999',
         deploymentSpace: 'custom-space'
       });
-      expect(resJson[0].password).toBeUndefined();
+      expect(resJson[0].apiKey).toBeUndefined();
       expect(resJson[0].username).toBeUndefined();
 
       expect(resJson[1]).toEqual({
@@ -151,6 +151,81 @@ describe('DI Runtime (IBM Decision Intelligence) Router', () => {
 
       expect(resStatus).toBe(400);
       expect(resJson.error).toContain('decisionId is required');
+    });
+  });
+
+  describe('GET /api/ads-runtimes/:id/archive', () => {
+    const getHandler = () => router.stack.find(s => s.route && s.route.path === '/:id/archive' && s.route.methods.get);
+
+    test('is registered', () => {
+      expect(getHandler()).toBeDefined();
+    });
+
+    test('returns 404 if runtime is not found', async () => {
+      const req = { method: 'GET', params: { id: 'unknown-runtime' }, query: { decisionId: 'dec-1' } };
+      let resStatus;
+      let resJson;
+      const res = {
+        status: (s) => { resStatus = s; return res; },
+        json: (data) => { resJson = data; },
+      };
+      await getHandler().route.stack[0].handle(req, res);
+      expect(resStatus).toBe(404);
+      expect(resJson.error).toContain('not configured');
+    });
+
+    test('validates decisionId and does not require an agentId', async () => {
+      const req = { method: 'GET', params: { id: 'runtime-1' }, query: {} };
+      let resStatus;
+      let resJson;
+      const res = {
+        status: (s) => { resStatus = s; return res; },
+        json: (data) => { resJson = data; },
+      };
+      await getHandler().route.stack[0].handle(req, res);
+      expect(resStatus).toBe(400);
+      expect(resJson.error).toContain('decisionId is required');
+    });
+  });
+
+  describe('authentication towards the DI runtime', () => {
+    const http = require('http');
+    let server;
+    let seenAuth;
+
+    beforeEach(async () => {
+      seenAuth = undefined;
+      server = http.createServer((req, res) => {
+        seenAuth = req.headers.authorization;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(['proj/svc/1.0']));
+      });
+      await new Promise(r => server.listen(0, '127.0.0.1', r));
+    });
+
+    afterEach(async () => {
+      await new Promise(r => server.close(r));
+    });
+
+    const listDecisions = async (runtime) => {
+      const r = createAdsRouter({ diRuntimes: [runtime], samplesDir: tmpDir, isValidAgentId });
+      const match = r.stack.find(s => s.route && s.route.path === '/:id/decisions' && s.route.methods.get);
+      let resJson;
+      const res = { status: () => res, json: (d) => { resJson = d; } };
+      await match.route.stack[0].handle({ params: { id: runtime.id }, query: {} }, res);
+      return resJson;
+    };
+
+    test('sends the Zen API key as "Authorization: ZenApiKey base64(username:apiKey)"', async () => {
+      const url = `http://127.0.0.1:${server.address().port}`;
+      await listDecisions({ id: 'rt', url, username: 'cpadmin', apiKey: 'abc123' });
+      expect(seenAuth).toBe(`ZenApiKey ${Buffer.from('cpadmin:abc123').toString('base64')}`);
+    });
+
+    test('sends no Authorization header when username or apiKey is missing', async () => {
+      const url = `http://127.0.0.1:${server.address().port}`;
+      await listDecisions({ id: 'rt', url, username: 'cpadmin' });
+      expect(seenAuth).toBeUndefined();
     });
   });
 });

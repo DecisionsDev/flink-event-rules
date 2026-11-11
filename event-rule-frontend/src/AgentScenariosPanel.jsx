@@ -28,9 +28,6 @@ import { resolveDeploymentMode } from './deploymentMode.js';
  * Flink job via POST /api/agents/:id/start, then polls GET /api/agents/:id/status
  * until the job reaches a running state.
  *
- * When a job fails the "Deploy" button is replaced by "✎ Edit" which opens
- * the AgentWizard pre-filled with that descriptor.
- *
  * Auto-refresh:
  *  - Polls GET /api/flink/status every POLL_MS ms.
  *  - When the set of running jobs changes the descriptor list is re-fetched so
@@ -187,9 +184,8 @@ const IconTrash = () => (
 
 // AgentScenarioCard renders one use-case tile.
 // For multi-agent use-cases the tile shows a sub-list of individual agents,
-// each with its own Edit button that opens the wizard pre-filled for that agent.
-// For single-agent use-cases the edit button edits the use-case as a whole.
-function AgentScenarioCard({ agent, runState, onEditAgent, onEditDiagram, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase }) {
+// listing the individual agents.
+function AgentScenarioCard({ agent, runState, onEditDiagram, onDeleteAgent, onSelectUseCase }) {
   const { phase, jobId, errMsg, run, stop } = runState;
 
   const isProbing  = phase === 'probing';
@@ -201,7 +197,7 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditDiagram, onEdit
   // Running jobs must be stopped before the descriptor can be changed (the BFF enforces this).
   const canEdit = !isProbing && !isBusy && !isRunning;
 
-  // Local confirm state: null | { type: 'use-case' } | { type: 'agent', agentId } | { type: 'undeploy' }
+  // Local confirm state: null | { type: 'use-case' } | { type: 'undeploy' }
   const [confirm, setConfirm] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
   const [deleteInFlight, setDeleteInFlight] = useState(false);
@@ -226,10 +222,8 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditDiagram, onEdit
     try {
       if (confirm.type === 'undeploy') {
         await stop();
-      } else if (confirm.type === 'use-case') {
-        await onDeleteAgent(agent.id);
       } else {
-        await onDeleteSpecificAgent(agent.id, confirm.agentId);
+        await onDeleteAgent(agent.id);
       }
       setConfirm(null);
       setDeleteInFlight(false);
@@ -250,9 +244,7 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditDiagram, onEdit
 
   const confirmMsg = confirm?.type === 'undeploy'
     ? `Stop the running Flink job for "${cleanTitle}"? The application will remain and can be redeployed.`
-    : confirm?.type === 'use-case'
-    ? `Delete Event Rule Application "${agent.id}" and all its descriptor files? This cannot be undone.`
-    : `Remove agent "${confirm?.agentId}" from the application "${agent.id}"? This cannot be undone.`;
+    : `Delete Event Rule Application "${agent.id}" and all its descriptor files? This cannot be undone.`;
 
   const confirmPrimaryLabel = confirm?.type === 'undeploy' ? 'Undeploy' : 'Delete';
 
@@ -399,28 +391,6 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditDiagram, onEdit
             {agentList.map(a => (
               <div key={a.agentId} className="di-agent-sub-row">
                 <span className="di-agent-sub-name">{a.name || a.agentId}</span>
-                {(canEdit && (onEditSpecificAgent || onDeleteSpecificAgent)) && (
-                  <div className="di-agent-sub-actions">
-                    {canEdit && onEditSpecificAgent && (
-                      <button
-                        className="di-sub-btn"
-                        onClick={() => onEditSpecificAgent(agent.id, a.agentId)}
-                        title={`Edit agent '${a.agentId}'`}
-                      >
-                        <IconEdit /> Edit
-                      </button>
-                    )}
-                    {canEdit && onDeleteSpecificAgent && (
-                      <button
-                        className="di-sub-btn di-sub-btn--danger"
-                        onClick={() => { setDeleteError(null); setConfirm({ type: 'agent', agentId: a.agentId }); }}
-                        title={`Delete agent '${a.agentId}'`}
-                      >
-                        <IconTrash />
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -449,17 +419,7 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditDiagram, onEdit
                 </button>
               )}
 
-              {/* Card-level Edit/Delete for single/legacy agents */}
-              {agentList.length === 0 && (canEdit || isFailed) && (
-                <button
-                  className="di-btn-secondary-action"
-                  onClick={() => onEditAgent(agent.id)}
-                  title={`Edit descriptor for ${cleanTitle}`}
-                >
-                  <IconEdit /> Edit
-                </button>
-              )}
-
+              {/* Card-level Delete for single/legacy agents */}
               {agentList.length === 0 && canEdit && onDeleteAgent && (
                 <button
                   className="di-btn-secondary-action di-btn-secondary-action--danger"
@@ -470,13 +430,15 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditDiagram, onEdit
                 </button>
               )}
 
-              {canEdit && onEditDiagram && (
+              {(canEdit || isRunning) && onEditDiagram && (
                 <button
                   className="di-btn-secondary-action"
-                  onClick={() => onEditDiagram(agent.id)}
-                  title={`Edit the whole application '${agent.id}' in the diagram editor`}
+                  onClick={() => onEditDiagram(agent.id, { readOnly: isRunning })}
+                  title={isRunning
+                    ? `Open application '${agent.id}' in the diagram editor (read-only while deployed)`
+                    : `Edit the whole application '${agent.id}' in the diagram editor`}
                 >
-                  Edit diagram
+                  <IconEdit /> Edit
                 </button>
               )}
 
@@ -502,7 +464,7 @@ function AgentScenarioCard({ agent, runState, onEditAgent, onEditDiagram, onEdit
 
 // ── Wrapper that owns the run-state for a single agent ────────────────────────
 
-function AgentScenarioCardWithState({ agent, onEditAgent, onEditDiagram, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase }) {
+function AgentScenarioCardWithState({ agent, onEditDiagram, onDeleteAgent, onSelectUseCase }) {
   const runState = useAgentRunState(agent.id);
   // Keep a stable ref to probe so the mount effect runs exactly once regardless
   // of any future identity changes to the callback (M-3).
@@ -516,12 +478,8 @@ function AgentScenarioCardWithState({ agent, onEditAgent, onEditDiagram, onEditS
     <AgentScenarioCard
       agent={agent}
       runState={runState}
-      onEditAgent={onEditAgent}
       onEditDiagram={onEditDiagram}
-      onEditSpecificAgent={onEditSpecificAgent}
-      onAddAgentToJob={onAddAgentToJob}
       onDeleteAgent={onDeleteAgent}
-      onDeleteSpecificAgent={onDeleteSpecificAgent}
       onSelectUseCase={onSelectUseCase}
     />
   );
@@ -529,7 +487,7 @@ function AgentScenarioCardWithState({ agent, onEditAgent, onEditDiagram, onEditS
 
 // ── Single Agent List Row (for List View mode) ───────────────────────────────
 
-function AgentScenarioListRowWithState({ agent, onEditAgent, onEditDiagram, onSelectUseCase }) {
+function AgentScenarioListRowWithState({ agent, onEditDiagram, onSelectUseCase }) {
   const runState = useAgentRunState(agent.id);
   const { phase, jobId, run } = runState;
   // Stable ref pattern — same fix as AgentScenarioCardWithState (M-3).
@@ -587,19 +545,13 @@ function AgentScenarioListRowWithState({ agent, onEditAgent, onEditDiagram, onSe
             {isRunning ? 'Running' : 'Deploy'}
           </button>
         )}
-        {canEdit && (
+        {(canEdit || isRunning) && onEditDiagram && (
           <button
             className="di-btn-secondary-action"
-            onClick={() => onEditAgent(agent.id)}
-          >
-            Edit
-          </button>
-        )}
-        {canEdit && onEditDiagram && (
-          <button
-            className="di-btn-secondary-action"
-            onClick={() => onEditDiagram(agent.id)}
-            title={`Edit the whole application '${agent.id}' in the diagram editor`}
+            onClick={() => onEditDiagram(agent.id, { readOnly: isRunning })}
+            title={isRunning
+              ? `Open application '${agent.id}' in the diagram editor (read-only while deployed)`
+              : `Edit the whole application '${agent.id}' in the diagram editor`}
           >
             Edit diagram
           </button>
@@ -611,7 +563,7 @@ function AgentScenarioListRowWithState({ agent, onEditAgent, onEditDiagram, onSe
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
-function AgentScenariosPanel({ onEditAgent, onEditDiagram, onEditSpecificAgent, onAddAgentToJob, onDeleteAgent, onDeleteSpecificAgent, onSelectUseCase, refreshToken, searchQuery, sortBy, viewMode }) {
+function AgentScenariosPanel({ onEditDiagram, onDeleteAgent, onSelectUseCase, refreshToken, searchQuery, sortBy, viewMode }) {
   const [agents,  setAgents]  = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
@@ -635,7 +587,7 @@ function AgentScenariosPanel({ onEditAgent, onEditDiagram, onEditSpecificAgent, 
   }, []);
 
   // Re-fetch immediately whenever the parent bumps refreshToken (after a
-  // wizard save, edit, or successful delete). The initial value (0) fires
+  // diagram save or successful delete). The initial value (0) fires
   // the first fetch on mount, so this replaces the standalone fetchAgents()
   // call that was previously inside the Flink-poll effect.
   useEffect(() => {
@@ -706,12 +658,8 @@ function AgentScenariosPanel({ onEditAgent, onEditDiagram, onEditSpecificAgent, 
           <AgentScenarioListRowWithState
             key={agent.id}
             agent={agent}
-            onEditAgent={onEditAgent}
             onEditDiagram={onEditDiagram}
-            onEditSpecificAgent={onEditSpecificAgent}
-            onAddAgentToJob={onAddAgentToJob}
             onDeleteAgent={onDeleteAgent}
-            onDeleteSpecificAgent={onDeleteSpecificAgent}
             onSelectUseCase={onSelectUseCase}
           />
         ))}
@@ -725,12 +673,8 @@ function AgentScenariosPanel({ onEditAgent, onEditDiagram, onEditSpecificAgent, 
         <AgentScenarioCardWithState
           key={agent.id}
           agent={agent}
-          onEditAgent={onEditAgent}
           onEditDiagram={onEditDiagram}
-          onEditSpecificAgent={onEditSpecificAgent}
-          onAddAgentToJob={onAddAgentToJob}
           onDeleteAgent={onDeleteAgent}
-          onDeleteSpecificAgent={onDeleteSpecificAgent}
           onSelectUseCase={onSelectUseCase}
         />
       ))}

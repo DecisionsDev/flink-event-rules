@@ -45,3 +45,36 @@ if (typeof window !== 'undefined' && typeof window.DOMMatrixReadOnly === 'undefi
   window.DOMMatrixReadOnly = globalThis.DOMMatrixReadOnly;
 }
 
+// Robust mock for localStorage to ensure compatibility across Vitest environments
+const localStorageMock = (() => {
+  let store = {};
+  return {
+    getItem: vi.fn((key) => store[key] || null),
+    setItem: vi.fn((key, value) => {
+      store[key] = value.toString();
+    }),
+    clear: vi.fn(() => {
+      store = {};
+    }),
+    removeItem: vi.fn((key) => {
+      delete store[key];
+    }),
+    get length() {
+      return Object.keys(store).length;
+    },
+    key: vi.fn((index) => Object.keys(store)[index] || null),
+  };
+})();
+
+Object.defineProperty(globalThis, 'localStorage', {
+  value: localStorageMock,
+  writable: true,
+});
+
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'localStorage', {
+    value: localStorageMock,
+    writable: true,
+  });
+}
+

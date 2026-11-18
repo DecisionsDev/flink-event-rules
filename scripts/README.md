@@ -17,6 +17,7 @@ This directory contains operational scripts for managing Kafka topics, submittin
 | [`event-backend-job-monitor.sh`](event-backend-job-monitor.sh)               | Interactive Flink job monitor — list, inspect, continuously monitor, or diagnose a specific job ID                                                       |
 | [`monitor-kafka-health.sh`](monitor-kafka-health.sh)                         | One-shot Kafka health check — container status, resource usage, broker API reachability, topics, and recent log errors                                   |
 | [`resolve-di-dependencies.sh`](resolve-di-dependencies.sh)                   | Resolve `execution-api`, `engine-de-api`, and required Jackson JARs from a locally installed Decision Designer Maven repository                          |
+| [`ccloud/`](ccloud/)                                                         | Confluent Cloud tooling suite: build, topic creation, PTF deployment, job status, ruleset publishing, and undeploy                                      |
 
 ---
 

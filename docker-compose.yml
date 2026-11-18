@@ -128,8 +128,8 @@ services:
       - ./event-rule-backend/target:/opt/flink/usrlib
       - ./samples:/opt/flink/samples
       - ./event-rule-backend/src/main/resources/log4j2.properties:/opt/flink/conf/log4j-console.properties:ro
-      - ./checkpoints:/opt/flink/checkpoints
-      - ./savepoints:/opt/flink/savepoints
+      - ./checkpoints:/opt/flink/checkpoints:z
+      - ./savepoints:/opt/flink/savepoints:z
     networks:
       event-rule-network:
         aliases:
@@ -189,8 +189,8 @@ services:
       - ./event-rule-backend/target:/opt/flink/usrlib
       - ./samples:/opt/flink/samples
       - ./event-rule-backend/src/main/resources/log4j2.properties:/opt/flink/conf/log4j-console.properties:ro
-      - ./checkpoints:/opt/flink/checkpoints
-      - ./savepoints:/opt/flink/savepoints
+      - ./checkpoints:/opt/flink/checkpoints:z
+      - ./savepoints:/opt/flink/savepoints:z
     networks:
       event-rule-network:
         aliases:

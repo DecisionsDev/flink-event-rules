@@ -83,7 +83,7 @@ function useAgentRunState(agentId) {
         setPhase('running');
       } else if (status?.state === 'FAILED' || status?.state === 'CANCELED') {
         setJobId(status.jobId);
-        setErrMsg(`Job ended with state: ${status.state}`);
+        setErrMsg(status.failureReason ? `Job failed: ${status.failureReason}` : `Job ended with state: ${status.state}`);
         setPhase('error');
       } else {
         setPhase('idle');
@@ -107,7 +107,7 @@ function useAgentRunState(agentId) {
           clearInterval(pollRef.current);
         } else if (status.state === 'FAILED' || status.state === 'CANCELED') {
           setPhase('error');
-          setErrMsg(`Job ended with state: ${status.state}`);
+          setErrMsg(status.failureReason ? `Job failed: ${status.failureReason}` : `Job ended with state: ${status.state}`);
           clearInterval(pollRef.current);
         }
       } catch { /* keep polling */ }
@@ -128,10 +128,9 @@ function useAgentRunState(agentId) {
       startPoll(body.jobId);
     } catch (err) {
       if (!mountedRef.current) return;
-      // Log the full error for developer diagnostics; do not surface it in the UI.
       console.error(`[AgentScenariosPanel] Deployment failed for agentId=${agentId}:`, err.message);
       setPhase('error');
-      setErrMsg('Deployment failed.');
+      setErrMsg(err.message || 'Deployment failed.');
     }
   }, [agentId, startPoll]);
 
@@ -150,7 +149,7 @@ function useAgentRunState(agentId) {
       if (!mountedRef.current) return;
       console.error(`[AgentScenariosPanel] Undeploy failed for agentId=${agentId}:`, err.message);
       setPhase('error');
-      setErrMsg('Undeploy failed.');
+      setErrMsg(err.message || 'Undeploy failed.');
     }
   }, [agentId]);
 
@@ -343,7 +342,7 @@ function AgentScenarioCard({ agent, runState, onEditDiagram, onDeleteAgent, onSe
                   <button
                     role="menuitem"
                     className="di-agent-card-menu-item"
-                    disabled={!isRunning}
+                    disabled={!isRunning && !isFailed}
                     onClick={() => {
                       setMenuOpen(false);
                       setDeleteError(null);
@@ -407,17 +406,16 @@ function AgentScenarioCard({ agent, runState, onEditDiagram, onDeleteAgent, onSe
           <div className="di-agent-card-actions">
             <div className="di-agent-card-actions-left">
               {/* Deploy / Running button */}
-              {!isFailed && (
-                <button
-                  className={`di-btn-deploy${isRunning ? ' di-btn-deploy--running' : ''}`}
-                  onClick={run}
-                  disabled={isProbing || isBusy || isRunning}
-                  title={isRunning ? `Job running (${jobId || '…'})` : `Deploy ${cleanTitle}`}
-                >
-                  {isRunning ? <IconRunning /> : (!isBusy && <IconDeploy />)}
-                  {phase === 'starting' ? 'Submitting…' : phase === 'polling' ? 'Starting…' : isRunning ? 'Running' : 'Deploy'}
-                </button>
-              )}
+              <button
+                className={`di-btn-deploy${isRunning ? ' di-btn-deploy--running' : ''}`}
+                onClick={run}
+                disabled={isProbing || isBusy || isRunning}
+                aria-label={isRunning ? `Running ${cleanTitle}` : isFailed ? `Retry Deploy ${cleanTitle}` : `Deploy ${cleanTitle}`}
+                title={isRunning ? `Job running (${jobId || '…'})` : `Deploy ${cleanTitle}`}
+              >
+                {isRunning ? <IconRunning /> : (!isBusy && <IconDeploy />)}
+                {phase === 'starting' ? 'Submitting…' : phase === 'polling' ? 'Starting…' : isRunning ? 'Running' : isFailed ? 'Retry Deploy' : 'Deploy'}
+              </button>
 
               {/* Card-level Delete for single/legacy agents */}
               {agentList.length === 0 && canEdit && onDeleteAgent && (
@@ -571,18 +569,21 @@ function AgentScenariosPanel({ onEditDiagram, onDeleteAgent, onSelectUseCase, re
   // Track last Flink job signature to detect additions/removals without re-rendering on every poll tick
   const lastSigRef = useRef(null);
 
-  const fetchAgents = useCallback(async () => {
+  const fetchAgents = useCallback(async (signal) => {
     try {
-      const r = await fetch(`${API_URL}/api/agents`);
+      const r = await fetch(`${API_URL}/api/agents`, { signal });
       if (!r.ok) throw new Error('Failed to fetch agents');
       const data = await r.json();
       setAgents(data);
       setError(null);
     } catch (err) {
+      if (err.name === 'AbortError') return;
       setError('Could not load agent descriptors.');
       console.error('[AgentScenariosPanel]', err);
     } finally {
-      setLoading(false);
+      if (!signal || !signal.aborted) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -591,7 +592,11 @@ function AgentScenariosPanel({ onEditDiagram, onDeleteAgent, onSelectUseCase, re
   // the first fetch on mount, so this replaces the standalone fetchAgents()
   // call that was previously inside the Flink-poll effect.
   useEffect(() => {
-    fetchAgents();
+    const controller = new AbortController();
+    fetchAgents(controller.signal);
+    return () => {
+      controller.abort();
+    };
   }, [fetchAgents, refreshToken]);
 
   useEffect(() => {
@@ -599,7 +604,9 @@ function AgentScenariosPanel({ onEditDiagram, onDeleteAgent, onSelectUseCase, re
     // tick fires, so that an unchanged job set never triggers a spurious
     // fetchAgents() call (which was resetting button states ~3 s after mount).
     let cancelled = false;
-    fetch(`${API_URL}/api/flink/status`)
+    const controller = new AbortController();
+
+    fetch(`${API_URL}/api/flink/status`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!cancelled && data?.jobs) {
@@ -611,18 +618,24 @@ function AgentScenariosPanel({ onEditDiagram, onDeleteAgent, onSelectUseCase, re
     // Poll Flink status; re-fetch agent list when the running job set changes
     const intervalId = setInterval(async () => {
       try {
-        const r = await fetch(`${API_URL}/api/flink/status`);
+        const r = await fetch(`${API_URL}/api/flink/status`, { signal: controller.signal });
+        if (cancelled) return;
         if (!r.ok) return;
         const { jobs } = await r.json();
+        if (cancelled) return;
         const sig = JSON.stringify([...jobs].sort());
         if (sig !== lastSigRef.current) {
           lastSigRef.current = sig;
-          fetchAgents();
+          fetchAgents(controller.signal);
         }
       } catch { /* Flink not reachable — keep polling */ }
     }, POLL_MS);
 
-    return () => { cancelled = true; clearInterval(intervalId); };
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearInterval(intervalId);
+    };
   }, [fetchAgents]);
 
   if (loading) return null; // Don't flash a spinner — UseCaseSelector has its own loading state

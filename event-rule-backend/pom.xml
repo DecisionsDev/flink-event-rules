@@ -126,6 +126,235 @@
             </build>
         </profile>
 
+        <!--
+            Confluent Cloud profile — builds the two things a use case needs to run as a Process
+            Table Function on Confluent Cloud for Apache Flink:
+              1. the function JAR (artifact), and
+              2. the SQL program that registers it and starts the pipeline.
+
+            Activate with (from the repository root):
+              mvn -f event-rule-backend package -DskipTests -Pccloud \
+                  -Dccloud.descriptor=samples/banking-fraud-agent/agents.json \
+                  -Dccloud.name=banking-fraud-agent
+
+            Everything is written to event-rule-backend/target/ccloud/, a directory of its own so that
+            the standard build output (target/) is never mixed with it:
+              <ccloud.name>.jar   the function JAR (upload with `confluent flink artifact create`)
+              sql/NNN-*.sql       one statement per file, in execution order
+              pipeline.sql        the same program as one script (for the SQL workspace)
+              manifest.json       the statements in execution order, and the artifact, for a script
+
+            Differences with the standard fat JAR:
+              - the Flink runtime, the connectors and Log4j are 'provided': Confluent Cloud supplies
+                them, and bundling a second copy risks class conflicts and a very large artifact;
+              - the ruleset archives and the reference-data CSV files named in the descriptor are
+                copied into the JAR (there is no volume to mount), see ConfluentCloudPackager.
+            Pass -Dccloud.artifactUri=confluent-artifact://<artifact-id>/<version-id> to write the
+            artifact in the CREATE FUNCTION statements; without it the placeholder is kept and the
+            deployment script substitutes it after the upload.
+        -->
+        <profile>
+            <id>ccloud</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <properties>
+                <!-- agents.json of the use case; required -->
+                <ccloud.descriptor></ccloud.descriptor>
+                <!-- name of the JAR; the use case directory name is a good value -->
+                <ccloud.name>event-rule-ccloud</ccloud.name>
+                <!-- directory the paths of the descriptor are relative to: the repository root -->
+                <ccloud.baseDir>${project.basedir}/..</ccloud.baseDir>
+                <ccloud.artifactUri></ccloud.artifactUri>
+            </properties>
+            <build>
+                <directory>${project.basedir}/target/ccloud</directory>
+                <finalName>${ccloud.name}</finalName>
+                <plugins>
+                    <!-- Copies the runtime files into the JAR and writes the SQL program -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.5.0</version>
+                        <executions>
+                            <execution>
+                                <id>ccloud-package</id>
+                                <phase>process-classes</phase>
+                                <goals>
+                                    <goal>java</goal>
+                                </goals>
+                                <configuration>
+                                    <mainClass>com.ibm.di.event.agent.ptf.ConfluentCloudPackager</mainClass>
+                                    <!-- 'compile' includes the provided dependencies the packager needs -->
+                                    <classpathScope>compile</classpathScope>
+                                    <systemProperties>
+                                        <systemProperty>
+                                            <key>ccloud.descriptor</key>
+                                            <value>${ccloud.descriptor}</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>ccloud.baseDir</key>
+                                            <value>${ccloud.baseDir}</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>ccloud.classesDir</key>
+                                            <value>${project.build.outputDirectory}</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>ccloud.outDir</key>
+                                            <value>${project.build.directory}</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>ccloud.jar</key>
+                                            <value>${ccloud.name}.jar</value>
+                                        </systemProperty>
+                                        <systemProperty>
+                                            <key>ccloud.artifactUri</key>
+                                            <value>${ccloud.artifactUri}</value>
+                                        </systemProperty>
+                                    </systemProperties>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!--
+                        Minimal set of IBM libraries to execute a ruleset: execution-api, engine-de-api
+                        (with its annotations dependency), jackson-databind (with its transitive
+                        dependencies) and jackson-datatype-jsr310. So, compared with the standard fat JAR:
+                          - 'foundation' (80 MB uber JAR) is not bundled: it is 'provided' below. The
+                            classes the module uses are in engine-de-api; AbstractDecisionProvider, which
+                            only foundation has, is loaded from the ruleset archive (RuleEngineRunner).
+                          - 'ml-integration-runtime' (execution-api's transitive dependency, 36 MB: the
+                            Decision ML integration, with the AWS SDK) is not bundled. A ruleset that scores
+                            a machine-learning model needs it: remove it from the excludes below then.
+                          - engine-de-api and annotations are bundled: the standard configuration excludes
+                            them only because foundation already contains them.
+                        'override' replaces the artifactSet of the standard shade configuration.
+                    -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-shade-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>shade</goal>
+                                </goals>
+                                <configuration>
+                                    <artifactSet combine.self="override">
+                                        <excludes>
+                                            <exclude>com.ibm.decision:ml-integration-runtime</exclude>
+                                        </excludes>
+                                    </artifactSet>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+            <!-- Supplied by Confluent Cloud at runtime: compile against them, do not bundle them.
+                 These entries override the compile-scoped ones of the main <dependencies>. -->
+            <dependencies>
+                <!-- Not needed to execute a ruleset, see the shade plugin comment above -->
+                <dependency>
+                    <groupId>com.ibm.decision</groupId>
+                    <artifactId>foundation</artifactId>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-core</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-streaming-java</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-clients</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-connector-kafka</artifactId>
+                    <version>4.0.0-2.0</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-connector-base</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-table-api-java-bridge</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-table-planner-loader</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-table-runtime</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-csv</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-json</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.flink</groupId>
+                    <artifactId>flink-connector-files</artifactId>
+                    <version>${flink.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <!-- Confluent Cloud logs UDFs through Log4j only (the platform provides it) -->
+                <dependency>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-api</artifactId>
+                    <version>2.0.13</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-slf4j2-impl</artifactId>
+                    <version>${log4j.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-api</artifactId>
+                    <version>${log4j.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-core</artifactId>
+                    <version>${log4j.version}</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+
     </profiles>
 
     <repositories>
@@ -271,6 +500,21 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Flink MiniClusterExtension: shared, JUnit-managed MiniCluster for executeAndCollect() tests -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-test-utils</artifactId>
+            <version>${flink.version}</version>
+            <scope>test</scope>
+            <exclusions>
+                <!-- SLF4J 1.x binding; conflicts with log4j-slf4j2-impl and silences all logging -->
+                <exclusion>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-slf4j-impl</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
         <!-- JUnit 5 for testing -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -314,6 +558,10 @@
                          so ${sys:log.file} never creates a stray file in the project root -->
                     <systemPropertyVariables>
                         <log.file>${project.build.directory}/test-logs/flink-test.log</log.file>
+                        <!-- flink-test-utils pulls in Flink test-jars that ship a log4j2-test.properties
+                             with rootLogger.level=OFF, which Log4j2 prefers over log4j2.properties and
+                             would silence all test logging. Pin the project's own configuration. -->
+                        <log4j2.configurationFile>${project.basedir}/src/main/resources/log4j2.properties</log4j2.configurationFile>
                     </systemPropertyVariables>
                     <!-- Exclude functional tests (require Docker/Kafka/Flink/BFF)
                          and the banking-fraud E2E test (requires full deployed stack). -->
@@ -411,7 +659,7 @@
                                     SampleInputGenerator — thin CLI wrapper that
                                     delegates to RuleEngineRunner.  main() and
                                     generateSampleInputJson() require a real archive JAR;
-                                    not unit-testable without ODM runtime on the classpath.
+                                    not unit-testable without DI runtime on the classpath.
                                 -->
                                 <exclude>com/ibm/di/event/rule/SampleInputGenerator.class</exclude>
 

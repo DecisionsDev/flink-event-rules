@@ -23,9 +23,12 @@ import com.ibm.di.event.agent.EventEnvelope;
 import com.ibm.di.event.agent.SqlEnrichmentConfig;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
 import org.apache.flink.table.api.Schema;
+import org.apache.flink.test.junit5.MiniClusterExtension;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -37,6 +40,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SqlEnrichmentRunnerTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * Shared MiniCluster managed by JUnit. Without it, {@code executeAndCollect()} spins up a
+     * per-job MiniCluster that shuts itself down the moment the job finishes, so
+     * {@code CollectResultFetcher} later polls job status on a closed cluster and logs
+     * "MiniCluster is not yet running or has already been shut down".
+     */
+    @RegisterExtension
+    static final MiniClusterExtension MINI_CLUSTER = new MiniClusterExtension(
+        new MiniClusterResourceConfiguration.Builder()
+            .setNumberTaskManagers(1)
+            .setNumberSlotsPerTaskManager(2)
+            .build());
 
     @Test
     @DisplayName("Enriches FLIGHTOPEN with CSV reference data and passes through FLIGHTDELAYED")

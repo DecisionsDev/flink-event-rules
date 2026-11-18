@@ -75,7 +75,7 @@ class BroadcastReloadWorkflowTest {
 
     /**
      * Minimal stub that tracks call count and returns a fixed result.
-     * Never touches ODM infrastructure.
+     * Never touches DI infrastructure.
      */
     static class TrackingStub extends RuleEngineRunner {
 

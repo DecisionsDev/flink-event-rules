@@ -1088,4 +1088,181 @@ describe('AgentDiagramEditor', () => {
       expect(redoBtn).toBeDisabled();
     });
   });
+
+  describe('Close confirmation in AgentDiagramEditor', () => {
+    const testDescriptor = {
+      name: 'Orders',
+      flinkJobName: 'orders-job',
+      consumerGroupId: 'orders-group',
+      parallelism: 2,
+      topics: [{ name: 'orders-in', type: 'Order', label: 'Orders' }],
+      agents: [{
+        agentId: 'order-agent',
+        name: 'Order Agent',
+        description: 'Processes customer orders',
+        entityType: 'Customer',
+        subscriptions: [
+          { eventType: 'Order', topic: 'orders-in', operation: 'ProcessOrder' },
+        ],
+        ruleset: {
+          path: 'samples/orders/rules.jar',
+          operations: [
+            { operation: 'ProcessOrder', entityField: 'theCustomer', currentEventField: 'theOrder' },
+          ],
+        },
+        outputs: [{ eventType: 'Alert', topic: 'alerts', label: 'Alerts' }],
+      }],
+    };
+
+    let originalFetch;
+    beforeEach(() => { originalFetch = global.fetch; });
+    afterEach(() => { global.fetch = originalFetch; vi.restoreAllMocks(); });
+
+    test('closing with no changes calls onClose immediately without confirmation modal', () => {
+      const onClose = vi.fn();
+      render(<AgentDiagramEditor onClose={onClose} initialFolderName="orders" initialDescriptor={testDescriptor} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    test('closing with pending unsaved changes shows confirmation modal and does not call onClose', () => {
+      const onClose = vi.fn();
+      render(<AgentDiagramEditor onClose={onClose} initialFolderName="orders" initialDescriptor={testDescriptor} />);
+
+      const nameInput = screen.getByDisplayValue('Orders');
+      fireEvent.change(nameInput, { target: { value: 'Modified Orders' } });
+
+      fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Unsaved changes' })).toBeInTheDocument();
+      expect(screen.getByText(/You have unsaved changes that will be lost/i)).toBeInTheDocument();
+    });
+
+    test('cancelling the unsaved changes modal leaves the editor open and does not call onClose', () => {
+      const onClose = vi.fn();
+      render(<AgentDiagramEditor onClose={onClose} initialFolderName="orders" initialDescriptor={testDescriptor} />);
+
+      const nameInput = screen.getByDisplayValue('Orders');
+      fireEvent.change(nameInput, { target: { value: 'Modified Orders' } });
+
+      fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByDisplayValue('Modified Orders')).toBeInTheDocument();
+    });
+
+    test('dismissing the modal with the close button leaves the editor open', () => {
+      const onClose = vi.fn();
+      render(<AgentDiagramEditor onClose={onClose} initialFolderName="orders" initialDescriptor={testDescriptor} />);
+
+      const nameInput = screen.getByDisplayValue('Orders');
+      fireEvent.change(nameInput, { target: { value: 'Modified Orders' } });
+
+      fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toBeInTheDocument();
+
+      fireEvent.click(within(dialog).getByRole('button', { name: /^close$/i }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    test('dismissing the modal with Escape key leaves the editor open', () => {
+      const onClose = vi.fn();
+      render(<AgentDiagramEditor onClose={onClose} initialFolderName="orders" initialDescriptor={testDescriptor} />);
+
+      const nameInput = screen.getByDisplayValue('Orders');
+      fireEvent.change(nameInput, { target: { value: 'Modified Orders' } });
+
+      fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: 'Escape' });
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    test('confirming "Discard and close" in the modal calls onClose', () => {
+      const onClose = vi.fn();
+      render(<AgentDiagramEditor onClose={onClose} initialFolderName="orders" initialDescriptor={testDescriptor} />);
+
+      const nameInput = screen.getByDisplayValue('Orders');
+      fireEvent.change(nameInput, { target: { value: 'Modified Orders' } });
+
+      fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /discard and close/i }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    test('saving changes clears the dirty state so closing does not prompt confirmation', async () => {
+      const onClose = vi.fn();
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: 'ok' }),
+      });
+
+      render(<AgentDiagramEditor onClose={onClose} initialFolderName="orders" initialDescriptor={testDescriptor} />);
+
+      const nameInput = screen.getByDisplayValue('Orders');
+      fireEvent.change(nameInput, { target: { value: 'Saved Orders' } });
+
+      // Save changes
+      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      await waitFor(() => expect(screen.getByText(/✓ Saved/i)).toBeInTheDocument());
+
+      // Close editor -> should close immediately without confirmation
+      fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    test('undoing changes back to baseline clears the dirty state so closing does not prompt confirmation', () => {
+      const onClose = vi.fn();
+      render(<AgentDiagramEditor onClose={onClose} initialFolderName="orders" initialDescriptor={testDescriptor} />);
+
+      const nameInput = screen.getByDisplayValue('Orders');
+      fireEvent.change(nameInput, { target: { value: 'Temporary Change' } });
+
+      const undoBtn = screen.getByRole('button', { name: /undo/i });
+      fireEvent.click(undoBtn);
+      expect(screen.getByDisplayValue('Orders')).toBeInTheDocument();
+
+      // Close editor -> should close immediately without confirmation
+      fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    test('repositioning objects on the canvas via Auto Layout does not mark the editor as dirty and closes directly', () => {
+      const onClose = vi.fn();
+      render(<AgentDiagramEditor onClose={onClose} initialFolderName="orders" initialDescriptor={testDescriptor} />);
+
+      // Trigger Auto Layout
+      const autoLayoutBtn = screen.getByRole('button', { name: /auto layout/i });
+      fireEvent.click(autoLayoutBtn);
+
+      // Close editor -> should close immediately without confirmation
+      fireEvent.click(screen.getByRole('button', { name: /close editor/i }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
 });

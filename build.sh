@@ -45,6 +45,15 @@ echo ""
 # Resolve the project root (directory containing this script)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# settings.xml prepends https:// itself, so DI_ZEN_HOSTNAME must be a bare hostname.
+# Accept values with a scheme or trailing slash and strip them.
+if [ -n "${DI_ZEN_HOSTNAME:-}" ]; then
+    DI_ZEN_HOSTNAME="${DI_ZEN_HOSTNAME#https://}"
+    DI_ZEN_HOSTNAME="${DI_ZEN_HOSTNAME#http://}"
+    DI_ZEN_HOSTNAME="${DI_ZEN_HOSTNAME%/}"
+    export DI_ZEN_HOSTNAME
+fi
+
 # ── 1. Backend ────────────────────────────────────────────────────────────────
 echo "=========================================="
 echo "Building & Testing Backend (Apache Flink)"
@@ -108,8 +117,8 @@ echo "=========================================="
 echo "Creating Runtime Directories"
 echo "=========================================="
 mkdir -p checkpoints savepoints
-chmod 775 checkpoints savepoints
-echo "✓ checkpoints/ and savepoints/ created (mode 775)"
+chmod 777 checkpoints savepoints
+echo "✓ checkpoints/ and savepoints/ created (mode 777)"
 echo ""
 
 # Verify the directories are writable by the current user
@@ -169,7 +178,7 @@ echo "All components and tests have passed successfully:"
 echo "  ✓ Backend tests & JAR: event-rule-backend/target/event-rule-backend-1.0-SNAPSHOT.jar"
 echo "  ✓ Frontend tests & build: event-rule-frontend/build/"
 echo "  ✓ BFF tests & dependencies: event-rule-frontend/bff/node_modules/"
-echo "  ✓ Runtime directories: checkpoints/ savepoints/ (mode 775)"
+echo "  ✓ Runtime directories: checkpoints/ savepoints/ (mode 777)"
 echo "  ✓ Docker images: event-rule-backend, event-rule-bff, event-rule-frontend"
 echo "  ✓ Platform: $PLATFORM"
 echo ""

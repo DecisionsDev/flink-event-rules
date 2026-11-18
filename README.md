@@ -23,13 +23,14 @@
 8. [Building and Testing](#8-building-and-testing)
 9. [Running with Docker](#9-running-with-docker)
 10. [Running Locally](#10-running-locally)
-11. [Use Cases](#11-use-cases)
-12. [Generating an Event Rules Application with AI](#12-generating-an-event-rule-application-with-ai)
-13. [Demo Scenario Isolation](#13-demo-scenario-isolation)
-14. [Project Structure](#14-project-structure)
-15. [Monitoring and Troubleshooting](#15-monitoring-and-troubleshooting)
-16. [Further Reading](#16-further-reading)
-17. [License](#17-license)
+11. [Running in Confluent Cloud](#11-running-in-confluent-cloud)
+12. [Use Cases](#12-use-cases)
+13. [Generating an Event Rules Application with AI](#13-generating-an-event-rule-application-with-ai)
+14. [Demo Scenario Isolation](#14-demo-scenario-isolation)
+15. [Project Structure](#15-project-structure)
+16. [Monitoring and Troubleshooting](#16-monitoring-and-troubleshooting)
+17. [Further Reading](#17-further-reading)
+18. [License](#18-license)
 
 ---
 
@@ -96,14 +97,41 @@ running application. When rules change, the application automatically picks up t
 | Maven                    | 3.6+               | Building the backend                               |
 | Node.js & npm            | 20.x / 10.x        | Building/running the frontend and BFF               |
 | `jq`                     | any                | Sample and validation scripts                       |
-| IBM Decision Designer       | running instance | Resolving IBM Decision Intelligence Maven dependencies (see [§8](#8-building-and-testing)) |
+| IBM Decision Intelligence CMS | 26.0.0 | Resolving IBM Decision Intelligence Maven dependencies (see [§8](#8-building-and-testing)) |
+
+### 2.1. Environment Variables
 
 For the full list of runtime environment variables, see [`.env.example`](.env.example) and
 [`DOCKER.md`](DOCKER.md).
 
+To build and run this solution, you need to have access to an instance of IBM Decision Intelligence CMS and register the following environment variables to access it: 
+
+* export DI_ZEN_HOSTNAME=<URL of your IBM DI CMS instance>
+* export DI_ZEN_USERNAME=<User name used on this instance>
+* export DI_ZEN_PASSWORD=<User passwork used on this instance>
+* export DI_ZEN_API_KEY=<Zen API Key you created in this instance>
+
+You can copy the `.env.example` to a `.env.local` and set the values of the expected variables. Initialize your environment by running the following command in terminal:
+
+```bash
+source .env.local
+```
+
+## 2.2 Preparing the build environment
+
+When compiling with an instance of IBM Decision Intelligence CMS, you need to run the following script:
+
+```bash
+cd scripts
+./resolve-di-dependencies.sh
+```
+
 ---
 
 ## 3. Quick Start
+
+Make sure you have the proper prerequisites in place, following instructions in section #2.
+
 
 This walks through the **Banking Fraud Agent** use case — the fastest way to see the application
 work end to end.
@@ -117,15 +145,15 @@ cd event-rule
 # 2. Start all infrastructure services
 ./run.sh up
 
-# 3. Submit the banking fraud-detection job
-./samples/banking-fraud-agent/scripts/deploy.sh
-
-# 4. Open the dashboard
+# 3. Open the dashboard
 open http://localhost:3010
 ```
 
-**Expected result:** The React dashboard opens. Click **Agent Banking** in the use-case selector.
-Click any scenario button in the **Send Events** panel. A fraud-detection result appears within a
+**Expected result:** The Event Rules UI application is open. 
+
+* Click **Banking Fraud Detection Agent** in the use-case selector and press **Deploy** button to deploy the Job to Flink. 
+* Open the **View Dashboard** button to open the application dashboard. 
+* Select any scenario and press the **Run Scenario** button to run a scenarion. A fraud-detection result appears within a
 second.
 
 > **Stop everything:** `./run.sh down`
@@ -354,47 +382,6 @@ A named timer replaces an existing one of the same name, which is what makes `cl
 cheap to re-arm on every event. Because the timers are event-time, an entity that stops receiving
 events does not expire until the watermark of its partition advances (idle detection / other keys).
 
-#### Confluent Cloud for Apache Flink
-
-Generate the script with `PTF_DIALECT=confluent PTF_PRINT_SQL=true` and run it in the SQL
-workspace. What differs from open source Flink, and why:
-
-| Constraint of Confluent Cloud | What the backend does |
-|---|---|
-| No custom DataStream job, no `flink run` | Only the SQL + UDF path is used. |
-| No broadcast, no `BROADCAST_SEMANTIC_TABLE` | **No hot reload.** The ruleset is fixed per deployment; redeploy the function to change it. A warning is logged if `archiveControlTopic` is set. |
-| No `MapView` / `ListView` | State is plain POJOs with public fields, holding JSON strings. The whole POJO is (de)serialised per call, so keep `horizon`s modest. |
-| `PARTITION BY` required, multi-table inputs co-partitioned | One input view per agent, partitioned by `entity_id`. |
-| Function registered with `CREATE FUNCTION ... USING JAR`, public no-arg constructor | `StatefulAgentProcessTableFunction()` has one; the descriptor is passed as the optional `agent_config` argument (JSON). One function serves all agents. |
-| UDF JAR: Java 11–21, size limited, Flink classes not bundled | Compiled with `release 21`. **Not done yet:** the shaded JAR still bundles Flink (compile scope), so a Confluent-specific artifact needs a profile that makes the Flink dependencies `provided`. |
-| Kafka `properties.*`/`topic` options unsupported; topics are tables | The `CONFLUENT` dialect reads `val` and `$rowtime` from the topic tables and writes `key`/`val` as `BYTES`. No DDL is generated for tables. |
-| Default `$rowtime` watermark | Used as event time (the open source dialect derives it from the payload `timestamp` instead). |
-| `TIMESTAMP_LTZ` precision ≤ 6 | Millisecond precision (3) is used. |
-| Parameter names | The compiler runs with `-parameters`, and every `@StateHint`/`@ArgumentHint` has an explicit name. |
-| Reference data (`references`) | The CSV files are read from the classpath, so they must be **bundled in the UDF JAR** (see [AGENT_PATTERN_DESIGN.md §7.6](docs/AGENT_PATTERN_DESIGN.md#confluent-cloud)). A data change means a new artifact version. `EVENT_ENRICH` is created with its own `CREATE FUNCTION`. |
-
-**Deploying**
-
-1. Build: `mvn -pl event-rule-backend package`. Upload the JAR as a Confluent Cloud Flink
-   *artifact*; note `<artifact-id>` and `<version-id>`.
-2. Replace `confluent-artifact://<artifact-id>/<version-id>` in the generated `CREATE FUNCTION`
-   statements and run the script.
-
-**Open risk — delivering the decision archive**
-
-`ruleset.path` is a local file path or a URI. Confluent Cloud UDFs have **no local filesystem**, so
-the IBM Decision Intelligence archive must come from somewhere reachable. Options, none of which
-is automated yet:
-
-- bundle the archive in the UDF JAR and use a path that `RulesetRunnerProvider` can resolve from
-  the classpath (needs a small change: it currently resolves `file`/URI paths only);
-- host the archive on an HTTPS endpoint reachable from Confluent Cloud and set
-  `ruleset.path` to that URL (`RulesetRunnerProvider` passes any path containing `://` to
-  `RuleEngineRunner` as a URI; whether the runner can open an `https` URI has not been verified).
-
-Also verify with Confluent that the DI runtime's dependencies (`com.ibm.decision:*`) fit the
-artifact size limit and the UDF sandbox. This has not been validated on Confluent Cloud itself.
-
 #### Testing
 
 `event-rule-backend/src/test/java/com/ibm/di/event/agent/ptf/`:
@@ -593,9 +580,14 @@ See [`.env.example`](.env.example) for the full configuration block and
 
 ## 8. Building and Testing
 
+Make sure prerequisite are installed and environment variables are set. See [§2](#2-prerequisites))
+
 ### Build
 
 ```bash
+# Install Maven dependencies from DI CMS instance:
+./scripts/resolve-di-dependencies.sh
+
 # Build everything (backend JAR + frontend static assets)
 ./build.sh
 
@@ -623,7 +615,7 @@ cd event-rule-backend && mvn test -DskipTests=false -Dtest=StatefulAgentProcesso
 cd event-rule-frontend && npm test -- --run
 ```
 
-**Backend test classes (1,188 tests):**
+**Backend test classes (760 tests):**
 
 | Class                          | What it tests                                                                                                          |
 |--------------------------------|------------------------------------------------------------------------------------------------------------------------|
@@ -635,7 +627,7 @@ cd event-rule-frontend && npm test -- --run
 | `ArchiveDownloaderTest`        | Download, SHA-256 verification, cache behaviour                                                                        |
 | `DeploymentAuditLogTest`       | Audit log entry recording                                                                                              |
 
-**Frontend test files (432 tests):**
+**Frontend test files (570 tests):**
 
 | File                            | What it tests                                                                                                                         |
 |---------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
@@ -787,7 +779,7 @@ Running `./run.sh clean` (or `make clean`) performs an irreversible, idempotent 
 
 1. **Containers & Networks:** Stops and removes all project Docker containers (`kafka`, `event-rule-backend-jobmanager`, `event-rule-backend-taskmanager`, `event-rule-bff`, `event-rule-frontend`) and network.
 2. **Persistent Volumes:** Destroys all project-managed persistent volumes (`kafka-data`, `kafka-dev-data`).
-3. **Flink Checkpoints & Savepoints:** Purges all recovery state, snapshots, and metadata in `checkpoints/` and `savepoints/`, resetting directories with proper `0775` permissions.
+3. **Flink Checkpoints & Savepoints:** Purges all recovery state, snapshots, and metadata in `checkpoints/` and `savepoints/`, resetting directories with `0777` permissions (the Flink container user must be able to write, including under rootless Podman).
 4. **Application & Agent State:** Clears all persisted BFF job state files (`samples/**/.job-state.json`).
 5. **Build Outputs & Reports:** Removes all Maven `target/` directories, frontend build bundles (`build/`, `dist/`), and functional test reports.
 6. **Caches & Logs:** Purges Python caches (`.pytest_cache`, `__pycache__`, `*.pyc`), test coverage files, and generated log files.
@@ -841,7 +833,47 @@ Each component can also run outside Docker for local development:
 
 ---
 
-## 11. Use Cases
+## 11. Running in Confluent Cloud
+
+Event Rules can be deployed directly to **Confluent Cloud for Apache Flink** using the PTF (Process Table Function)
+backend and helper scripts in `scripts/ccloud/`.
+
+Because Confluent Cloud executes managed Flink SQL statements and does not provide local filesystem mounts:
+- The Maven build (`-Pccloud` / `scripts/ccloud/ccloud-build.sh`) packages backend classes, the `agents.json` descriptor,
+  the Decision Intelligence ruleset JAR archives, and any reference CSV files into a self-contained function JAR (`target/ccloud/<use-case>.jar`).
+- It generates the execution-ordered SQL statements (`manifest.json` + `sql/*.sql`) referencing the uploaded artifact.
+
+| Characteristic | Behavior on Confluent Cloud |
+|---|---|
+| Runtime | Process Table Functions (PTF) registered via `CREATE FUNCTION ... USING JAR 'confluent-artifact://...'` |
+| Packaging | Self-contained JAR bundling descriptor, rulesets, and reference CSVs (via Maven `-Pccloud` / `ccloud-build.sh`) |
+| Hot reload | Not available (no broadcast input support). Changing rulesets or descriptors requires redeploying the artifact |
+| Tables & Topics | Topic tables are managed natively by Confluent Cloud (`$rowtime`, `key`/`val` `BYTES`) |
+
+### Deployment workflow
+
+```bash
+# 1. Create Kafka topics in Confluent Cloud
+./scripts/ccloud/ccloud-create-topics.sh <use-case>
+
+# 2. Build the self-contained JAR and generate SQL statements
+./scripts/ccloud/ccloud-build.sh <use-case>
+
+# 3. Upload the artifact and submit the SQL pipeline
+./scripts/ccloud/ccloud-deploy-ptf.sh <use-case>
+```
+
+### Operations and monitoring
+
+- **Status:** `./scripts/ccloud/ccloud-job-status.sh <use-case>`
+- **Demo events:** `./scripts/ccloud/ccloud-launch-demo-scenario.sh <use-case>`
+- **Undeploy:** `./scripts/ccloud/ccloud-undeploy.sh <use-case>`
+
+For full details on prerequisites, configuration variables, deployment steps, operations, and constraints, see [`docs/CONFLUENT_CLOUD_DEPLOYMENT.md`](docs/CONFLUENT_CLOUD_DEPLOYMENT.md).
+
+---
+
+## 12. Use Cases
 
 Event Rules ships with sample use cases under [`samples/`](samples/), each a self-contained
 Agent descriptor, Decision Intelligence archive, and set of demo scenarios.
@@ -861,7 +893,7 @@ step-by-step guide, from creating the use-case directory through running and val
 
 ---
 
-## 12. Generating an Event Rules Application with AI
+## 13. Generating an Event Rules Application with AI
 
 You don't need to create every file of an Event Rules application by hand. Instead, you can
 describe the application you want in a **Markdown specification** and ask a capable coding AI
@@ -873,7 +905,7 @@ and produces the configuration file that every Event Rules application requires:
 
 ---
 
-### 12.1 Prepare the specification
+### 13.1 Prepare the specification
 
 Copy the template and fill it in:
 
@@ -950,7 +982,7 @@ The state is stored on `rocksdb` with a time-to-live of 24 hours.
 
 ---
 
-### 12.2 Give the specification and prompt to the AI
+### 13.2 Give the specification and prompt to the AI
 
 Open the project in your AI coding assistant (Claude, Bob, or equivalent) and provide **both**:
 
@@ -987,7 +1019,7 @@ Replace `<YOUR-DIRECTORY>` with the folder name you chose (e.g. `my-app-agent`) 
 
 ---
 
-### 12.3 Reference examples
+### 13.3 Reference examples
 
 One completed specification is included in the repository. The Air Traffic Control example
 is paired with its fully generated output file:
@@ -1004,7 +1036,7 @@ understand exactly how each section of the specification maps to the generated c
 
 ---
 
-### 12.4 Step-by-step workflow
+### 13.4 Step-by-step workflow
 
 ```
 1. Copy the template:
@@ -1016,7 +1048,7 @@ understand exactly how each section of the specification maps to the generated c
 
 3. Open the project with your AI assistant (Claude / Bob).
 
-4. Paste the generation prompt from §12.2, replacing
+4. Paste the generation prompt from §13.2, replacing
    <YOUR-DIRECTORY> and <Your Application> with your values.
 
 5. Point the AI to your specification and to the existing
@@ -1039,7 +1071,7 @@ understand exactly how each section of the specification maps to the generated c
 
 ---
 
-## 13. Demo Scenario Isolation
+## 14. Demo Scenario Isolation
 
 When the **Send Events** panel is used to run demo scenarios, each "Run Scenario" click
 automatically resets the Flink state left by the **previous** scenario before publishing the
@@ -1094,7 +1126,7 @@ per-entity reset automatically after each scenario.  Pass `--no-reset` to skip i
 
 ---
 
-## 14. Project Structure
+## 15. Project Structure
 
 ```
 event-rule/
@@ -1169,6 +1201,7 @@ event-rule/
 ├── docs/
 │   ├── AGENT_PATTERN_DESIGN.md          # Authoritative reference: descriptor schemas, DAG architecture
 │   ├── ADVANCED_PATTERNS.md             # Chaining, multi-input, parallel processing, worked examples
+│   ├── CONFLUENT_CLOUD_DEPLOYMENT.md    # Deploying and operating on Confluent Cloud for Apache Flink
 │   ├── RULE_ENGINE.md                   # IBM Decision Intelligence class hierarchy, RuleEngineRunner internals
 │   ├── RUN_DATASTREAM.md               # Running the Flink job locally without Docker
 │   └── RUN_PTF.md                      # Running the PTF backend locally without Docker
@@ -1185,7 +1218,7 @@ event-rule/
 
 ---
 
-## 15. Monitoring and Troubleshooting
+## 16. Monitoring and Troubleshooting
 
 **Watch the TaskManager logs to see every decision:**
 
@@ -1204,6 +1237,7 @@ throughput, backpressure indicators.
 | Rules not firing                            | Check for smoke-test warnings in TaskManager logs; verify `ruleset.path` points to an existing JAR                            |
 | `Could not find decision runner` error      | The `operation` in each subscription must match the operation name exported by IBM Decision Designer exactly (case-sensitive). Verify the operation's decision flow is registered in the JAR's `META-INF/services/com.ibm.decision.run.DecisionServiceProvider` — a missing service entry is the most common cause. |
 | State lost after restart                    | Flink restores from the last checkpoint; allow at least one checkpoint interval (60 s) before restarting                      |
+| `Failed to create directory for shared state: file:/opt/flink/checkpoints/...` (Podman / SELinux / rootless) | The Flink container user (`flink`, uid 9999) cannot write to the bind-mounted `./checkpoints` or `./savepoints`. Fix: `chmod 777 checkpoints savepoints` (`./run.sh up` does this), and on SELinux hosts the `:z` volume flag in `docker-compose.yml` relabels them. If the dirs were created by root or an earlier run, `sudo chown -R $USER checkpoints savepoints` then `chmod -R 777 checkpoints savepoints`, and restart the stack. |
 | DI archive fetch shows "No DI runtimes configured" | Set `DI_RUNTIMES` in `.env` (see [§7](#7-agent-diagram-editor)) and restart the BFF |
 | DI archive fetch shows "Could not load runtimes"   | BFF cannot reach `GET /api/ads-runtimes` — check BFF logs; if running locally, ensure BFF is started                          |
 | DI fetch returns "authentication failed"    | `username`/`apiKey` in `DI_RUNTIMES` do not match the DI runtime — check credentials in `.env`                              |
@@ -1217,7 +1251,7 @@ archive hot-swap internals, see [`event-rule-frontend/bff/README.md`](event-rule
 
 ---
 
-## 16. Further Reading
+## 17. Further Reading
 
 | Document                                                                                      | Contents                                                                                            |
 |--------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
@@ -1229,6 +1263,7 @@ archive hot-swap internals, see [`event-rule-frontend/bff/README.md`](event-rule
 | [`docs/RULE_ENGINE.md`](docs/RULE_ENGINE.md)                                                  | IBM Decision Intelligence `RuleEngineRunner` internals, archive hot-swap, reload mechanics          |
 | [`docs/RUN_DATASTREAM.md`](docs/RUN_DATASTREAM.md)                                           | Running the Flink job locally without Docker                                                        |
 | [`docs/RUN_PTF.md`](docs/RUN_PTF.md)                                                         | Running the PTF backend locally without Docker                                                      |
+| [`docs/CONFLUENT_CLOUD_DEPLOYMENT.md`](docs/CONFLUENT_CLOUD_DEPLOYMENT.md)                    | Deploying and operating Event Rules on Confluent Cloud for Apache Flink                             |
 | [`event-rule-frontend/bff/README.md`](event-rule-frontend/bff/README.md)                      | BFF architecture, full REST API reference                                                           |
 | [`scripts/README.md`](scripts/README.md)                                                       | Operational scripts: topic creation, event submission, deployment validation, monitoring            |
 | [Apache Flink Documentation](https://nightlies.apache.org/flink/flink-docs-release-2.2/)      | Flink 2.2.0 reference                                                                                |
@@ -1236,7 +1271,7 @@ archive hot-swap internals, see [`event-rule-frontend/bff/README.md`](event-rule
 
 ---
 
-## 17. License
+## 18. License
 
 Licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 

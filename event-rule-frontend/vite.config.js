@@ -28,6 +28,20 @@ export default defineConfig({
   build: {
     outDir: 'build',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('@carbon') || id.includes('carbon-components') || id.includes('carbon-icons')) {
+              return 'carbon';
+            }
+            if (id.includes('@xyflow') || id.includes('reactflow')) {
+              return 'reactflow';
+            }
+          }
+        }
+      }
+    }
   },
   test: {
     globals: true,

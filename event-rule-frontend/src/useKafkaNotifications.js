@@ -35,6 +35,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { isChangelogTopicType } from './systemTopics';
 
 /** Build a human-readable one-line summary from any event object. */
 function summariseEvent(rawEvent) {
@@ -133,8 +134,9 @@ export function useKafkaNotifications(
       const currCount = events.length;
 
       // When showChangelogs is false, suppress notifications for entity-changelog topics
+      // (including the per-agent 'entity-changelog-<agentId>' types of multi-agent use cases)
       const resolvedType = topicTypeMapRef.current[topicType] ?? topicType;
-      const isChangelog = resolvedType === 'entity-changelog' || topicType === 'entity-changelog';
+      const isChangelog = isChangelogTopicType(resolvedType) || isChangelogTopicType(topicType);
 
       if (currCount > prevCount) {
         // Surface every newly arrived event (handles bursts)

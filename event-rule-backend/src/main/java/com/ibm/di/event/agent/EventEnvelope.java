@@ -171,6 +171,12 @@ public class EventEnvelope implements Serializable {
     public Map<String, String> getMetadata()                     { return metadata; }
     public void                setMetadata(Map<String, String> m) { this.metadata = m; }
 
+    public String getPayloadJson() { return payloadJson; }
+    public void setPayloadJson(String json) {
+        this.payloadJson = json;
+        this.payload = null; // Invalidate current transient node representation so it's lazily reconstructed
+    }
+
     /** Adds a single metadata entry, initialising the map if needed. */
     public void addMetadata(String key, String value) {
         if (metadata == null) metadata = new HashMap<>();

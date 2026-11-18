@@ -21,14 +21,17 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.ibm.di.event.agent.AgentDescriptor;
 import com.ibm.di.event.agent.ptf.PtfTestSupport.StubEngine;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
+import org.apache.flink.test.junit5.MiniClusterExtension;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -44,6 +47,18 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @DisplayName("Process Table Function in a local Flink job")
 class PtfLocalRunTest {
+
+    /**
+     * Shared, JUnit-managed MiniCluster. Without it each {@code collect()} starts a per-job
+     * MiniCluster that is shut down as soon as the job finishes, so the result fetcher polls the
+     * job status on a closed cluster ("MiniCluster is not yet running or has already been shut down").
+     */
+    @RegisterExtension
+    static final MiniClusterExtension MINI_CLUSTER = new MiniClusterExtension(
+        new MiniClusterResourceConfiguration.Builder()
+            .setNumberTaskManagers(1)
+            .setNumberSlotsPerTaskManager(2)
+            .build());
 
     private static final StubEngine ENGINE = new StubEngine(in ->
         json("{\"ent\":{\"n\":1},\"outputEvents\":[{\"level\":\"high\"}],\"scheduleRequests\":["

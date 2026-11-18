@@ -20,6 +20,7 @@ package com.ibm.di.event.agent.ptf;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ibm.di.event.agent.AgentDescriptor;
+import com.ibm.di.event.agent.AgentDescriptorLoader;
 import com.ibm.di.event.agent.EventEnvelope;
 import org.apache.flink.table.annotation.ArgumentHint;
 import org.apache.flink.table.annotation.ArgumentTrait;
@@ -33,6 +34,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Process Table Function that runs one agent: the Flink Table API counterpart of
@@ -57,10 +59,17 @@ import java.time.Instant;
  *
  * <h3>Configuration</h3>
  * The descriptor is given either to the constructor (open source Flink,
- * {@code createTemporarySystemFunction(name, instance)}) or as the optional scalar argument
- * {@code agent_config}, the descriptor serialized as JSON, which is how a function created with
+ * {@code createTemporarySystemFunction(name, instance)}) or, for a function created with
  * {@code CREATE FUNCTION ... USING JAR} on Confluent Cloud (public no-argument constructor
- * required) receives it.
+ * required), by one of:
+ * <ul>
+ *   <li>the optional scalar argument {@code agent_config}, the descriptor serialized as JSON;</li>
+ *   <li>the optional scalar arguments {@code agents_file} and {@code agent_id}: the agent is looked
+ *       up in the use case's {@code agents.json}, bundled in the function JAR at the path
+ *       {@code agents_file} (for example {@code samples/my-use-case/agents.json}, next to the
+ *       ruleset archive), so the SQL stays small; without {@code agent_id}, the file must hold a
+ *       single agent.</li>
+ * </ul>
  *
  * <h3>Not supported compared to the DataStream engine</h3>
  * Ruleset hot reload through {@code archiveControlTopic} (no broadcast semantics in Process Table
@@ -81,8 +90,6 @@ public class StatefulAgentProcessTableFunction extends ProcessTableFunction<Row>
 
     /** Job parameter holding the descriptor JSON, read by {@link #open}. */
     static final String CONFIG_JOB_PARAMETER = "event-rule.agent-config";
-    /** Classpath resource holding the descriptor JSON, read by {@link #open}. */
-    static final String CONFIG_RESOURCE = "/ptf-agent-descriptor.json";
 
     private AgentDescriptor descriptor;
     private AgentEventProcessor.RunnerProvider runnerProvider;
@@ -111,18 +118,9 @@ public class StatefulAgentProcessTableFunction extends ProcessTableFunction<Row>
     public void open(FunctionContext context) throws Exception {
         if (descriptor == null) {
             String json = context.getJobParameter(CONFIG_JOB_PARAMETER, null);
-            if (json == null) json = bundledDescriptor();
             if (json != null) descriptor = parseDescriptor(json);
         }
         if (descriptor != null) initialize();
-    }
-
-    /** The descriptor bundled in the function JAR as {@value #CONFIG_RESOURCE}, or {@code null}. */
-    private static String bundledDescriptor() throws java.io.IOException {
-        try (java.io.InputStream in =
-                 StatefulAgentProcessTableFunction.class.getResourceAsStream(CONFIG_RESOURCE)) {
-            return in == null ? null : new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        }
     }
 
     private static AgentDescriptor parseDescriptor(String json) {
@@ -152,17 +150,48 @@ public class StatefulAgentProcessTableFunction extends ProcessTableFunction<Row>
         }
     }
 
-    private void initialize(String agentConfig) {
+    private void initialize(String agentConfig, String agentsFile, String agentId) {
         if (processor != null) return;
         if (descriptor == null) {
-            if (agentConfig == null || agentConfig.isBlank()) {
-                throw new IllegalStateException("No agent descriptor: pass it to the constructor, "
-                    + "bundle " + CONFIG_RESOURCE + ", set the job parameter " + CONFIG_JOB_PARAMETER
-                    + " or give the 'agent_config' argument");
+            if (agentConfig != null && !agentConfig.isBlank()) {
+                descriptor = parseDescriptor(agentConfig);
+            } else {
+                descriptor = bundledAgent(StatefulAgentProcessTableFunction.class.getClassLoader(),
+                    agentsFile, agentId);
             }
-            descriptor = parseDescriptor(agentConfig);
         }
         initialize();
+    }
+
+    /**
+     * The agent {@code agentId} of the {@code agents.json} bundled in the function JAR at the
+     * classpath path {@code agentsFile}; when no id is given, the only agent of that file.
+     */
+    static AgentDescriptor bundledAgent(ClassLoader classLoader, String agentsFile, String agentId) {
+        if (agentsFile == null || agentsFile.isBlank()) {
+            throw new IllegalStateException("No agent descriptor: pass it to the constructor, set the job "
+                + "parameter " + CONFIG_JOB_PARAMETER
+                + ", or give the 'agent_config' argument or the 'agents_file' argument");
+        }
+        String resource = agentsFile.replace('\\', '/').replaceFirst("^/+", "");
+        List<AgentDescriptor> agents;
+        try (java.io.InputStream in = classLoader.getResourceAsStream(resource)) {
+            if (in == null) {
+                throw new IllegalStateException("The agents file '" + agentsFile
+                    + "' is not bundled in the function JAR");
+            }
+            agents = AgentDescriptorLoader.parseFileDescriptor(
+                new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8), resource).agents();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Cannot read the bundled " + agentsFile + ": " + e.getMessage(), e);
+        }
+        if (agentId == null || agentId.isBlank()) {
+            if (agents.size() == 1) return agents.get(0);
+            throw new IllegalStateException(agentsFile + " holds " + agents.size()
+                + " agents: give the 'agent_id' argument");
+        }
+        return agents.stream().filter(a -> agentId.equals(a.getAgentId())).findFirst()
+            .orElseThrow(() -> new IllegalStateException("Agent '" + agentId + "' is not in " + agentsFile));
     }
 
     // ── Event ─────────────────────────────────────────────────────────────────
@@ -175,6 +204,8 @@ public class StatefulAgentProcessTableFunction extends ProcessTableFunction<Row>
      * @param schedules   pending schedules
      * @param events      the input row
      * @param agentConfig optional descriptor JSON, needed only when the constructor gave none
+     * @param agentsFile  optional classpath path of the bundled {@code agents.json}
+     * @param agentId     optional id of the agent in that file
      */
     public void eval(Context ctx,
                      @StateHint(name = "agent") AgentPtfState agent,
@@ -182,8 +213,12 @@ public class StatefulAgentProcessTableFunction extends ProcessTableFunction<Row>
                      @ArgumentHint(value = {ArgumentTrait.SET_SEMANTIC_TABLE, ArgumentTrait.REQUIRE_ON_TIME},
                                    name = "events") Row events,
                      @ArgumentHint(value = ArgumentTrait.SCALAR, name = "agent_config",
-                                   isOptional = true) String agentConfig) throws Exception {
-        initialize(agentConfig);
+                                   isOptional = true) String agentConfig,
+                     @ArgumentHint(value = ArgumentTrait.SCALAR, name = "agents_file",
+                                   isOptional = true) String agentsFile,
+                     @ArgumentHint(value = ArgumentTrait.SCALAR, name = "agent_id",
+                                   isOptional = true) String agentId) throws Exception {
+        initialize(agentConfig, agentsFile, agentId);
 
         EventEnvelope event = toEnvelope(ctx, events);
         AgentEventProcessor.Session session = newSession(agent, schedules);
@@ -191,18 +226,25 @@ public class StatefulAgentProcessTableFunction extends ProcessTableFunction<Row>
         finish(ctx, session, agent, schedules, null);
     }
 
-    /** Fires the schedules due at the timer time and evicts the time-expired events. */
+    /**
+     * Fires the schedules due at the timer time and evicts the time-expired events. A timer restored
+     * after a restart can fire before any {@code eval} has supplied the agent; it is then dropped.
+     */
     public void onTimer(OnTimerContext ctx,
                         @StateHint(name = "agent") AgentPtfState agent,
                         @StateHint(name = "schedules") SchedulePtfState schedules) throws Exception {
-        initialize((String) null);
-
         String timer = ctx.currentTimer();
         if (TIMER_TTL.equals(timer)) {
             // The entity has been idle for the whole time-to-live: drop its state, keep its schedules.
             agent.data = null;
             return;
         }
+        if (descriptor == null) {
+            LOG.warn("Timer {} dropped: no agent descriptor known yet, the function has not been called "
+                + "since it started", timer);
+            return;
+        }
+        initialize();
         long timestamp = ctx.timeContext(Instant.class).time().toEpochMilli();
         AgentEventProcessor.Session session = newSession(agent, schedules);
         processor.onTimer(session, timestamp);

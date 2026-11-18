@@ -46,14 +46,14 @@ import static org.junit.jupiter.api.Assertions.*;
  * lifecycle and state backends while exercising the full business logic pipeline.
  *
  * <p>Rule execution is handled by {@link StubRuleEngine} — a hand-rolled stub that
- * returns a pre-configured {@link JsonNode} result without touching ODM infrastructure.
+ * returns a pre-configured {@link JsonNode} result without touching DI infrastructure.
  */
 @DisplayName("StatefulAgentProcessor unit tests")
 class StatefulAgentProcessorTest {
 
     // ── Stub rule engine ──────────────────────────────────────────────────────
 
-    /** Returns a fixed result without touching ODM; optionally throws on execute or generateSampleInput. */
+    /** Returns a fixed result without touching DI; optionally throws on execute or generateSampleInput. */
     static class StubRuleEngine extends RuleEngineRunner {
 
         private final JsonNode fixedResult;
@@ -1303,7 +1303,7 @@ class StatefulAgentProcessorTest {
     @DisplayName("processBroadcastElement — LOAD / PREFETCH / ROLLBACK / NOOP dispatch")
     class ProcessBroadcastDispatch {
 
-        // ── Stub runner that never touches ODM ─────────────────────────────────
+        // ── Stub runner that never touches DI ─────────────────────────────────
 
         /**
          * Minimal stub that is pre-warmed (no real JAR required) and tracks

@@ -86,6 +86,11 @@ FAILED=false
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 DI_ZEN_HOSTNAME="${DI_ZEN_HOSTNAME:-}"
+# Accept values with a scheme or trailing slash; DESIGNER_URL below adds https:// itself.
+DI_ZEN_HOSTNAME="${DI_ZEN_HOSTNAME#https://}"
+DI_ZEN_HOSTNAME="${DI_ZEN_HOSTNAME#http://}"
+DI_ZEN_HOSTNAME="${DI_ZEN_HOSTNAME%/}"
+
 DI_ZEN_USERNAME="${DI_ZEN_USERNAME:-}"
 DI_ZEN_API_KEY="${DI_ZEN_API_KEY:-}"
 DI_SKIP_TLS_VERIFY="${DI_SKIP_TLS_VERIFY:-false}"

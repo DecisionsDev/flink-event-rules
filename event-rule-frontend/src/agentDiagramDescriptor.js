@@ -711,9 +711,13 @@ export function validateDescriptor(descriptor) {
     else if (agentIds.has(a.agentId)) problems.push(`${who}: duplicate Agent ID.`);
     agentIds.add(a.agentId);
 
+    if (!text(a.entityType)) problems.push(`${who}: the agent must be linked to an Entity (with an Entity Type). Drop an Entity on the canvas and link it to the Agent.`);
     if (!a.ruleset?.path) problems.push(`${who}: the Rule JAR path is required.`);
     if (!a.ruleset?.archiveControlTopic) problems.push(`${who}: the Decision Archive Control Topic is required.`);
+    // Only operations used by a subscription need their fields; unused ones are ignored.
+    const subscribedOps = new Set(list(a.subscriptions).map((s) => s.operation).filter(Boolean));
     for (const op of list(a.ruleset?.operations)) {
+      if (!subscribedOps.has(op.operation)) continue;
       if (!op.entityField) problems.push(`${who}, operation '${op.operation || '?'}': the Entity Field is required.`);
       if (!op.currentEventField) problems.push(`${who}, operation '${op.operation || '?'}': the Event Field (currentEventField) is required.`);
     }

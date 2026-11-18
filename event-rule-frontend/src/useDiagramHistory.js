@@ -15,14 +15,66 @@ export function deepClone(obj) {
   return copy;
 }
 
+function snapshotReplacer(key, value) {
+  if (typeof File !== 'undefined' && value instanceof File) {
+    return { __file: value.name, size: value.size, lastModified: value.lastModified };
+  }
+  if (typeof Blob !== 'undefined' && value instanceof Blob) {
+    return { __blob: value.size, type: value.type };
+  }
+  return value;
+}
+
+const TRANSIENT_NODE_KEYS = new Set([
+  'position',
+  'positionAbsolute',
+  'dragging',
+  'selected',
+  'width',
+  'height',
+  'measured',
+  'resizing',
+]);
+
+const TRANSIENT_EDGE_KEYS = new Set([
+  'selected',
+]);
+
+function normalizeNodeForComparison(node, ignorePositions) {
+  if (!node || typeof node !== 'object') return node;
+  if (!ignorePositions) return node;
+  return Object.fromEntries(Object.entries(node).filter(([k]) => !TRANSIENT_NODE_KEYS.has(k)));
+}
+
+function normalizeEdgeForComparison(edge, ignorePositions) {
+  if (!edge || typeof edge !== 'object') return edge;
+  if (!ignorePositions) return edge;
+  return Object.fromEntries(Object.entries(edge).filter(([k]) => !TRANSIENT_EDGE_KEYS.has(k)));
+}
+
 /** Structural equality check between two diagram snapshots. */
-export function areSnapshotsEqual(s1, s2) {
+export function areSnapshotsEqual(s1, s2, { ignorePositions = false } = {}) {
   if (s1 === s2) return true;
   if (!s1 || !s2) return false;
+
+  const nodes1 = ignorePositions
+    ? (s1.nodes || []).map(n => normalizeNodeForComparison(n, true)).sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    : s1.nodes;
+  const nodes2 = ignorePositions
+    ? (s2.nodes || []).map(n => normalizeNodeForComparison(n, true)).sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    : s2.nodes;
+
+  const edges1 = ignorePositions
+    ? (s1.edges || []).map(e => normalizeEdgeForComparison(e, true)).sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    : s1.edges;
+  const edges2 = ignorePositions
+    ? (s2.edges || []).map(e => normalizeEdgeForComparison(e, true)).sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    : s2.edges;
+
   return (
-    JSON.stringify(s1.agentsMeta) === JSON.stringify(s2.agentsMeta) &&
-    JSON.stringify(s1.edges) === JSON.stringify(s2.edges) &&
-    JSON.stringify(s1.nodes) === JSON.stringify(s2.nodes)
+    JSON.stringify(s1.agentsMeta, snapshotReplacer) === JSON.stringify(s2.agentsMeta, snapshotReplacer) &&
+    JSON.stringify(edges1, snapshotReplacer) === JSON.stringify(edges2, snapshotReplacer) &&
+    JSON.stringify(nodes1, snapshotReplacer) === JSON.stringify(nodes2, snapshotReplacer)
   );
 }
 
@@ -37,6 +89,7 @@ export function useDiagramHistory(initialSnapshot) {
   const pastRef = useRef([]);
   const futureRef = useRef([]);
   const presentRef = useRef(deepClone(initialSnapshot));
+  const savedBaselineRef = useRef(deepClone(initialSnapshot));
 
   const debounceTimerRef = useRef(null);
   const debounceStartSnapshotRef = useRef(null);
@@ -132,10 +185,16 @@ export function useDiagramHistory(initialSnapshot) {
     }
   }, []);
 
-  // Update current baseline without affecting undo/redo stacks (e.g. after async project load)
+  // Update current baseline without affecting undo/redo stacks (e.g. after async project load or save)
   const setBaseline = useCallback((snapshot) => {
+    savedBaselineRef.current = deepClone(snapshot);
     presentRef.current = deepClone(snapshot);
   }, []);
+
+  const isDirty = useCallback(() => {
+    commitDebounced();
+    return !areSnapshotsEqual(presentRef.current, savedBaselineRef.current, { ignorePositions: true });
+  }, [commitDebounced]);
 
   // Undo: reverts to the previous snapshot in past stack
   const undo = useCallback(() => {
@@ -192,5 +251,7 @@ export function useDiagramHistory(initialSnapshot) {
     stopDrag,
     setBaseline,
     presentRef,
+    savedBaselineRef,
+    isDirty,
   };
 }

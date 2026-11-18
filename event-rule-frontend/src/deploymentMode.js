@@ -63,6 +63,11 @@ export function supportsSqlView(mode) {
   return mode === MODE_PTF;
 }
 
+/** Live rules refresh (archive-control topic) exists for DataStream deployments only. */
+export function supportsRulesRefresh(mode) {
+  return mode === MODE_DATASTREAM;
+}
+
 const NO_DEPLOYMENT = { mode: null, jobId: null };
 
 /**

@@ -746,6 +746,13 @@ describe('buildUseCaseDescriptor — entity-changelog type key uniqueness', () =
     expect(clf2).toBeDefined();
     expect(clf2.type).toBe('entity-changelog-a2');
   });
+
+  test('Air Traffic Control sample: both changelog topics are typed entity-changelog / entity-changelog-<agentId>', () => {
+    const atc = require('../../../samples/airtraffic-agent/agents.json');
+    const stub = fn('airtraffic-agent', atc);
+    expect(stub.outboundTopics.find(t => t.name === 'agent-aircraft-entity-changelog').type).toBe('entity-changelog');
+    expect(stub.outboundTopics.find(t => t.name === 'agent-airport-entity-changelog').type).toBe('entity-changelog-airport-agent');
+  });
 });
 
 // ── collectTopicsFromAgentsJson — changeLogTopic collected ────────────────────
@@ -930,5 +937,158 @@ describe('isUnknownTopicError', () => {
     expect(fn(null)).toBe(false);
     const loop = new Error('loop'); loop.cause = loop;
     expect(fn(loop)).toBe(false);
+  });
+});
+
+// ── validateAgentDescriptor ──────────────────────────────────────────────────
+
+describe('validateAgentDescriptor', () => {
+  const fn = server.validateAgentDescriptor;
+
+  const validDescriptor = () => ({
+    agents: [{
+      agentId: 'agent-1',
+      entityType: 'Account',
+      entityKeyExtractor: '$.accountId',
+      ruleset: {
+        path: 'samples/banking/rules.jar',
+        archiveControlTopic: 'agent-1-archive-control',
+      },
+      subscriptions: [
+        { eventType: 'Transaction', topic: 'tx-topic', operation: 'onTxn' },
+      ],
+      outputs: [
+        { eventType: 'Alert', topic: 'alert-topic' },
+      ],
+    }],
+  });
+
+  test('valid descriptor passes validation', () => {
+    const res = fn(validDescriptor());
+    expect(res.valid).toBe(true);
+    expect(res.errors).toHaveLength(0);
+  });
+
+  test('descriptor missing agents array is rejected', () => {
+    expect(fn({})).toEqual({
+      valid: false,
+      errors: ['The application needs at least one agent in the "agents" array.'],
+    });
+    expect(fn(null)).toEqual({
+      valid: false,
+      errors: ['Descriptor must be a non-null object'],
+    });
+  });
+
+  test('agent missing archiveControlTopic is rejected', () => {
+    const d = validDescriptor();
+    delete d.agents[0].ruleset.archiveControlTopic;
+    const res = fn(d);
+    expect(res.valid).toBe(false);
+    expect(res.errors.some(e => e.includes('archiveControlTopic'))).toBe(true);
+  });
+
+  test('agent missing entityType is rejected', () => {
+    const d = validDescriptor();
+    delete d.agents[0].entityType;
+    const res = fn(d);
+    expect(res.valid).toBe(false);
+    expect(res.errors.some(e => e.includes('entityType is required'))).toBe(true);
+  });
+
+  test('subscription missing topic is rejected', () => {
+    const d = validDescriptor();
+    d.agents[0].subscriptions[0].topic = '';
+    const res = fn(d);
+    expect(res.valid).toBe(false);
+    expect(res.errors.some(e => e.includes('Topic is required'))).toBe(true);
+  });
+
+  test('subscription missing operation field is rejected', () => {
+    const d = validDescriptor();
+    delete d.agents[0].subscriptions[0].operation;
+    const res = fn(d);
+    expect(res.valid).toBe(false);
+    expect(res.errors.some(e => e.includes('Operation field is required'))).toBe(true);
+  });
+
+  test('duplicate agentId is rejected', () => {
+    const d = validDescriptor();
+    d.agents.push({ ...d.agents[0] });
+    const res = fn(d);
+    expect(res.valid).toBe(false);
+    expect(res.errors.some(e => e.includes('Duplicate Agent ID'))).toBe(true);
+  });
+
+  test('duplicate output operator UID is rejected', () => {
+    const d = validDescriptor();
+    d.agents[0].outputs = [
+      { eventType: 'Alert', topic: 't1' },
+      { eventType: 'Alert', topic: 't2' },
+    ];
+    const res = fn(d);
+    expect(res.valid).toBe(false);
+    expect(res.errors.some(e => e.includes('Duplicate Flink operator UID'))).toBe(true);
+  });
+
+  test('invalid stateConfig.ttl is rejected', () => {
+    const d = validDescriptor();
+    d.agents[0].stateConfig = { ttl: 'invalid-ttl' };
+    const res = fn(d);
+    expect(res.valid).toBe(false);
+    expect(res.errors.some(e => e.includes('Invalid stateConfig.ttl'))).toBe(true);
+  });
+
+  test('invalid topic idleness is rejected', () => {
+    const d = validDescriptor();
+    d.topics = [{ name: 't1', idleness: 'invalid-idleness' }];
+    const res = fn(d);
+    expect(res.valid).toBe(false);
+    expect(res.errors.some(e => e.includes('Invalid idleness'))).toBe(true);
+  });
+
+  test('references with duplicate name or unsupported type are rejected', () => {
+    const d = validDescriptor();
+    d.agents[0].references = [
+      { name: 'ref1', type: 'sql', file: 'data.sql' },
+      { name: 'ref1', type: 'csv', file: 'data.csv' },
+    ];
+    const res = fn(d);
+    expect(res.valid).toBe(false);
+    expect(res.errors.some(e => e.includes('unsupported type'))).toBe(true);
+    expect(res.errors.some(e => e.includes('Duplicate reference name'))).toBe(true);
+  });
+});
+
+// ── extractFlinkRootCause ────────────────────────────────────────────────────
+
+describe('extractFlinkRootCause', () => {
+  const fn = server.extractFlinkRootCause;
+
+  test('extracts innermost Caused by line from multi-level stack trace', () => {
+    const trace = `org.apache.flink.client.program.ProgramInvocationException: The main method caused an error: org.apache.flink.client.program.ProgramInvocationException: Job failed
+\tat org.apache.flink.client.program.PackagedProgram.callMainMethod(PackagedProgram.java:372)
+Caused by: org.apache.flink.runtime.client.JobExecutionException: Cannot initialize task
+\tat org.apache.flink.runtime.executiongraph.Execution.lambda$deploy$7(Execution.java:622)
+Caused by: java.lang.IllegalArgumentException: agentId=banking-fraud: ruleset.archiveControlTopic is required
+\tat com.ibm.di.event.agent.AgentDescriptorValidator.validate(AgentDescriptorValidator.java:147)`;
+
+    expect(fn(trace)).toBe('java.lang.IllegalArgumentException: agentId=banking-fraud: ruleset.archiveControlTopic is required');
+  });
+
+  test('extracts message when only The main method caused an error exists', () => {
+    const trace = 'The main method caused an error: Invalid configuration value';
+    expect(fn(trace)).toBe('Invalid configuration value');
+  });
+
+  test('extracts single-line message when no Caused by is present', () => {
+    const trace = 'UnknownTopicOrPartitionException: Topic agent-banking-archive-control not found\n\tat org.apache.kafka...';
+    expect(fn(trace)).toBe('UnknownTopicOrPartitionException: Topic agent-banking-archive-control not found');
+  });
+
+  test('handles empty or non-string input safely', () => {
+    expect(fn('')).toBe('');
+    expect(fn(null)).toBe('');
+    expect(fn(undefined)).toBe('');
   });
 });

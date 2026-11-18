@@ -109,7 +109,11 @@ public final class AgentDescriptorLoader {
      * </ul>
      */
     public static AgentFileDescriptor loadFileDescriptor(String descriptorPath) throws IOException {
-        String json = readFile(descriptorPath);
+        return parseFileDescriptor(readFile(descriptorPath), descriptorPath);
+    }
+
+    /** Same as {@link #loadFileDescriptor} for the content of the file; {@code descriptorPath} names it in errors. */
+    public static AgentFileDescriptor parseFileDescriptor(String json, String descriptorPath) throws IOException {
         ObjectMapper mapper = new ObjectMapper();
         JsonNode root = mapper.readTree(json);
 

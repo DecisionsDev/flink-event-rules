@@ -9,6 +9,12 @@ import DecisionResultCard from './DecisionResultCard';
 import UseCaseSelector from './UseCaseSelector';
 import SendEventsPanel from './SendEventsPanel';
 
+vi.mock('./AgentScenariosPanel', () => {
+  return {
+    default: () => <div data-testid="mock-agent-scenarios-panel" />
+  };
+});
+
 describe('Frontend Component Regression Suite', () => {
   describe('NotificationToast & NotificationContainer', () => {
     test('renders notification content correctly', () => {
@@ -132,6 +138,34 @@ describe('Frontend Component Regression Suite', () => {
   });
 
   describe('UseCaseSelector Flink Runtime Radio Box', () => {
+    let originalFetch;
+
+    beforeEach(() => {
+      originalFetch = global.fetch;
+      global.fetch = vi.fn((url) => {
+        if (url.includes('/api/agents')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([]),
+          });
+        }
+        if (url.includes('/api/flink/status')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ jobs: [] }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+        });
+      });
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
     test('renders radio box with DataStream and Process Table Function options and triggers callback on change', () => {
       const onFlinkRuntimeChange = vi.fn();
       render(
@@ -176,6 +210,16 @@ describe('Frontend Component Regression Suite', () => {
   });
 
   describe('SendEventsPanel Redeploying Message', () => {
+    let originalFetch;
+
+    beforeEach(() => {
+      originalFetch = global.fetch;
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
     test('displays redeploying message expecting 20-30s when Run Scenario is pressed in PTF mode', async () => {
       const mockScenarios = [
         {

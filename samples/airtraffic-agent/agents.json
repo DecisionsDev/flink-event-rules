@@ -34,6 +34,7 @@
     {
       "agentId": "aircraft-agent",
       "name": "Aircraft Agent",
+      "description": "Agent managing Aircraft events",
       "entityType": "Aircraft",
       "entityKeyExtractor": "$.aircraftId",
       "chainingEnabled": true,
@@ -56,8 +57,8 @@
         }
       ],
       "ruleset": {
-        "path": "samples/airtraffic-agent/Air_Traffic_Control_Service_1.2.1.jar",
-        "project": "samples/airtraffic-agent/di-project/AirTrafficControlService.zip",
+        "path": "samples/airtraffic-agent/Air_Traffic_Control_Service_1.6.1.jar",
+        "project": "samples/airtraffic-agent/di-project/Air_Traffic_Control_Service.zip",
         "archiveControlTopic": "agent-atc-archive-control",
         "operations": [
           {
@@ -85,15 +86,6 @@
             "operation": "InitializeAircraft",
             "entityField": "aircraft",
             "currentEventField": "aircraftInitializationEvent"
-          },
-          {
-            "operation": "ProcessAirportEvent"
-          },
-          {
-            "operation": "InitializeAirport"
-          },
-          {
-            "operation": "ProcessTrackedAircraftEvent"
           }
         ]
       },
@@ -126,6 +118,7 @@
     {
       "agentId": "airport-agent",
       "name": "Airport Agent",
+      "description": "Agent managing Airport events and Aircraft events for aircraft handled by the airport",
       "entityType": "Airport",
       "entityKeyExtractor": "$.airport",
       "chainingEnabled": true,
@@ -153,17 +146,11 @@
         }
       ],
       "ruleset": {
-        "path": "samples/airtraffic-agent/Air_Traffic_Control_Service_1.2.1.jar",
-        "project": "samples/airtraffic-agent/di-project/AirTrafficControlService.zip",
+        "path": "samples/airtraffic-agent/Air_Traffic_Control_Service_1.6.1.jar",
+        "project": "samples/airtraffic-agent/di-project/Air_Traffic_Control_Service.zip",
         "archiveControlTopic": "agent-atc-archive-control",
         "operations": [
-          {
-            "operation": "ProcessAircraftEvent"
-          },
-          {
-            "operation": "InitializeAircraft"
-          },
-          {
+           {
             "operation": "ProcessAirportEvent",
             "entityField": "airport",
             "currentEventField": "airportEvent",

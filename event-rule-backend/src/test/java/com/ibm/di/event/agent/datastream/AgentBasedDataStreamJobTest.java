@@ -558,8 +558,11 @@ class AgentBasedDataStreamJobTest {
         private AgentDescriptor validDescriptor() {
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("test-agent");
+            d.setEntityType("TestEntity");
             d.setEntityKeyExtractor("$.id");
-            d.setRuleset(new RulesetConfig("/tmp/test.jar"));
+            RulesetConfig rs = new RulesetConfig("/tmp/test.jar");
+            rs.setArchiveControlTopic("agent-test-agent-archive-control");
+            d.setRuleset(rs);
             d.setSubscriptions(List.of(
                 new EventSubscription("txn",  "transactions", "Svc_txn_op",  HorizonConfig.count(10)),
                 new EventSubscription("acct", "accounts",     "",            HorizonConfig.count(1))
@@ -574,12 +577,61 @@ class AgentBasedDataStreamJobTest {
         }
 
         @Test
+        @DisplayName("Missing archiveControlTopic is rejected")
+        void missingArchiveControlTopicRejected() {
+            AgentDescriptor d = validDescriptor();
+            d.getRuleset().setArchiveControlTopic(null);
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> AgentDescriptorValidator.validate(d));
+            assertTrue(ex.getMessage().contains("archiveControlTopic is required"),
+                "Error must mention 'archiveControlTopic is required'");
+        }
+
+        @Test
+        @DisplayName("Invalid archiveControlTopic characters are rejected")
+        void invalidArchiveControlTopicRejected() {
+            AgentDescriptor d = validDescriptor();
+            d.getRuleset().setArchiveControlTopic("invalid topic name with spaces");
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> AgentDescriptorValidator.validate(d));
+            assertTrue(ex.getMessage().contains("contains invalid characters"),
+                "Error must mention invalid characters");
+        }
+
+        @Test
+        @DisplayName("Missing entityType is rejected")
+        void missingEntityTypeRejected() {
+            AgentDescriptor d = validDescriptor();
+            d.setEntityType("");
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> AgentDescriptorValidator.validate(d));
+            assertTrue(ex.getMessage().contains("entityType is required"),
+                "Error must mention 'entityType is required'");
+        }
+
+        @Test
+        @DisplayName("Non-schedule subscription without topic is rejected")
+        void subscriptionMissingTopicRejected() {
+            AgentDescriptor d = validDescriptor();
+            d.setSubscriptions(List.of(
+                new EventSubscription("txn", "", "Svc_txn_op", HorizonConfig.count(10))
+            ));
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> AgentDescriptorValidator.validate(d));
+            assertTrue(ex.getMessage().contains("must declare a non-blank 'topic'"),
+                "Error must mention non-blank topic");
+        }
+
+        @Test
         @DisplayName("Null operation (field absent in JSON) is rejected")
         void nullOperationRejected() {
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("a");
+            d.setEntityType("EntityA");
             d.setEntityKeyExtractor("$.id");
-            d.setRuleset(new RulesetConfig("/tmp/a.jar"));
+            RulesetConfig rs = new RulesetConfig("/tmp/a.jar");
+            rs.setArchiveControlTopic("agent-a-archive-control");
+            d.setRuleset(rs);
             // 3-arg constructor leaves operation null — simulates absent JSON field
             d.setSubscriptions(List.of(
                 new EventSubscription("txn", "transactions", HorizonConfig.count(5))
@@ -600,8 +652,11 @@ class AgentBasedDataStreamJobTest {
             // The validate() method must now complete without throwing.
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("b");
+            d.setEntityType("EntityB");
             d.setEntityKeyExtractor("$.id");
-            d.setRuleset(new RulesetConfig("/tmp/b.jar"));
+            RulesetConfig rs = new RulesetConfig("/tmp/b.jar");
+            rs.setArchiveControlTopic("agent-b-archive-control");
+            d.setRuleset(rs);
             d.setSubscriptions(List.of(
                 new EventSubscription("txn1", "t1", "SharedOp", HorizonConfig.count(5)),
                 new EventSubscription("txn2", "t2", "SharedOp", HorizonConfig.count(5))
@@ -615,10 +670,13 @@ class AgentBasedDataStreamJobTest {
         void twoHistoryOnlySubscriptionsAllowed() {
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("c");
+            d.setEntityType("EntityC");
             // Blank entityKeyExtractor is the explicit opt-in for history-only / single-partition mode.
             // R16 made null extractor a hard error; "" is the valid opt-in form.
             d.setEntityKeyExtractor("");
-            d.setRuleset(new RulesetConfig("/tmp/c.jar"));
+            RulesetConfig rs = new RulesetConfig("/tmp/c.jar");
+            rs.setArchiveControlTopic("agent-c-archive-control");
+            d.setRuleset(rs);
             d.setSubscriptions(List.of(
                 new EventSubscription("ctx1", "c1", "", HorizonConfig.count(1)),
                 new EventSubscription("ctx2", "c2", "", HorizonConfig.count(1))
@@ -631,7 +689,10 @@ class AgentBasedDataStreamJobTest {
         @DisplayName("Missing agentId is rejected")
         void missingAgentIdRejected() {
             AgentDescriptor d = new AgentDescriptor();
-            d.setRuleset(new RulesetConfig("/tmp/x.jar"));
+            d.setEntityType("Entity");
+            RulesetConfig rs = new RulesetConfig("/tmp/x.jar");
+            rs.setArchiveControlTopic("agent-x-archive-control");
+            d.setRuleset(rs);
             IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> AgentDescriptorValidator.validate(d));
             assertTrue(ex.getMessage().contains("agentId"),
@@ -643,7 +704,10 @@ class AgentBasedDataStreamJobTest {
         void missingRulesetPathRejected() {
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("d");
-            d.setRuleset(new RulesetConfig(null));
+            d.setEntityType("EntityD");
+            RulesetConfig rs = new RulesetConfig(null);
+            rs.setArchiveControlTopic("agent-d-archive-control");
+            d.setRuleset(rs);
             IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> AgentDescriptorValidator.validate(d));
             assertTrue(ex.getMessage().contains("ruleset.path"),
@@ -656,7 +720,10 @@ class AgentBasedDataStreamJobTest {
             // null entityKeyExtractor (field absent) with subscriptions is now a hard error
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("no-extractor-agent");
-            d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
+            d.setEntityType("EntityNoExt");
+            RulesetConfig rs = new RulesetConfig("/tmp/svc.jar");
+            rs.setArchiveControlTopic("agent-no-extractor-archive-control");
+            d.setRuleset(rs);
             // entityKeyExtractor intentionally null (not set)
             d.setSubscriptions(List.of(
                 new EventSubscription("txn", "txn-topic", "EvalTxn", HorizonConfig.count(10))));
@@ -673,7 +740,10 @@ class AgentBasedDataStreamJobTest {
             // An explicit empty string is the deliberate opt-in for history-only / single-partition mode
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("blank-extractor-agent");
-            d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
+            d.setEntityType("EntityBlank");
+            RulesetConfig rs = new RulesetConfig("/tmp/svc.jar");
+            rs.setArchiveControlTopic("agent-blank-archive-control");
+            d.setRuleset(rs);
             d.setEntityKeyExtractor(""); // explicit blank opt-in
             d.setSubscriptions(List.of(
                 new EventSubscription("txn", "txn-topic", "EvalTxn", HorizonConfig.count(10))));
@@ -682,14 +752,18 @@ class AgentBasedDataStreamJobTest {
         }
 
         @Test
-        @DisplayName("no subscriptions with missing entityKeyExtractor — no warning needed")
-        void noSubscriptionsNoExtractorNoWarning() {
-            // No subscriptions → no events to key → no hot-key risk; validate must pass silently
+        @DisplayName("no subscriptions — throws IllegalArgumentException")
+        void noSubscriptionsRejected() {
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("no-subs-agent");
-            d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
-            // No subscriptions and no entityKeyExtractor
-            assertDoesNotThrow(() -> AgentDescriptorValidator.validate(d));
+            d.setEntityType("EntityNoSubs");
+            RulesetConfig rs = new RulesetConfig("/tmp/svc.jar");
+            rs.setArchiveControlTopic("agent-no-subs-archive-control");
+            d.setRuleset(rs);
+            // No subscriptions
+            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> AgentDescriptorValidator.validate(d));
+            assertTrue(ex.getMessage().contains("at least one event subscription is required"));
         }
 
         @Test
@@ -697,7 +771,10 @@ class AgentBasedDataStreamJobTest {
         void subscriptionLevelExtractorAccepted() {
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("sub-level-agent");
-            d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
+            d.setEntityType("EntitySub");
+            RulesetConfig rs = new RulesetConfig("/tmp/svc.jar");
+            rs.setArchiveControlTopic("agent-sub-archive-control");
+            d.setRuleset(rs);
             EventSubscription a = new EventSubscription("txn", "txn-topic", "EvalTxn", HorizonConfig.count(10));
             a.setEntityKeyExtractor("$.accountId");
             EventSubscription b = new EventSubscription("upd", "upd-topic", "EvalUpd", HorizonConfig.count(10));
@@ -713,7 +790,10 @@ class AgentBasedDataStreamJobTest {
         void agentLevelFallbackAndOverride() {
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("fallback-agent");
-            d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
+            d.setEntityType("EntityFallback");
+            RulesetConfig rs = new RulesetConfig("/tmp/svc.jar");
+            rs.setArchiveControlTopic("agent-fallback-archive-control");
+            d.setRuleset(rs);
             d.setEntityKeyExtractor("$.accountId");
             EventSubscription inherit = new EventSubscription("txn", "txn-topic", "EvalTxn", HorizonConfig.count(10));
             EventSubscription override = new EventSubscription("upd", "upd-topic", "EvalUpd", HorizonConfig.count(10));
@@ -729,7 +809,10 @@ class AgentBasedDataStreamJobTest {
         void partialSubscriptionLevelExtractorRejected() {
             AgentDescriptor d = new AgentDescriptor();
             d.setAgentId("partial-agent");
-            d.setRuleset(new RulesetConfig("/tmp/svc.jar"));
+            d.setEntityType("EntityPartial");
+            RulesetConfig rs = new RulesetConfig("/tmp/svc.jar");
+            rs.setArchiveControlTopic("agent-partial-archive-control");
+            d.setRuleset(rs);
             EventSubscription a = new EventSubscription("txn", "txn-topic", "EvalTxn", HorizonConfig.count(10));
             a.setEntityKeyExtractor("$.accountId");
             EventSubscription b = new EventSubscription("upd", "upd-topic", "EvalUpd", HorizonConfig.count(10));

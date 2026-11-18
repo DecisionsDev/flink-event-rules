@@ -69,7 +69,7 @@ class ArchiveLifecycleWorkflowTest {
 
     /**
      * Minimal stub that records call count and returns a configurable result.
-     * Never touches ODM infrastructure.
+     * Never touches DI infrastructure.
      */
     static class VersionedStub extends RuleEngineRunner {
 

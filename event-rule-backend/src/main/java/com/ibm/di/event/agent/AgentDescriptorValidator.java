@@ -130,12 +130,34 @@ public final class AgentDescriptorValidator {
     public static void validate(AgentDescriptor agent) {
         if (agent.getAgentId() == null || agent.getAgentId().isBlank())
             throw new IllegalArgumentException("AgentDescriptor.agentId must not be blank");
+        if (!agent.getAgentId().matches("^[A-Za-z0-9_-]+$"))
+            throw new IllegalArgumentException(
+                "agentId='" + agent.getAgentId() + "' is invalid. Agent ID may only contain letters, digits, '-', and '_'.");
+        if (agent.getEntityType() == null || agent.getEntityType().isBlank())
+            throw new IllegalArgumentException(
+                "agentId=" + agent.getAgentId() + ": entityType is required.");
         if (agent.getRuleset() == null)
             throw new IllegalArgumentException(
                 "AgentDescriptor.ruleset must not be null for agentId=" + agent.getAgentId());
         if (agent.getRuleset().getPath() == null || agent.getRuleset().getPath().isBlank())
             throw new IllegalArgumentException(
                 "AgentDescriptor.ruleset.path must not be blank for agentId=" + agent.getAgentId());
+        if (agent.getRuleset().getArchiveControlTopic() == null || agent.getRuleset().getArchiveControlTopic().isBlank())
+            throw new IllegalArgumentException(
+                "agentId=" + agent.getAgentId() + ": ruleset.archiveControlTopic is required (e.g. 'agent-" + agent.getAgentId() + "-archive-control').");
+        if (!agent.getRuleset().getArchiveControlTopic().matches("^[a-zA-Z0-9._-]+$"))
+            throw new IllegalArgumentException(
+                "agentId=" + agent.getAgentId() + ": ruleset.archiveControlTopic '" + agent.getRuleset().getArchiveControlTopic()
+                + "' contains invalid characters. Kafka topic names may only contain letters, numbers, dots, hyphens, and underscores.");
+
+        if (agent.getStateConfig() != null && agent.getStateConfig().getTtl() != null && !agent.getStateConfig().getTtl().isBlank()) {
+            try {
+                HorizonConfig.time(agent.getStateConfig().getTtl()).timeLimitMs();
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                    "agentId=" + agent.getAgentId() + ": invalid stateConfig.ttl '" + agent.getStateConfig().getTtl() + "': " + e.getMessage(), e);
+            }
+        }
 
         // Reference-data enrichment (Process Table Function engine): structure only, no file access
         com.ibm.di.event.agent.enrichment.EnrichmentValidator.validate(agent, false);
@@ -171,12 +193,25 @@ public final class AgentDescriptorValidator {
             }
         }
 
+        if (agent.getSubscriptions() == null || agent.getSubscriptions().isEmpty()) {
+            throw new IllegalArgumentException(
+                "agentId=" + agent.getAgentId() + ": at least one event subscription is required.");
+        }
+
         if (agent.getOutputs() != null) {
             Set<String> seenOutputUids = new HashSet<>();
             for (OutputConfig output : agent.getOutputs()) {
-                if (output == null || output.getTopic() == null || output.getTopic().isBlank()) continue;
+                if (output == null) continue;
+                if (output.getTopic() == null || output.getTopic().isBlank()) {
+                    throw new IllegalArgumentException(
+                        "agentId=" + agent.getAgentId() + ": output destination topic must not be blank.");
+                }
+                if (output.getEventType() == null || output.getEventType().isBlank()) {
+                    throw new IllegalArgumentException(
+                        "agentId=" + agent.getAgentId() + ": output eventType must not be blank.");
+                }
                 String rawType = output.getEventType();
-                String normalizedType = (rawType == null || rawType.isBlank()) ? "" : rawType;
+                String normalizedType = rawType.isBlank() ? "" : rawType;
                 String uid = "agent-sink-" + agent.getAgentId() + "-" + normalizedType;
                 if (!seenOutputUids.add(uid)) {
                     throw new IllegalArgumentException(
@@ -187,27 +222,38 @@ public final class AgentDescriptorValidator {
             }
         }
 
-        if (agent.getSubscriptions() != null) {
-            Set<String> seenOperations = new HashSet<>();
-            for (EventSubscription sub : agent.getSubscriptions()) {
-                // Rule: the Schedule subscription is fed by timers, never by a topic
-                if (sub.isScheduleSubscription()
-                        && sub.getTopic() != null && !sub.getTopic().isBlank()) {
+        Set<String> seenOperations = new HashSet<>();
+        for (EventSubscription sub : agent.getSubscriptions()) {
+            if (sub.getEventType() == null || sub.getEventType().isBlank()) {
+                throw new IllegalArgumentException(
+                    "agentId=" + agent.getAgentId() + ": subscription eventType must not be blank.");
+            }
+            // Rule: the Schedule subscription is fed by timers, never by a topic
+            if (sub.isScheduleSubscription()) {
+                if (sub.getTopic() != null && !sub.getTopic().isBlank()) {
                     throw new IllegalArgumentException(
                         "agentId=" + agent.getAgentId()
                         + ": the '" + ScheduleRequests.SCHEDULE_EVENT_TYPE
                         + "' subscription must not declare a topic (events are generated "
                         + "by schedule timers).");
                 }
-                // Rule: operation must be explicitly present (null = field absent in JSON)
-                if (sub.getOperation() == null) {
+            } else {
+                if (sub.getTopic() == null || sub.getTopic().isBlank()) {
                     throw new IllegalArgumentException(
                         "agentId=" + agent.getAgentId()
                         + ": subscription for eventType='" + sub.getEventType()
-                        + "' is missing the required 'operation' field. "
-                        + "Use \"operation\": \"\" to subscribe for context only (history-only mode), "
-                        + "or provide the IBM Decision Intelligence operation name to invoke.");
+                        + "' must declare a non-blank 'topic'.");
                 }
+            }
+            // Rule: operation must be explicitly present (null = field absent in JSON)
+            if (sub.getOperation() == null) {
+                throw new IllegalArgumentException(
+                    "agentId=" + agent.getAgentId()
+                    + ": subscription for eventType='" + sub.getEventType()
+                    + "' is missing the required 'operation' field. "
+                    + "Use \"operation\": \"\" to subscribe for context only (history-only mode), "
+                    + "or provide the IBM Decision Intelligence operation name to invoke.");
+            }
                 // Rule: each non-blank operation name should be unique within this agent.
                 // A duplicate may indicate a configuration mistake but is not fatal —
                 // warn so the operator can correct it without killing the job (H-5).
@@ -220,18 +266,17 @@ public final class AgentDescriptorValidator {
                             agent.getAgentId(), sub.getOperation());
                     }
                 }
-            }
+        }
 
-            boolean hasScheduleSub = agent.getSubscriptions().stream()
-                .anyMatch(EventSubscription::isScheduleSubscription);
-            boolean emitsSchedules = agent.getRuleset().getOperations() != null
-                && agent.getRuleset().getOperations().stream()
-                    .anyMatch(op -> op.scheduleRequestsField() != null);
-            if (emitsSchedules && !hasScheduleSub) {
-                LOG.warn("[{}] An operation declares a 'schedule' section but no '{}' "
-                    + "subscription exists: fired schedules will not trigger any operation.",
-                    agent.getAgentId(), ScheduleRequests.SCHEDULE_EVENT_TYPE);
-            }
+        boolean hasScheduleSub = agent.getSubscriptions().stream()
+            .anyMatch(EventSubscription::isScheduleSubscription);
+        boolean emitsSchedules = agent.getRuleset().getOperations() != null
+            && agent.getRuleset().getOperations().stream()
+                .anyMatch(op -> op.scheduleRequestsField() != null);
+        if (emitsSchedules && !hasScheduleSub) {
+            LOG.warn("[{}] An operation declares a 'schedule' section but no '{}' "
+                + "subscription exists: fired schedules will not trigger any operation.",
+                agent.getAgentId(), ScheduleRequests.SCHEDULE_EVENT_TYPE);
         }
     }
 }

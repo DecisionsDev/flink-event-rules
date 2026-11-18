@@ -37,7 +37,7 @@ class EnrichmentValidatorTest {
               "subscriptions": [ { "eventType": "Ev", "topic": "ev-topic", "operation": "OnEv",
                                    "enrichment": %s } ],
               "outputs": [ { "eventType": "Out", "topic": "out-topic", "enrichment": %s } ],
-              "ruleset": { "path": "x.jar", "operations": [ { "operation": "OnEv" } ] } }
+              "ruleset": { "path": "x.jar", "archiveControlTopic": "agent-a1-archive-control", "operations": [ { "operation": "OnEv" } ] } }
             """.formatted(references, subscriptionSteps, outputSteps);
         return new ObjectMapper().readValue(json, AgentDescriptor.class);
     }

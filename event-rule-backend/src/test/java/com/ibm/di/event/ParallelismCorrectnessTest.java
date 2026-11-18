@@ -301,7 +301,7 @@ class ParallelismCorrectnessTest {
         }
     }
 
-    /** Minimal stub runner that returns a fixed result without touching ODM. */
+    /** Minimal stub runner that returns a fixed result without touching DI. */
     static class FakeRunner extends RuleEngineRunner {
         private final JsonNode result;
         FakeRunner(JsonNode result) {

@@ -112,7 +112,7 @@ class StatefulAgentProcessTableFunctionTest {
     @Test
     @DisplayName("an event emits its output rows and stores the entity state")
     void eventEmitsRowsAndState() throws Exception {
-        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null);
+        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null, null, null);
 
         assertEquals(1, rows.size());
         assertEquals("alert", rows.get(0).<String>getFieldAs(0));
@@ -129,9 +129,9 @@ class StatefulAgentProcessTableFunctionTest {
     @Test
     @DisplayName("the state is read back on the next event")
     void stateIsCarriedOver() throws Exception {
-        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null);
+        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null, null, null);
         ctx.time = Instant.ofEpochMilli(2000);
-        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null);
+        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null, null, null);
 
         assertEquals(2, json(agent.data).get("hist").get("domain-event").size());
         assertEquals(2, rows.size());
@@ -140,7 +140,7 @@ class StatefulAgentProcessTableFunctionTest {
     @Test
     @DisplayName("a null payload is processed as an empty object")
     void nullPayload() throws Exception {
-        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", null), null);
+        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", null), null, null, null);
         assertEquals(1, rows.size());
     }
 
@@ -152,7 +152,7 @@ class StatefulAgentProcessTableFunctionTest {
         d.setStateConfig(stateConfig("1h", null));
         function = create(d, new StubEngine(in -> json("{\"ent\":{\"n\":1}}")));
 
-        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null);
+        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null, null, null);
 
         assertEquals(Instant.ofEpochMilli(1000 + 60_000 + 1), ctx.timers.get("cleanup"));
         assertEquals(Instant.ofEpochMilli(1000 + 3_600_000), ctx.timers.get("ttl"));
@@ -165,7 +165,7 @@ class StatefulAgentProcessTableFunctionTest {
             + "\"timepoint\":\"" + SCHEDULE_TIMEPOINT + "\",\"description\":\"wake\"}]}";
         function = create(descriptor(operation()), new StubEngine(in -> json(result)));
 
-        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null);
+        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null, null, null);
         String timer = "sched-" + SCHEDULE_MS;
         assertEquals(Instant.ofEpochMilli(SCHEDULE_MS), ctx.timers.get(timer));
 
@@ -185,7 +185,7 @@ class StatefulAgentProcessTableFunctionTest {
     @Test
     @DisplayName("the ttl timer drops the entity state but keeps the schedules")
     void ttlTimer() throws Exception {
-        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null);
+        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null, null, null);
         schedules.requests.put("s1", "{}");
         ctx.current = "ttl";
 
@@ -198,11 +198,11 @@ class StatefulAgentProcessTableFunctionTest {
     @Test
     @DisplayName("the reset sentinel clears the state and every timer")
     void reset() throws Exception {
-        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null);
+        function.eval(ctx, agent, schedules, input("domain-event", "domain-events", "{\"id\":\"E1\"}"), null, null, null);
         rows.clear();
 
         function.eval(ctx, agent, schedules,
-            input("__ENTITY_RESET__", "domain-events", "{}"), null);
+            input("__ENTITY_RESET__", "domain-events", "{}"), null, null, null);
 
         assertNull(agent.data);
         assertTrue(ctx.allTimersCleared);
@@ -210,11 +210,24 @@ class StatefulAgentProcessTableFunctionTest {
     }
 
     @Test
+    @DisplayName("a restored timer fired before any event is dropped, without a descriptor")
+    void timerBeforeAnyEventIsDropped() throws Exception {
+        StatefulAgentProcessTableFunction f = new StatefulAgentProcessTableFunction();
+        ctx.current = "sched-" + SCHEDULE_MS;
+        schedules.requests.put("s1", "{}");
+
+        f.onTimer(ctx, agent, schedules);
+
+        assertTrue(rows.isEmpty());
+        assertEquals(1, schedules.requests.size());
+    }
+
+    @Test
     @DisplayName("without any descriptor the function refuses to run")
     void noDescriptor() {
         StatefulAgentProcessTableFunction f = new StatefulAgentProcessTableFunction();
         Row row = input("domain-event", "domain-events", "{}");
-        assertThrows(IllegalStateException.class, () -> f.eval(ctx, agent, schedules, row, " "));
+        assertThrows(IllegalStateException.class, () -> f.eval(ctx, agent, schedules, row, " ", null, null));
     }
 
     @Test
@@ -226,6 +239,56 @@ class StatefulAgentProcessTableFunctionTest {
         StatefulAgentProcessTableFunction f = new StatefulAgentProcessTableFunction();
         Row row = input("domain-event", "domain-events", "{}");
         assertThrows(RuntimeException.class, () ->
-            f.eval(ctx, agent, schedules, row, AgentDescriptors.toJson(d)));
+            f.eval(ctx, agent, schedules, row, AgentDescriptors.toJson(d), null, null));
+    }
+
+    private static final String AGENTS_FILE = "samples/my-use-case/agents.json";
+
+    /** A class loader that sees {@code agents} as the bundled {@link #AGENTS_FILE}. */
+    private static ClassLoader bundling(java.nio.file.Path dir, AgentDescriptor... agents) throws Exception {
+        String json = java.util.Arrays.stream(agents).map(AgentDescriptors::toJson)
+            .collect(java.util.stream.Collectors.joining(",", "[", "]"));
+        java.nio.file.Path file = dir.resolve(AGENTS_FILE);
+        java.nio.file.Files.createDirectories(file.getParent());
+        java.nio.file.Files.writeString(file, json);
+        return new java.net.URLClassLoader(new java.net.URL[] {dir.toUri().toURL()}, null);
+    }
+
+    private static AgentDescriptor agentWithId(String id) {
+        AgentDescriptor d = descriptor(operation());
+        d.setAgentId(id);
+        return d;
+    }
+
+    @Test
+    @DisplayName("agent_id selects the agent in the bundled agents.json")
+    void bundledAgentById(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        ClassLoader cl = bundling(dir, agentWithId("first"), agentWithId("second"));
+        assertEquals("second", StatefulAgentProcessTableFunction.bundledAgent(cl, AGENTS_FILE, "second").getAgentId());
+        IllegalStateException unknown = assertThrows(IllegalStateException.class,
+            () -> StatefulAgentProcessTableFunction.bundledAgent(cl, AGENTS_FILE, "other"));
+        assertTrue(unknown.getMessage().contains("'other'"), unknown.getMessage());
+    }
+
+    @Test
+    @DisplayName("without agent_id the only agent of the bundled agents.json is used, else it is ambiguous")
+    void bundledAgentWithoutId(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        ClassLoader single = bundling(dir, agentWithId("only"));
+        assertEquals("only", StatefulAgentProcessTableFunction.bundledAgent(single, AGENTS_FILE, null).getAgentId());
+
+        ClassLoader several = bundling(dir, agentWithId("a"), agentWithId("b"));
+        assertThrows(IllegalStateException.class,
+            () -> StatefulAgentProcessTableFunction.bundledAgent(several, AGENTS_FILE, " "));
+    }
+
+    @Test
+    @DisplayName("a missing agents file, or no agents_file at all, makes the lookup fail")
+    void bundledAgentMissing(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        ClassLoader empty = new java.net.URLClassLoader(new java.net.URL[] {dir.toUri().toURL()}, null);
+        IllegalStateException missing = assertThrows(IllegalStateException.class,
+            () -> StatefulAgentProcessTableFunction.bundledAgent(empty, AGENTS_FILE, "any"));
+        assertTrue(missing.getMessage().contains(AGENTS_FILE), missing.getMessage());
+        assertThrows(IllegalStateException.class,
+            () -> StatefulAgentProcessTableFunction.bundledAgent(empty, null, "any"));
     }
 }

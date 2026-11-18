@@ -30,7 +30,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,6 +40,8 @@ import java.util.stream.Collectors;
 
 /**
  * Lightweight RESTful HTTP API server for deploying Decision Intelligence archives.
+ * 
+ * It is currently not used by the application.
  *
  * <p>Uses the JDK's built-in {@link HttpServer} (zero additional runtime dependencies).
  * Publishes validated {@link ArchiveControlCmd} messages to Kafka via

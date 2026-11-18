@@ -1056,6 +1056,13 @@ app.use('/api/ads-runtimes',                  createAdsRouter({
   diRuntimes:    DI_RUNTIMES,
   samplesDir:    SAMPLES_DIR,
   isValidAgentId,
+  // Archive-control commands (live rules refresh) are published with the shared producer.
+  publishControlMessage: async (topic, value) => {
+    await ensureProducerConnected();
+    await sharedProducer.send({ topic, messages: [{ value }] });
+  },
+  // Where ./samples is mounted in the Flink containers (docker-compose.yml).
+  flinkSamplesMount: process.env.FLINK_SAMPLES_MOUNT || '/opt/flink/samples',
 }));
 app.use('/api/use-cases/:useCase/scenarios',  createScenariosRouter({
   samplesDir:    SAMPLES_DIR,
@@ -1833,6 +1840,12 @@ function buildUseCaseDescriptor(useCaseId, agentsJson) {
         });
       }
     }
+    // Archive-control topic: ensure it is collected so Kafka pre-creates it
+    const act = agent.ruleset?.archiveControlTopic?.trim();
+    if (act && !topicsMap.has(act)) {
+      topicsMap.set(act, { name: act, type: 'archive-control', label: 'Archive Control' });
+    }
+
     // Changelog topic: expose it as an outbound topic so the consumer subscribes to it.
     // Each agent that declares a changeLogTopic gets a distinct type key so multi-agent
     // use-cases don't collide in the eventStore.  The type key is 'entity-changelog' for
@@ -1915,6 +1928,211 @@ async function ensureTopicsForDescriptor(descriptor) {
   } finally {
     await admin.disconnect().catch(() => {});
   }
+}
+
+/**
+ * Validates an agent descriptor (parsed agents.json object).
+ * Helper to validate duration strings (e.g. '30s', '10m', '1h', '30d').
+ */
+function validateDuration(str) {
+  if (typeof str !== 'string' || !str.trim()) return false;
+  return /^\d+\s*(ms|s|m|mn|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks|mo|month|months|y|yr|yrs|year|years)$/i.test(str.trim());
+}
+
+/**
+ * Extracts the deepest root cause message from a Flink exception string or stack trace.
+ */
+function extractFlinkRootCause(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  const text = raw.trim();
+  const causedByMatches = [...text.matchAll(/(?:Caused by:\s*)([^\n]+)/g)];
+  if (causedByMatches.length > 0) {
+    return causedByMatches[causedByMatches.length - 1][1].trim();
+  }
+  const mainMatch = text.match(/(?:The main method caused an error:\s*)([^\n]+)/);
+  if (mainMatch) {
+    return mainMatch[1].trim();
+  }
+  return text.split('\n')[0].trim();
+}
+
+/**
+ * Mirrors the rules in AgentDescriptorValidator.java and agentDiagramDescriptor.js.
+ * @param {object} descriptor
+ * @returns {{ valid: boolean, errors: string[] }}
+ */
+function validateAgentDescriptor(descriptor) {
+  const errors = [];
+  if (!descriptor || typeof descriptor !== 'object') {
+    return { valid: false, errors: ['Descriptor must be a non-null object'] };
+  }
+
+  const agents = descriptor.agents;
+  if (!Array.isArray(agents) || agents.length === 0) {
+    return { valid: false, errors: ['The application needs at least one agent in the "agents" array.'] };
+  }
+
+  if (Array.isArray(descriptor.topics)) {
+    for (const t of descriptor.topics) {
+      if (t && t.idleness != null && typeof t.idleness === 'string' && t.idleness.trim()) {
+        if (!validateDuration(t.idleness)) {
+          errors.push(`Topic '${t.name || '?'}': Invalid idleness '${t.idleness}'. Expected duration format like '30s', '1m'.`);
+        }
+      }
+    }
+  }
+
+  const seenIds = new Set();
+  const seenUids = new Set();
+
+  for (const agent of agents) {
+    if (!agent || typeof agent !== 'object') {
+      errors.push('Each agent in "agents" must be a non-null object.');
+      continue;
+    }
+
+    const who = `Agent '${agent.agentId || agent.name || '?'}'`;
+
+    if (!agent.agentId || typeof agent.agentId !== 'string' || !agent.agentId.trim()) {
+      errors.push(`${who}: Agent ID (agentId) is required.`);
+    } else if (!/^[A-Za-z0-9_-]+$/.test(agent.agentId.trim())) {
+      errors.push(`${who}: Agent ID may only contain letters, digits, '-' and '_'.`);
+    } else if (seenIds.has(agent.agentId.trim())) {
+      errors.push(`${who}: Duplicate Agent ID '${agent.agentId.trim()}'.`);
+    } else {
+      const agentId = agent.agentId.trim();
+      seenIds.add(agentId);
+
+      // Validate unique operator UIDs (matching AgentDescriptorValidator.java)
+      const procUid = `agent-processor-${agentId}`;
+      if (seenUids.has(procUid)) {
+        errors.push(`${who}: Duplicate Flink operator UID '${procUid}'.`);
+      }
+      seenUids.add(procUid);
+
+      let agentErrorSinkDeclared = false;
+      if (Array.isArray(agent.outputs)) {
+        for (const o of agent.outputs) {
+          if (!o || typeof o !== 'object') continue;
+          if (o.topic && typeof o.topic === 'string' && o.topic.trim()) {
+            const rawType = o.eventType;
+            const normType = (rawType == null || typeof rawType !== 'string' || !rawType.trim()) ? '' : rawType.trim();
+            const sinkUid = `agent-sink-${agentId}-${normType}`;
+            if (seenUids.has(sinkUid)) {
+              errors.push(`${who}: Duplicate Flink operator UID '${sinkUid}' generated by outputs.`);
+            }
+            seenUids.add(sinkUid);
+            if (rawType === 'agent-error') agentErrorSinkDeclared = true;
+          }
+        }
+      }
+
+      if (!agentErrorSinkDeclared) {
+        const dlqUid = `agent-error-dlq-${agentId}`;
+        if (seenUids.has(dlqUid)) {
+          errors.push(`${who}: Duplicate Flink operator UID '${dlqUid}'.`);
+        }
+        seenUids.add(dlqUid);
+      }
+
+      if (agent.stateConfig?.changeLogTopic && typeof agent.stateConfig.changeLogTopic === 'string' && agent.stateConfig.changeLogTopic.trim()) {
+        const clUid = `agent-changelog-sink-${agentId}`;
+        if (seenUids.has(clUid)) {
+          errors.push(`${who}: Duplicate Flink operator UID '${clUid}'.`);
+        }
+        seenUids.add(clUid);
+      }
+    }
+
+    if (!agent.entityType || typeof agent.entityType !== 'string' || !agent.entityType.trim()) {
+      errors.push(`${who}: entityType is required.`);
+    }
+
+    if (!agent.ruleset || typeof agent.ruleset !== 'object') {
+      errors.push(`${who}: ruleset configuration is required.`);
+    } else {
+      if (!agent.ruleset.path || typeof agent.ruleset.path !== 'string' || !agent.ruleset.path.trim()) {
+        errors.push(`${who}: ruleset.path is required.`);
+      }
+      if (!agent.ruleset.archiveControlTopic || typeof agent.ruleset.archiveControlTopic !== 'string' || !agent.ruleset.archiveControlTopic.trim()) {
+        errors.push(`${who}: Decision Archive Control Topic (ruleset.archiveControlTopic) is required (e.g. 'agent-${agent.agentId || 'id'}-archive-control').`);
+      } else if (!/^[a-zA-Z0-9._-]+$/.test(agent.ruleset.archiveControlTopic.trim())) {
+        errors.push(`${who}: ruleset.archiveControlTopic '${agent.ruleset.archiveControlTopic}' contains invalid characters.`);
+      }
+    }
+
+    if (agent.stateConfig && agent.stateConfig.ttl != null && typeof agent.stateConfig.ttl === 'string' && agent.stateConfig.ttl.trim()) {
+      if (!validateDuration(agent.stateConfig.ttl)) {
+        errors.push(`${who}: Invalid stateConfig.ttl '${agent.stateConfig.ttl}'. Expected duration format like '30s', '10m', '1h', '30d'.`);
+      }
+    }
+
+    const subs = agent.subscriptions;
+    if (!Array.isArray(subs) || subs.length === 0) {
+      errors.push(`${who}: At least one event subscription is required.`);
+    } else {
+      for (const s of subs) {
+        if (!s || typeof s !== 'object') continue;
+        const subWhere = `subscription '${s.eventType || '?'}'`;
+        if (!s.eventType || typeof s.eventType !== 'string' || !s.eventType.trim()) {
+          errors.push(`${who}: subscription eventType must not be blank.`);
+        }
+        if (s.eventType === 'Schedule') {
+          if (s.topic && s.topic.trim()) {
+            errors.push(`${who}: Schedule subscription must not declare a topic.`);
+          }
+        } else {
+          if (!s.topic || typeof s.topic !== 'string' || !s.topic.trim()) {
+            errors.push(`${who}, ${subWhere}: Topic is required.`);
+          }
+        }
+        if (s.operation === undefined || s.operation === null) {
+          errors.push(`${who}, ${subWhere}: Operation field is required (use "" for history-only).`);
+        }
+        const hasKeyExtractor = (typeof s.entityKeyExtractor === 'string' && s.entityKeyExtractor.trim().length > 0)
+          || (typeof agent.entityKeyExtractor === 'string' && agent.entityKeyExtractor.trim().length > 0)
+          || (typeof s.entityKeyExtractor === 'string' && s.entityKeyExtractor === '')
+          || (typeof agent.entityKeyExtractor === 'string' && agent.entityKeyExtractor === '');
+        if (s.eventType !== 'Schedule' && !hasKeyExtractor) {
+          errors.push(`${who}, ${subWhere}: entityKeyExtractor is required (on subscription or on agent).`);
+        }
+      }
+    }
+
+    if (Array.isArray(agent.outputs)) {
+      for (const o of agent.outputs) {
+        if (!o || typeof o !== 'object') continue;
+        if (!o.topic || typeof o.topic !== 'string' || !o.topic.trim()) {
+          errors.push(`${who}: Output destination topic must not be blank.`);
+        }
+        if (!o.eventType || typeof o.eventType !== 'string' || !o.eventType.trim()) {
+          errors.push(`${who}: Output eventType must not be blank.`);
+        }
+      }
+    }
+
+    const refNames = new Set();
+    if (Array.isArray(agent.references)) {
+      for (const r of agent.references) {
+        if (!r || typeof r !== 'object') continue;
+        if (!r.name || typeof r.name !== 'string' || !r.name.trim()) {
+          errors.push(`${who}: Reference 'name' is required.`);
+        } else if (refNames.has(r.name.trim())) {
+          errors.push(`${who}: Duplicate reference name '${r.name.trim()}'.`);
+        } else {
+          refNames.add(r.name.trim());
+        }
+        if (r.type && r.type.toLowerCase() !== 'csv') {
+          errors.push(`${who}: Reference '${r.name || '?'}' has unsupported type '${r.type}' (only 'csv').`);
+        }
+        if (!r.file || typeof r.file !== 'string' || !r.file.trim()) {
+          errors.push(`${who}: Reference '${r.name || '?'}' requires 'file'.`);
+        }
+      }
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
 }
 
 // Collect every Kafka topic name referenced by an agents.json object.
@@ -2438,6 +2656,15 @@ app.post('/api/agents', async (req, res) => {
       }
     }
 
+    const validation = validateAgentDescriptor(finalDescriptor);
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: 'DESCRIPTOR_VALIDATION_ERROR',
+        message: validation.errors.join('; '),
+        details: validation.errors,
+      });
+    }
+
     await fs.writeFile(path.join(dir, 'agents.json'), JSON.stringify(finalDescriptor, null, 2), 'utf8');
 
     await ensureTopicsForDescriptor(buildUseCaseDescriptor(useCaseId, finalDescriptor)).catch(err =>
@@ -2669,10 +2896,19 @@ app.post('/api/agents/:id/start', async (req, res) => {
   }
 
   try {
+    // Validate the descriptor before submitting to Flink
+    const agentsJson = JSON.parse(await fs.readFile(safeJoin(SAMPLES_DIR, id, 'agents.json'), 'utf8'));
+    const validation = validateAgentDescriptor(agentsJson);
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: `Agent descriptor validation failed: ${validation.errors.join('; ')}`,
+        details: validation.errors,
+      });
+    }
+
     // Ensure all topics referenced by this agent's descriptor exist before starting.
     // createTopics() is idempotent — it silently skips topics that already exist.
     try {
-      const agentsJson = JSON.parse(await fs.readFile(safeJoin(SAMPLES_DIR, id, 'agents.json'), 'utf8'));
       const topicNames = [...collectTopicsFromAgentsJson(agentsJson)];
       if (topicNames.length > 0) {
         const admin = kafka.admin();
@@ -2717,7 +2953,20 @@ app.post('/api/agents/:id/start', async (req, res) => {
 
     if (!submitRes.ok) {
       const text = await submitRes.text();
-      return res.status(submitRes.status).json({ error: `Flink submit failed: ${text}` });
+      let message = text;
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+          message = extractFlinkRootCause(parsed.errors[0]);
+        } else if (parsed.error) {
+          message = extractFlinkRootCause(parsed.error);
+        } else {
+          message = extractFlinkRootCause(text);
+        }
+      } catch { /* use raw text */ }
+      return res.status(submitRes.status >= 400 && submitRes.status < 600 ? submitRes.status : 500).json({
+        error: `Flink submit failed: ${message}`,
+      });
     }
 
     const entryClass = resolveFlinkEntryClass(req.body?.runtime || req.body?.flinkRuntime);
@@ -2818,7 +3067,28 @@ app.get('/api/agents/:id/status', async (req, res) => {
       return res.status(flinkRes.status).json({ error: `Flink status check failed: ${flinkRes.status}` });
     }
     const job = await flinkRes.json();
-    res.json({ agentId: id, jobId: stored.jobId, state: job.state, name: job.name, runtime: runtimeOfJobState(stored), startedAt: stored.startedAt });
+    let failureReason = null;
+    if (job.state === 'FAILED') {
+      try {
+        const excRes = await fetch(`${FLINK_URL}/jobs/${stored.jobId}/exceptions`, { signal: AbortSignal.timeout(3000) });
+        if (excRes.ok) {
+          const excData = await excRes.json();
+          const root = excData['root-exception'];
+          if (root && typeof root === 'string') {
+            failureReason = extractFlinkRootCause(root);
+          }
+        }
+      } catch { /* non-fatal */ }
+    }
+    res.json({
+      agentId: id,
+      jobId: stored.jobId,
+      state: job.state,
+      name: job.name,
+      runtime: runtimeOfJobState(stored),
+      startedAt: stored.startedAt,
+      ...(failureReason && { failureReason }),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2891,13 +3161,14 @@ app.post('/api/agents/:id/stop', async (req, res) => {
         method: 'PATCH',
         signal: AbortSignal.timeout(10000),
       });
-      // Flink 202 = accepted cancel; 404 = already gone — both are success
-      if (!cancelRes.ok && cancelRes.status !== 404) {
+      // Flink 202 = accepted cancel; 404 = already gone; 409 = already in terminal state (FAILED, FINISHED, CANCELED)
+      // All are treated as success for cancel so cleanup can proceed.
+      if (!cancelRes.ok && cancelRes.status !== 404 && cancelRes.status !== 409) {
         const text = await cancelRes.text();
         return res.status(cancelRes.status).json({ error: `Flink cancel failed: ${text}` });
       }
-      flinkCancelled = true;
-      console.log(`[agents] Cancelled Flink job for agentId=${id} jobId=${jobId}`);
+      flinkCancelled = cancelRes.ok;
+      console.log(`[agents] Stop/cancel for agentId=${id} jobId=${jobId} (status=${cancelRes.status})`);
     } catch (err) {
       console.error('[agents] Stop error:', err.message);
       return res.status(500).json({ error: err.message });
@@ -2945,6 +3216,32 @@ app.post('/api/agents/:id/stop', async (req, res) => {
     console.log(`[agents] Skipping topic deletion for agentId=${id} (deleteTopics:false)`);
   }
 
+  // ── Step 5: Clear all agent-scoped runtime state (guaranteed cleanup) ─────────
+  try {
+    // a) Persisted job-state file + in-memory agentJobState entry
+    await removeAgentJobState(id);
+
+    // b) Active Kafka consumer for this use-case (used by the polling event feed)
+    const consumer = activeConsumers.get(id);
+    if (consumer) {
+      try {
+        await consumer.disconnect();
+        console.log(`[kafka] Disconnected consumer for agentId=${id} on stop`);
+      } catch (err) {
+        console.warn(`[kafka] Could not disconnect consumer for agentId=${id} (non-fatal): ${err.message}`);
+      }
+      activeConsumers.delete(id);
+    }
+
+    // c) In-memory event ring-buffer (events shown in the dashboard event feed)
+    eventStore.delete(id);
+
+    // d) Entity state snapshot cache for this use-case
+    entityStateStore.delete(id);
+  } catch (stateErr) {
+    console.error(`[agents] Failed to clear runtime state for agentId=${id}:`, stateErr.message);
+  }
+
   if (topicsError) {
     return res.status(500).json({
       stopped: false,
@@ -2956,28 +3253,6 @@ app.post('/api/agents/:id/stop', async (req, res) => {
       error: `Kafka topic cleanup failed: ${topicsError}`,
     });
   }
-
-  // ── Step 5: Clear all agent-scoped runtime state ─────────────────────────────
-  // a) Persisted job-state file + in-memory agentJobState entry
-  await removeAgentJobState(id);
-
-  // b) Active Kafka consumer for this use-case (used by the polling event feed)
-  const consumer = activeConsumers.get(id);
-  if (consumer) {
-    try {
-      await consumer.disconnect();
-      console.log(`[kafka] Disconnected consumer for agentId=${id} on stop`);
-    } catch (err) {
-      console.warn(`[kafka] Could not disconnect consumer for agentId=${id} (non-fatal): ${err.message}`);
-    }
-    activeConsumers.delete(id);
-  }
-
-  // c) In-memory event ring-buffer (events shown in the dashboard event feed)
-  eventStore.delete(id);
-
-  // d) Entity state snapshot cache for this use-case
-  entityStateStore.delete(id);
 
   console.log(`[agents] Stopped agentId=${id} jobId=${jobId ?? '(none)'} flinkState=${flinkState ?? '(none)'} topicsDeleted: ${topicsDeleted.join(', ') || 'none'}`);
   res.json({ stopped: true, jobId, agentId: id, flinkCancelled, flinkState, topicsDeleted });
@@ -3028,7 +3303,7 @@ app.delete('/api/agents/:id', async (req, res) => {
       const cancelRes = await fetch(`${FLINK_URL}/jobs/${stored.jobId}?mode=cancel`, {
         method: 'PATCH', signal: AbortSignal.timeout(8000),
       });
-      if (cancelRes.ok || cancelRes.status === 404) {
+      if (cancelRes.ok || cancelRes.status === 404 || cancelRes.status === 409) {
         console.log(`[agents] Cancelled job ${stored.jobId} during delete of agentId=${id}`);
         const pollResult = await waitForFlinkJobTerminal(stored.jobId);
         if (!pollResult.terminal) {
@@ -3802,6 +4077,9 @@ function unwrapAdsSample(adsJson) {
 if (typeof module !== 'undefined') {
   module.exports = {
     isValidAgentId,
+    validateAgentDescriptor,
+    extractFlinkRootCause,
+    validateDuration,
     buildUseCaseDescriptor,
     dropDeclaredTopics,
     applyUseCaseProperties,

@@ -170,6 +170,55 @@ class AgentSqlPipelineBuilderTest {
     }
 
     @Test
+    @DisplayName("confluent with a bundled descriptor: the call names the agent, the JSON is not inlined")
+    void confluentBundledDescriptor() {
+        Options o = new Options();
+        o.dialect = Dialect.CONFLUENT;
+        o.bundledAgentsFile = "samples/my-use-case/agents.json";
+        Pipeline p = new AgentSqlPipelineBuilder(o).build(List.of(basic()));
+
+        assertTrue(anySetup(p, "agents_file => 'samples/my-use-case/agents.json'"));
+        assertTrue(anySetup(p, "agent_id => 'test-agent'"));
+        assertFalse(anySetup(p, "agent_config"));
+    }
+
+    @Test
+    @DisplayName("confluent: views are persistent (no TEMPORARY), and still classified as views")
+    void confluentViewsArePersistent() {
+        Pipeline p = build(Dialect.CONFLUENT, true, Map.of(), basic());
+
+        assertTrue(anySetup(p, "CREATE VIEW `test_agent_in`"));
+        assertTrue(anySetup(p, "CREATE VIEW `test_agent_out`"));
+        assertFalse(anySetup(p, "TEMPORARY"));
+        assertEquals(2, p.statements.stream().filter(s -> s.kind().equals("view")).count());
+        assertTrue(p.statements.stream().noneMatch(s -> s.kind().equals("other")));
+    }
+
+    @Test
+    @DisplayName("confluent: the artifact URI of the functions is the placeholder unless one is given")
+    void confluentArtifactUri() {
+        Pipeline placeholder = build(Dialect.CONFLUENT, true, Map.of(), basic());
+        assertTrue(anySetup(placeholder, "USING JAR '" + AgentSqlPipelineBuilder.ARTIFACT_URI_PLACEHOLDER + "'"));
+
+        Options o = new Options();
+        o.dialect = Dialect.CONFLUENT;
+        o.artifactUri = "confluent-artifact://cfa-123/ver-456";
+        Pipeline given = new AgentSqlPipelineBuilder(o).build(List.of(basic()));
+        assertEquals(2, given.setup.stream().filter(s -> s.contains("USING JAR 'confluent-artifact://cfa-123/ver-456'")).count());
+        assertFalse(anySetup(given, "<artifact-id>"));
+    }
+
+    @Test
+    @DisplayName("the statement set is the inserts only, empty without inserts")
+    void statementSet() {
+        Pipeline p = build(Dialect.CONFLUENT, true, Map.of(), basic());
+        assertTrue(p.toStatementSet().startsWith("EXECUTE STATEMENT SET\nBEGIN\n"));
+        assertTrue(p.toStatementSet().endsWith("END;\n"));
+        assertTrue(p.toScript().endsWith(p.toStatementSet()));
+        assertEquals("", new Pipeline().toStatementSet());
+    }
+
+    @Test
     @DisplayName("agent_config quotes are escaped")
     void agentConfigIsEscaped() {
         AgentDescriptor d = basic();

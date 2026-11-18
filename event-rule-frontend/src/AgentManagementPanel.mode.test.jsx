@@ -106,7 +106,7 @@ describe('AgentManagementPanel — deployment mode', () => {
       status = s; installFetch();
       const { unmount } = render(panel());
       await act(async () => {});
-      for (const name of ['Diagram View', 'Delete Agent', 'Undeploy Agent']) {
+      for (const name of ['Delete Agent', 'Undeploy Agent']) {
         expect(screen.getByRole('button', { name })).toBeInTheDocument();
       }
       unmount();
@@ -158,8 +158,8 @@ describe('AgentManagementPanel — switching deployment modes', () => {
   test('another use case never shows the previous one\'s mode', async () => {
     const byId = { a: { ...PTF, agentId: 'a' }, b: { ...DS, agentId: 'b' } };
     global.fetch = vi.fn((url) => {
-      const id = /agents\/([^/]+)\/status/.exec(url)[1];
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(byId[id]) });
+      const id = /agents\/([^/]+)\/status/.exec(url)?.[1];
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(id ? byId[id] : []) });
     });
     const { container, rerender } = render(panel({ useCaseId: 'a' }));
     await waitFor(() => expect(badges(container)).toEqual(['PTF']));

@@ -23,8 +23,9 @@ import com.ibm.di.event.rule.RuleEngineRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.ibm.di.event.rule.RulesetResourceResolver;
+
 import java.net.URI;
-import java.nio.file.Paths;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -35,8 +36,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code ruleset.path} of the descriptor.
  *
  * <p>The archive is fixed for the life of the function: unlike {@code StatefulAgentProcessor} there
- * is no broadcast channel to receive a new one. The path is a URI when it contains {@code ://},
- * otherwise a file path.
+ * is no broadcast channel to receive a new one. The path is resolved via {@link RulesetResourceResolver},
+ * which supports filesystem paths, URIs, and bundled classpath resources (for zero-filesystem
+ * deployments such as Confluent Cloud).
  */
 public final class RulesetRunnerProvider implements AgentEventProcessor.RunnerProvider {
 
@@ -87,23 +89,6 @@ public final class RulesetRunnerProvider implements AgentEventProcessor.RunnerPr
     }
 
     private URI rulesetUri() {
-        String path = descriptor.getRuleset().getPath();
-        if (path.contains("://")) return URI.create(path);
-        // Absolute path — use as-is.
-        java.nio.file.Path p = Paths.get(path);
-        if (p.isAbsolute()) return p.toUri();
-        // Relative path: try cwd first, then cwd's parent (project root).
-        // This mirrors AgentDescriptorLoader's resolution strategy so that a path like
-        // "samples/banking-fraud-agent/Foo.jar" works whether the script is launched from
-        // the project root or from the event-rule-backend sub-directory.
-        java.nio.file.Path resolved = Paths.get(System.getProperty("user.dir")).resolve(path);
-        if (!resolved.toFile().exists()) {
-            java.nio.file.Path parent = Paths.get(System.getProperty("user.dir")).getParent();
-            if (parent != null) {
-                java.nio.file.Path viaParent = parent.resolve(path);
-                if (viaParent.toFile().exists()) resolved = viaParent;
-            }
-        }
-        return resolved.toUri();
+        return RulesetResourceResolver.resolve(descriptor.getRuleset().getPath());
     }
 }

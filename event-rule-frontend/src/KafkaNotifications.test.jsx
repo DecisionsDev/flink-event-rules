@@ -311,6 +311,34 @@ describe('useKafkaNotifications', () => {
     expect(types).toContain('agent-alerts');
     expect(types).toContain('agent-entity-changelog');
   });
+
+  test('suppresses per-agent entity-changelog-<agentId> notifications unless showChangelogs is true', () => {
+    const descriptor = {
+      topics: [],
+      outboundTopics: [
+        { name: 'agent-alerts', type: 'Alert', label: 'Alerts' },
+        { name: 'agent-airport-entity-changelog', type: 'entity-changelog-airport-agent', label: 'Entity Changelog (Airport)' },
+      ],
+    };
+    const evts = {
+      'agent-alerts': [makeEvent({ id: 'alert-1', message: 'Alert' })],
+      'agent-airport-entity-changelog': [makeEvent({ id: 'cl-1', message: 'Entity changed' })],
+    };
+
+    const off = renderHook(
+      ({ e, showChangelogs }) => useKafkaNotifications(e, descriptor, { showChangelogs }),
+      { initialProps: { e: {}, showChangelogs: false } }
+    );
+    off.rerender({ e: evts, showChangelogs: false });
+    expect(off.result.current.notifications.map(n => n.type)).toEqual(['agent-alerts']);
+
+    const on = renderHook(
+      ({ e, showChangelogs }) => useKafkaNotifications(e, descriptor, { showChangelogs }),
+      { initialProps: { e: {}, showChangelogs: true } }
+    );
+    on.rerender({ e: evts, showChangelogs: true });
+    expect(on.result.current.notifications.map(n => n.type)).toContain('agent-airport-entity-changelog');
+  });
 });
 
 // ── NotificationToast ─────────────────────────────────────────────────────────

@@ -23,7 +23,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ibm.decision.run.DecisionRunner;
 import com.ibm.decision.run.DecisionServiceProvider;
 import com.ibm.decision.run.RunContext;
-import com.ibm.decision.run.impl.AbstractDecisionProvider;
 import com.ibm.rules.engine.observer.Observable;
 import com.ibm.rules.engine.runtime.NoteObserver;
 import com.ibm.rules.engine.ruledef.runtime.RuleEngineObserver;
@@ -341,7 +340,7 @@ public class RuleEngineRunner implements Serializable, AutoCloseable {
      * Create an ObjectMapper configured for the ruleset.
      */
     private ObjectMapper createObjectMapper(ClassLoader classLoader) {
-        ObjectMapper mapper = AbstractDecisionProvider.createObjectMapper();
+        ObjectMapper mapper = decisionObjectMapper(classLoader);
         mapper.setTypeFactory(mapper.getTypeFactory().withClassLoader(classLoader));
         // Decision Intelligence-generated classes may not have all Java-model fields (e.g. dailyTransactionLimit).
         // Allow unknown properties so extra fields are silently dropped during deserialization.
@@ -351,6 +350,22 @@ public class RuleEngineRunner implements Serializable, AutoCloseable {
         return mapper;
     }
     
+    /**
+     * The ObjectMapper of the decision engine, from {@code AbstractDecisionProvider} as loaded by the
+     * ruleset class loader. A ruleset archive contains that class with its serializers, so the
+     * {@code foundation} JAR is not needed on the application classpath: it is then resolved from the
+     * archive. When {@code foundation} is on the classpath, class loader delegation resolves it there.
+     */
+    private static ObjectMapper decisionObjectMapper(ClassLoader classLoader) {
+        try {
+            Class<?> provider = Class.forName("com.ibm.decision.run.impl.AbstractDecisionProvider", true, classLoader);
+            return (ObjectMapper) provider.getMethod("createObjectMapper").invoke(null);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Cannot create the decision ObjectMapper: neither the application "
+                + "classpath nor the ruleset archive provides com.ibm.decision.run.impl.AbstractDecisionProvider", e);
+        }
+    }
+
     /**
      * Get the DecisionRunner from the ruleset classloader.
      * Manually parses service provider files from the JAR to bypass ServiceLoader limitations.

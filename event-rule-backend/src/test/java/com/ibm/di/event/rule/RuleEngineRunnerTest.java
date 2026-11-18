@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Unit tests for {@link RuleEngineRunner}.
  *
- * <p>Because the real ODM infrastructure is not available in unit tests, all
+ * <p>Because the real DI infrastructure is not available in unit tests, all
  * tests use a minimal subclass that overrides {@link RuleEngineRunner#execute}
  * without touching any classloader or IBM Decision API.
  *
@@ -51,7 +51,7 @@ class RuleEngineRunnerTest {
 
     /**
      * A {@link RuleEngineRunner} subclass whose {@link #initialize()} is
-     * observable via a counter and whose {@link #execute} never touches ODM.
+     * observable via a counter and whose {@link #execute} never touches DI.
      *
      * <p>We override {@code initialize()} instead of {@code execute()} because
      * the test needs to verify that close-then-initialize triggers a fresh init
@@ -240,7 +240,7 @@ class RuleEngineRunnerTest {
             /**
              * Override {@code initialize()} to replicate the production retry loop
              * but count iterations and throw {@code OperationNotFoundException}
-             * immediately instead of waiting for real classloader / ODM calls.
+             * immediately instead of waiting for real classloader / DI calls.
              */
             @Override
             protected void initialize() {

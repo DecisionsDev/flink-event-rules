@@ -37,8 +37,8 @@
 		<!-- Shared artifact versions — child modules reference these without repeating the version -->
 		<jackson.version>2.16.2</jackson.version>
 		<ads-annotations.version>2.0.21</ads-annotations.version>
-		<foundation.version>16.7.3</foundation.version>
-		<execution.api.version>4.1.4</execution.api.version>
+		<foundation.version>16.5.1</foundation.version>
+		<execution.api.version>4.0.11</execution.api.version>
 		<engine.de.api.version>3.12.0</engine.de.api.version>
 		<junit.version>5.10.1</junit.version>
 		<mockito.version>5.10.0</mockito.version>

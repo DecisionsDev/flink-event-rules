@@ -74,6 +74,28 @@ describe('useDiagramHistory', () => {
       expect(areSnapshotsEqual(s1, s2)).toBe(false);
     });
 
+    test('supports ignorePositions option to ignore node positions and transient selection/drag fields', () => {
+      const s1 = {
+        nodes: [{ id: '1', position: { x: 0, y: 0 }, data: { label: 'Node 1' } }],
+        edges: [{ id: 'e1', source: '1', target: '2' }],
+        agentsMeta: { name: 'App' },
+      };
+      const s2 = {
+        nodes: [{ id: '1', position: { x: 250, y: 350 }, selected: true, dragging: false, data: { label: 'Node 1' } }],
+        edges: [{ id: 'e1', source: '1', target: '2', selected: true }],
+        agentsMeta: { name: 'App' },
+      };
+      expect(areSnapshotsEqual(s1, s2)).toBe(false);
+      expect(areSnapshotsEqual(s1, s2, { ignorePositions: true })).toBe(true);
+
+      const s3 = {
+        nodes: [{ id: '1', position: { x: 250, y: 350 }, data: { label: 'Node 1 Renamed' } }],
+        edges: [{ id: 'e1', source: '1', target: '2' }],
+        agentsMeta: { name: 'App' },
+      };
+      expect(areSnapshotsEqual(s1, s3, { ignorePositions: true })).toBe(false);
+    });
+
     test('handles null or undefined correctly', () => {
       expect(areSnapshotsEqual(null, null)).toBe(true);
       expect(areSnapshotsEqual(null, {})).toBe(false);
@@ -374,6 +396,77 @@ describe('useDiagramHistory', () => {
       });
       expect(redone.nodes).toHaveLength(2);
       expect(redone.edges).toHaveLength(0);
+    });
+
+    test('isDirty accurately reflects pending unsaved changes', () => {
+      const { result } = renderHook(() => useDiagramHistory(initialSnapshot));
+
+      expect(result.current.isDirty()).toBe(false);
+
+      // Make a discrete modification
+      act(() => {
+        result.current.pushSnapshot(
+          [...initialSnapshot.nodes, { id: '2', position: { x: 50, y: 50 }, data: { label: 'Node 2' } }],
+          initialSnapshot.edges,
+          initialSnapshot.agentsMeta,
+        );
+      });
+      expect(result.current.isDirty()).toBe(true);
+
+      // Undo back to baseline -> no longer dirty
+      act(() => {
+        result.current.undo();
+      });
+      expect(result.current.isDirty()).toBe(false);
+
+      // Redo -> dirty again
+      act(() => {
+        result.current.redo();
+      });
+      expect(result.current.isDirty()).toBe(true);
+
+      // Save / setBaseline -> clean
+      act(() => {
+        result.current.setBaseline(result.current.presentRef.current);
+      });
+      expect(result.current.isDirty()).toBe(false);
+
+      // Debounced edit -> dirty
+      act(() => {
+        result.current.updateDebouncedSnapshot(
+          result.current.presentRef.current.nodes,
+          result.current.presentRef.current.edges,
+          { ...initialSnapshot.agentsMeta, name: 'Brand New Name' },
+        );
+      });
+      let dirty;
+      act(() => {
+        dirty = result.current.isDirty();
+      });
+      expect(dirty).toBe(true);
+    });
+
+    test('moving objects on the canvas does not mark the editor as dirty', () => {
+      const { result } = renderHook(() => useDiagramHistory(initialSnapshot));
+
+      expect(result.current.isDirty()).toBe(false);
+
+      const movedSnapshot = {
+        ...initialSnapshot,
+        nodes: [{ ...initialSnapshot.nodes[0], position: { x: 200, y: 150 } }],
+      };
+
+      act(() => {
+        result.current.startDrag(initialSnapshot);
+      });
+      act(() => {
+        result.current.stopDrag(movedSnapshot);
+      });
+
+      // Drag is recorded in undo stack
+      expect(result.current.canUndo).toBe(true);
+      // But editor is NOT marked dirty
+      expect(result.current.isDirty()).toBe(false);
     });
   });
 });

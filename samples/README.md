@@ -76,3 +76,26 @@ docker exec -it kafka kafka-console-consumer \
   --max-messages 10
 ```
 
+## Confluent Cloud specific scripts
+
+### 1. Build the Confluent Cloud function JAR & SQL
+./samples/banking-fraud-agent/scripts/ccloud/build.sh
+
+### 2. Pre-create Kafka topics in Confluent Cloud
+./samples/banking-fraud-agent/scripts/ccloud/create-topics.sh
+
+### 3. Deploy the Process Table Function pipeline to Confluent Cloud Flink
+./samples/banking-fraud-agent/scripts/ccloud/deploy-ptf.sh
+
+### 4. Check statement status and CFU consumption
+./samples/banking-fraud-agent/scripts/ccloud/job-status.sh
+
+### 5. Run demo scenarios
+./samples/banking-fraud-agent/scripts/ccloud/launch-demo-scenario.sh account-creation
+
+### 6. Push a dynamic ruleset update via Kafka
+./samples/banking-fraud-agent/scripts/ccloud/publish-ruleset.sh \
+    --jar samples/banking-fraud-agent/Fraud_Detection_Service_1.6.0.jar
+
+### 7. Tear down pipeline statements when finished
+./samples/banking-fraud-agent/scripts/ccloud/undeploy.sh

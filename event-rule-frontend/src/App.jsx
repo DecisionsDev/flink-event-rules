@@ -25,12 +25,14 @@ import SendEventsPanel from './SendEventsPanel';
 import AgentDiagramModal from './AgentDiagramModal';
 import SqlViewModal from './SqlViewModal';
 import RuntimeBadge from './RuntimeBadge';
-import { useDeploymentMode, supportsSqlView } from './deploymentMode.js';
+import DiRuntimeRulesRefresh from './DiRuntimeRulesRefresh';
+import { useDeploymentMode, supportsSqlView, supportsRulesRefresh } from './deploymentMode.js';
 import { renderCard, OutboundEmptyState } from './eventCardRegistry';
 import { useKafkaNotifications } from './useKafkaNotifications';
 import { useEventStream } from './useEventStream';
 import NotificationContainer from './NotificationContainer';
 import LiveExecutionTimeline from './LiveExecutionTimeline';
+import { isSystemTopicType } from './systemTopics';
 
 // Configuration constants
 // MAX_EVENTS_DISPLAY is initialised from the BFF /api/config endpoint so it
@@ -106,12 +108,11 @@ function ConfirmDialog({ message, confirmLabel, confirmDanger, onConfirm, onCanc
 
 // agentId   — human-readable name shown in confirm dialogs (agents[0].agentId or folder name)
 // useCaseId — use-case folder name used as the :id key in all BFF API calls
-export function AgentManagementPanel({ agentId, useCaseId, onNavigateBack, agentsJson, flinkRuntime }) {
+export function AgentManagementPanel({ agentId, useCaseId, onNavigateBack, flinkRuntime }) {
   const [confirm, setConfirm] = useState(null);          // null | 'cancel' | 'delete'
   const [cancelState, setCancelState] = useState('idle'); // idle | stopping | error
   const [deleteState, setDeleteState] = useState('idle'); // idle | deleting | error
   const [actionError, setActionError] = useState(null);
-  const [showDiagram, setShowDiagram] = useState(false);
   const [showSql, setShowSql] = useState(false);
   // Deployment mode of the job actually running for this use case ('ptf' | 'datastream' |
   // null).  It comes from the job's own stored runtime, not from the global `flinkRuntime`
@@ -119,6 +120,7 @@ export function AgentManagementPanel({ agentId, useCaseId, onNavigateBack, agent
   // toggle changes so the panel follows a redeploy.
   const { mode: deploymentMode } = useDeploymentMode(useCaseId, flinkRuntime);
   const sqlViewAvailable = supportsSqlView(deploymentMode);
+  const rulesRefreshAvailable = supportsRulesRefresh(deploymentMode);
 
   // Leaving PTF (undeploy, redeploy as DataStream, other use case) closes the SQL view and
   // forgets that it was open, so it cannot reappear later with another job's data.
@@ -165,13 +167,6 @@ export function AgentManagementPanel({ agentId, useCaseId, onNavigateBack, agent
 
   return (
     <>
-      {showDiagram && (
-        <AgentDiagramModal
-          agentsJson={agentsJson}
-          useCaseId={useCaseId}
-          onClose={() => setShowDiagram(false)}
-        />
-      )}
       {showSql && sqlViewAvailable && (
         <SqlViewModal
           useCaseId={useCaseId}
@@ -203,14 +198,6 @@ export function AgentManagementPanel({ agentId, useCaseId, onNavigateBack, agent
           <RuntimeBadge mode={deploymentMode} />
         </div>
         <div className="agent-mgmt-actions">
-          <button
-            className="agent-mgmt-btn agent-mgmt-btn-ghost"
-            onClick={() => setShowDiagram(true)}
-            disabled={!agentsJson}
-            title="View agent architecture diagram"
-          >
-            Diagram View
-          </button>
           {sqlViewAvailable && (
             <button
               className="agent-mgmt-btn agent-mgmt-btn-ghost"
@@ -237,6 +224,12 @@ export function AgentManagementPanel({ agentId, useCaseId, onNavigateBack, agent
             {cancelState === 'stopping' ? 'Undeploying…' : 'Undeploy Agent'}
           </button>
         </div>
+        <DiRuntimeRulesRefresh
+          key={useCaseId}
+          useCaseId={useCaseId}
+          disabled={!rulesRefreshAvailable}
+          disabledReason={deploymentMode ? 'Rules refresh requires the DataStream runtime' : 'No job deployed'}
+        />
         {actionError && (
           <div className="agent-mgmt-error">{actionError}</div>
         )}
@@ -258,6 +251,8 @@ function App() {
   const [maxEventsDisplay, setMaxEventsDisplay] = useState(50);
   const [selectedUseCase, setSelectedUseCase] = useState(null);
   const [showDiagramEditor, setShowDiagramEditor] = useState(false);
+  // Read-only Agent Diagram View modal, opened from the header toolbar of the dashboard.
+  const [showDiagram, setShowDiagram] = useState(false);
   // Existing use case opened in the diagram editor: { useCaseId, descriptor } | null (new diagram)
   const [diagramEdit, setDiagramEdit] = useState(null);
   // refreshToken — bumped whenever the agent list should be re-fetched (after
@@ -269,7 +264,7 @@ function App() {
   // Per-topic show-filtered toggle state, keyed by topic type.
   // Used when a descriptor outbound topic declares a filterKey/filterValue.
   const [showFiltered, setShowFiltered] = useState({});
-  // Whether to display changelog topics (type: "entity-changelog") in the dashboard.
+  // Whether to display system topics (entity changelogs and agent errors) in the dashboard.
   // Off by default to reduce noise.
   const [showChangelogs, setShowChangelogs] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -524,6 +519,11 @@ function App() {
           )}
         </div>
         <div className="di-header-right">
+          <button className="di-header-action" title="Back to applications" aria-label="Back to applications" onClick={handleChangeUseCase}>            
+            <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
+              <path d="M19 26l-10-10 10-10 1.414 1.414L11.828 16l8.586 8.586L19 26z"/>
+            </svg>
+          </button>
           <a
             className="di-header-action"
             href={FLINK_DASHBOARD_URL}
@@ -538,9 +538,17 @@ function App() {
             </svg>
           </a>
 
-          <button className="di-header-action" title="Back to applications" aria-label="Back to applications" onClick={handleChangeUseCase}>            
-            <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor">
-              <path d="M19 26l-10-10 10-10 1.414 1.414L11.828 16l8.586 8.586L19 26z"/>
+          <button
+            className="di-header-action"
+            title="View agent architecture diagram"
+            aria-label="Diagram View"
+            onClick={() => setShowDiagram(true)}
+            disabled={!agentsJson}
+            style={!agentsJson ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+          >
+            <svg width="18" height="18" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
+              <path d="M4 12h8V4H4v8zm2-6h4v4H6V6zM20 4v8h8V4h-8zm6 6h-4V6h4v4zM12 20v8h8v-8h-8zm6 6h-4v-4h4v4z"/>
+              <path d="M9 12v2h6v6h2v-6h6v-2H9z"/>
             </svg>
           </button>
           <button className="di-header-action" title="Settings (coming soon)" aria-label="Settings (coming soon)" aria-disabled="true" onClick={e => e.preventDefault()} style={{ opacity: 0.45, cursor: 'not-allowed' }}>
@@ -551,6 +559,14 @@ function App() {
           <div className="di-user-avatar" title="John Doe">JD</div>
         </div>
       </header>
+
+      {showDiagram && (
+        <AgentDiagramModal
+          agentsJson={agentsJson}
+          useCaseId={selectedUseCase}
+          onClose={() => setShowDiagram(false)}
+        />
+      )}
 
       <main className="App-main App-main--split">
         {loading && <div className="loading">Loading dashboard…</div>}
@@ -568,7 +584,6 @@ function App() {
                 agentId={descriptor?.name || selectedUseCase}
                 useCaseId={selectedUseCase}
                 onNavigateBack={handleChangeUseCase}
-                agentsJson={agentsJson}
                 flinkRuntime={flinkRuntime}
               />
               <SendEventsPanel
@@ -590,7 +605,7 @@ function App() {
             <div className="dashboard-right">
               {/* Right-pane toolbar: changelog toggle + clean topics button */}
               <div className="dashboard-right-toolbar">
-                {(descriptor.outboundTopics || []).some(ot => ot.type === 'entity-changelog' || ot.type === 'agent-error') && (
+                {(descriptor.outboundTopics || []).some(ot => isSystemTopicType(ot.type)) && (
                   <label className="toggle-label" htmlFor="toggle-changelogs">
                     <span className="toggle-switch">
                       <input
@@ -635,6 +650,7 @@ function App() {
               <LiveExecutionTimeline
                 eventsByType={eventsByType}
                 descriptor={descriptor}
+                showSystemTopics={showChangelogs}
               />
 
               {/* ── Build topic role map: which topics are input-only, output-only, or both ── */}
@@ -724,7 +740,7 @@ function App() {
                     {/* Outbound / results sections — skip topics already shown above */}
                     {(descriptor.outboundTopics || [])
                       .filter(ot => !sharedNames.has(ot.name))
-                      .filter(ot => showChangelogs || (ot.type !== 'entity-changelog' && ot.type !== 'agent-error'))
+                      .filter(ot => showChangelogs || !isSystemTopicType(ot.type))
                       .map(ot => {
                         const allEvents = eventsByType[ot.name] || [];
                         const show = showFiltered[ot.name] || false;

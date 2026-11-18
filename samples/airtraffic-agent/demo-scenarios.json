@@ -833,5 +833,174 @@
         }
       }
     ]
+  },
+  {
+    "id": "update-aircraft-status4-bahamas",
+    "label": "Detect touch & go - Bahamas",
+    "description": "Detecting a touch & go situation where the aircraft is landing and ascending just after.",
+    "events": [
+      {
+        "type": "AirportInitializationEvent",
+        "topic": "agent-airport-init-events",
+        "payload": {
+          "timestamp": "2026-09-09T14:00:00Z",
+          "airport": "NAS",
+          "airportName": "Lynden Pindling International Airport",
+          "country": "Bahamas",
+          "location": {
+            "latitude": 25.039,
+            "longitude": -77.4662,
+            "elevation": 7
+          },
+          "runways": [
+            {
+              "id": "NAS#1",
+              "orientation": "North-South",
+              "status": "AVAILABLE"
+            },
+            {
+              "id": "NAS#2",
+              "orientation": "North-South",
+              "status": "AVAILABLE"
+            }
+          ]
+        }
+      },
+      {
+        "type": "AirportInitializationEvent",
+        "topic": "agent-airport-init-events",
+        "payload": {
+          "timestamp": "2026-09-09T14:01:00Z",
+          "airport": "FPO",
+          "airportName": "Grand Bahama International Airport",
+          "country": "Bahamas",
+          "location": {
+            "latitude": 26.5587,
+            "longitude": -78.6957,
+            "elevation": 2
+          },
+          "runways": [
+            {
+              "id": "FPO#1",
+              "orientation": "East-West",
+              "status": "AVAILABLE"
+            },
+            {
+              "id": "FPO#2",
+              "orientation": "East-West",
+              "status": "AVAILABLE"
+            }
+          ]
+        }
+      },
+      {
+        "type": "AirportInitializationEvent",
+        "topic": "agent-airport-init-events",
+        "payload": {
+          "timestamp": "2026-09-09T14:02:00Z",
+          "airport": "GGT",
+          "airportName": "Exuma International Airport",
+          "country": "Bahamas",
+          "location": {
+            "latitude": 23.5626,
+            "longitude": -75.878,
+            "elevation": 10
+          },
+          "runways": [
+            {
+              "id": "GGT#1",
+              "orientation": "East-West",
+              "status": "AVAILABLE"
+            },
+            {
+              "id": "GGT#2",
+              "orientation": "East-West",
+              "status": "AVAILABLE"
+            }
+          ]
+        }
+      },
+      {
+        "type": "AircraftInitializationEvent",
+        "topic": "agent-aircraft-init-events",
+        "payload": {
+          "timestamp": "2026-09-09T15:00:00Z",
+          "aircraftId": "OUP-198-ZA",
+          "flightNumber": "UP101",
+          "originAirport": "FPO",
+          "destinationAirport": "GGT",
+          "position": {
+            "latitude": 26.5587,
+            "longitude": -78.6957,
+            "elevation": 200
+          },
+          "groundSpeed": 0
+        }
+      },
+      {
+        "type": "AircraftEvent",
+        "topic": "agent-aircraft-events",
+        "payload": {
+          "timestamp": "2026-09-09T16:05:00Z",
+          "aircraftId": "OUP-198-ZA",
+          "description": "Fying...",
+          "position": {
+            "latitude": 23.5626,
+            "longitude": -75.8777,
+            "elevation": 100
+          },
+          "groundSpeed": 567,
+          "type": "IN_FLIGHT"
+        }
+      },
+      {
+        "type": "AircraftEvent",
+        "topic": "agent-aircraft-events",
+        "payload": {
+          "timestamp": "2026-09-09T16:16:00Z",
+          "aircraftId": "OUP-198-ZA",
+          "description": "Descending... -> landing",
+          "position": {
+            "latitude": 23.5626,
+            "longitude": -75.8779,
+            "elevation": 56
+          },
+          "groundSpeed": 350,
+          "type": "IN_FLIGHT"
+        }
+      },
+      {
+        "type": "AircraftEvent",
+        "topic": "agent-aircraft-events",
+        "payload": {
+          "timestamp": "2026-09-09T16:17:00Z",
+          "aircraftId": "OUP-198-ZA",
+          "description": "Taxiing...",
+          "position": {
+            "latitude": 23.5626,
+            "longitude": -75.87795,
+            "elevation": 10
+          },
+          "groundSpeed": 189,
+          "type": "TAXIING"
+        }
+      },
+      {
+        "type": "AircraftEvent",
+        "topic": "agent-aircraft-events",
+        "payload": {
+          "timestamp": "2026-09-09T16:18:00Z",
+          "aircraftId": "OUP-198-ZA",
+          "description": "Taking off again...",
+          "position": {
+            "latitude": 23.5626,
+            "longitude": -75.8781,
+            "elevation": 150
+          },
+          "groundSpeed": 250,
+          "type": "IN_FLIGHT"
+        }
+      }
+    ]
   }
 ]

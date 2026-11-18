@@ -39,7 +39,7 @@ class ScheduleConfigTest {
               { "eventType": "Ev", "topic": "ev-topic", "operation": "OnEv" },
               { "eventType": "Schedule", "operation": "OnSchedule" }
             ],
-            "ruleset": { "path": "x.jar", "operations": [
+            "ruleset": { "path": "x.jar", "archiveControlTopic": "agent-a1-archive-control", "operations": [
               { "operation": "OnEv", "scheduleRequestsField": "scheduleRequests" },
               { "operation": "OnSchedule" }
             ] }
@@ -72,8 +72,11 @@ class ScheduleConfigTest {
     void validateRejectsTopic() {
         AgentDescriptor d = new AgentDescriptor();
         d.setAgentId("a1");
+        d.setEntityType("E");
         d.setEntityKeyExtractor("$.id");
-        d.setRuleset(new RulesetConfig("x.jar"));
+        RulesetConfig rs = new RulesetConfig("x.jar");
+        rs.setArchiveControlTopic("agent-a1-archive-control");
+        d.setRuleset(rs);
         d.setSubscriptions(List.of(
             new EventSubscription("Schedule", "some-topic", "OnSchedule", HorizonConfig.count(0))));
         assertThrows(IllegalArgumentException.class, () -> AgentDescriptorValidator.validate(d));

@@ -1,0 +1,198 @@
+name: Build and Test
+
+# Builds every component and, only if the build succeeds, runs the WHOLE validation suite:
+#   0. detect-secrets                   no new secret compared with .secrets.baseline
+#   1. ./build.sh                       backend + frontend + BFF unit tests, packaging, Docker images
+#   2. scripts/test-*.sh                descriptor loading and decision-service build script tests
+#   3. Maven -Pe2e                      Java end-to-end tests   (against the Compose stack)
+#   4. Maven -Pfunctional               Java functional tests   (against the Compose stack)
+#   5. make functional-tests            bash functional suite: banking + aircraft + retail
+#
+# Everything runs in ONE job on purpose: the steps share the fat JAR and the Docker images
+# produced by step 1, and any failing step fails the job (no `continue-on-error`).
+#
+# Runs on every push to master (new changes) and on every pull request, on a GitHub-hosted
+# runner. Nothing here needs access to private IBM infrastructure.
+#
+# Secrets (same prerequisites as running ./build.sh locally, see settings.xml):
+#   DI_ZEN_HOSTNAME, DI_ZEN_API_KEY_B64   Decision Designer Maven repository
+# Variables (optional):
+#   DI_SKIP_TLS_VERIFY                    "true" for a self-signed Decision Designer certificate
+#
+# `pull_request` (never `pull_request_target`): PRs from forks do not receive secrets, so the
+# build fails for them by design instead of exposing credentials.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-and-test-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    name: Build and run the full test suite
+    # `push` covers every commit pushed to this repository, on any branch, including the branches
+    # of pull requests opened from it. `pull_request` is therefore only needed for forks (their
+    # pushes never reach this repository): skipping same-repository pull requests avoids a
+    # duplicate run of the same commits.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # ── Scan for secrets (same check as detect-secrets.yml) ──
+      # The hook reports only the file, the line and the detector type.
+      - name: Detect secrets
+        run: bash .github/scripts/scan-secrets.sh
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: maven
+
+      - name: Set up Node 20
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      # ── Build (a failure here fails the job, so the test steps below never run) ──
+      - name: Build all components and run unit tests
+        env:
+          DI_ZEN_HOSTNAME: ${{ secrets.DI_ZEN_HOSTNAME }}
+          DI_ZEN_API_KEY_B64: ${{ secrets.DI_ZEN_API_KEY_B64 }}
+          DI_SKIP_TLS_VERIFY: ${{ vars.DI_SKIP_TLS_VERIFY || 'false' }}
+        run: ./build.sh
+
+      # ── Script tests (need the fat JAR built above) ──────────────────────────────
+      - name: Script tests (descriptor loading, decision-service build script)
+        env:
+          # Test 6 of test-descriptor-loading.sh runs Maven: the IBM Decision artifacts come from the Decision Designer repository.
+          DI_ZEN_HOSTNAME: ${{ secrets.DI_ZEN_HOSTNAME }}
+          DI_ZEN_API_KEY_B64: ${{ secrets.DI_ZEN_API_KEY_B64 }}
+          DI_SKIP_TLS_VERIFY: ${{ vars.DI_SKIP_TLS_VERIFY || 'false' }}
+        run: |
+          set -euo pipefail
+          bash scripts/test-descriptor-loading.sh
+          bash scripts/test-build-decision-service.sh
+
+      # ── Full test suite (only reached when the build above succeeded) ────────────
+      # Flink containers run as uid 9999 and write to the bind-mounted ./checkpoints.
+      - name: Prepare Flink checkpoints directory
+        run: |
+          sudo chown 9999:999 checkpoints
+          sudo chmod 770 checkpoints
+
+      - name: Start the Docker Compose stack
+        run: |
+          ./run.sh up
+          # Wait for the BFF (/health) AND for the Flink JobManager and TaskManager
+          # (their Compose health checks have a 60-90 s start period).
+          for _ in $(seq 1 90); do
+            jm="$(docker inspect -f '{{.State.Health.Status}}' event-rule-backend-jobmanager 2>/dev/null || true)"
+            tm="$(docker inspect -f '{{.State.Health.Status}}' event-rule-backend-taskmanager 2>/dev/null || true)"
+            if [ "$jm" = "healthy" ] && [ "$tm" = "healthy" ] \
+               && curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+              echo "BFF, Flink JobManager and TaskManager are healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Stack did not become healthy in time (jobmanager=${jm:-n/a}, taskmanager=${tm:-n/a})" >&2
+          exit 1
+
+      # Failsafe goals are invoked directly: the unit tests already ran in ./build.sh.
+      - name: Java E2E tests (-Pe2e)
+        env:
+          DI_ZEN_HOSTNAME: ${{ secrets.DI_ZEN_HOSTNAME }}
+          DI_ZEN_API_KEY_B64: ${{ secrets.DI_ZEN_API_KEY_B64 }}
+        run: |
+          mvn --batch-mode --no-transfer-progress --settings settings.xml \
+            -P maven-designer,e2e -pl event-rule-backend \
+            failsafe:integration-test failsafe:verify
+
+      - name: Java functional tests (-Pfunctional)
+        env:
+          DI_ZEN_HOSTNAME: ${{ secrets.DI_ZEN_HOSTNAME }}
+          DI_ZEN_API_KEY_B64: ${{ secrets.DI_ZEN_API_KEY_B64 }}
+        run: |
+          mvn --batch-mode --no-transfer-progress --settings settings.xml \
+            -P maven-designer,functional -pl event-rule-backend \
+            failsafe:integration-test failsafe:verify
+
+      # The E2E/functional tests use JUnit assumptions, so an unreachable stack makes them SKIP
+      # (or abort in @BeforeAll with 0 tests) and Maven still reports success. In CI that means
+      # "not tested": fail unless every class really ran, and ran fully.
+      - name: Fail if E2E or functional tests did not really run
+        run: |
+          python3 - <<'PY'
+          import glob, sys
+          import xml.etree.ElementTree as ET
+          problems, classes = [], {"e2e": 0, "functional": 0}
+          for f in sorted(glob.glob("event-rule-backend/target/failsafe-reports/TEST-*.xml")):
+              root = ET.parse(f).getroot()
+              name = root.get("name", f)
+              tests, skipped = int(root.get("tests", 0)), int(root.get("skipped", 0))
+              kind = "e2e" if name.endswith("E2ETest") else "functional" if ".functional." in name else None
+              if kind is None:
+                  continue
+              classes[kind] += 1
+              executed = tests - skipped
+              print(f"{name}: tests={tests} skipped={skipped} executed={executed}")
+              if tests == 0:
+                  problems.append(f"{name}: no test was executed (aborted before the first test)")
+              elif executed == 0:
+                  problems.append(f"{name}: all {tests} tests were skipped")
+              elif kind == "e2e" and skipped:
+                  problems.append(f"{name}: {skipped} of {tests} tests skipped")
+          for kind, expected in (("e2e", 2), ("functional", 4)):
+              if classes[kind] < expected:
+                  problems.append(f"expected at least {expected} {kind} test classes, found {classes[kind]}")
+          for p in problems:
+              print(f"::error::{p}")
+          sys.exit(1 if problems else 0)
+          PY
+
+      # The bash functional suite manages its own Compose lifecycle (clean volumes),
+      # so the stack used by the Java tests is stopped first.
+      - name: Stop the Docker Compose stack
+        run: ./run.sh down
+
+      - name: Functional tests (banking, aircraft, retail)
+        run: make functional-tests
+
+      # ── Diagnostics ──────────────────────────────────────────────────────────────
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200 || true
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down -v --remove-orphans || true
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports
+          path: |
+            event-rule-backend/target/site/jacoco/
+            event-rule-backend/target/surefire-reports/
+            event-rule-backend/target/failsafe-reports/
+            event-rule-backend/target/test-logs/
+            functional-tests/reports/
+          if-no-files-found: ignore
+          retention-days: 14

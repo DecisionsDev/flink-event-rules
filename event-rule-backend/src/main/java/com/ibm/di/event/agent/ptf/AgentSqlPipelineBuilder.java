@@ -70,9 +70,23 @@ public final class AgentSqlPipelineBuilder {
     /** Name of the agent function in the {@link Dialect#CONFLUENT} dialect. */
     public static final String CONFLUENT_FUNCTION = "event_rule_agent";
 
+    /**
+     * Placeholder of the artifact in the {@code USING JAR} clause of the {@link Dialect#CONFLUENT}
+     * functions: the id is only known once the artifact is uploaded to Confluent Cloud.
+     */
+    public static final String ARTIFACT_URI_PLACEHOLDER = "confluent-artifact://<artifact-id>/<version-id>";
+
     /** Build options. */
     public static final class Options {
         public Dialect dialect = Dialect.OPEN_SOURCE;
+        /** URI of the uploaded function artifact ({@link Dialect#CONFLUENT} only). */
+        public String artifactUri = ARTIFACT_URI_PLACEHOLDER;
+        /**
+         * {@link Dialect#CONFLUENT} only: classpath path of the {@code agents.json} bundled in the
+         * function JAR. When set, a call names the file and its agent ({@code agents_file},
+         * {@code agent_id}) instead of inlining the descriptor JSON.
+         */
+        public String bundledAgentsFile = null;
         /** Kafka bootstrap servers ({@link Dialect#OPEN_SOURCE} only). */
         public String bootstrapServers = "localhost:9092";
         /** Maximum out-of-orderness of the event-time watermark ({@link Dialect#OPEN_SOURCE} only). */
@@ -117,17 +131,22 @@ public final class AgentSqlPipelineBuilder {
             statements.add(new Statement("insert", agentId, sql));
         }
 
-        /** Kind of a CREATE statement, ignoring leading {@code --} comment lines. */
-        private static String kindOf(String sql) {
+        /** {@code sql} without its leading {@code --} comment lines. */
+        public static String stripLeadingComments(String sql) {
             String s = sql.stripLeading();
             while (s.startsWith("--")) {
                 int nl = s.indexOf('\n');
                 s = nl < 0 ? "" : s.substring(nl + 1).stripLeading();
             }
-            String upper = s.toUpperCase();
+            return s;
+        }
+
+        /** Kind of a CREATE statement, ignoring leading {@code --} comment lines. */
+        private static String kindOf(String sql) {
+            String upper = stripLeadingComments(sql).toUpperCase();
             if (upper.startsWith("CREATE FUNCTION")) return "function";
             if (upper.startsWith("CREATE TEMPORARY TABLE")) return "table";
-            if (upper.startsWith("CREATE TEMPORARY VIEW")) return "view";
+            if (upper.startsWith("CREATE TEMPORARY VIEW") || upper.startsWith("CREATE VIEW")) return "view";
             return "other";
         }
 
@@ -149,16 +168,19 @@ public final class AgentSqlPipelineBuilder {
             return root.toString();
         }
 
+        /** The inserts as one {@code EXECUTE STATEMENT SET}, or an empty string without inserts. */
+        public String toStatementSet() {
+            if (inserts.isEmpty()) return "";
+            StringBuilder sb = new StringBuilder("EXECUTE STATEMENT SET\nBEGIN\n");
+            for (String s : inserts) sb.append(s).append(";\n");
+            return sb.append("END;\n").toString();
+        }
+
         /** The whole pipeline as a SQL script. */
         public String toScript() {
             StringBuilder sb = new StringBuilder();
             for (String s : setup) sb.append(s).append(";\n\n");
-            if (!inserts.isEmpty()) {
-                sb.append("EXECUTE STATEMENT SET\nBEGIN\n");
-                for (String s : inserts) sb.append(s).append(";\n");
-                sb.append("END;\n");
-            }
-            return sb.toString();
+            return sb.append(toStatementSet()).toString();
         }
     }
 
@@ -185,17 +207,15 @@ public final class AgentSqlPipelineBuilder {
         boolean enrichment = agents.stream().anyMatch(AgentSqlPipelineBuilder::usesEnrichment);
 
         if (options.dialect == Dialect.CONFLUENT) {
+            String using = "' USING JAR " + lit(options.artifactUri);
             p.addSetup(null, "-- Register once; the artifact id comes from the Confluent Cloud artifact upload\n"
                 + "CREATE FUNCTION " + id(CONFLUENT_FUNCTION) + " AS '"
-                + StatefulAgentProcessTableFunction.class.getName()
-                + "' USING JAR 'confluent-artifact://<artifact-id>/<version-id>'");
+                + StatefulAgentProcessTableFunction.class.getName() + using);
             p.addSetup(null, "CREATE FUNCTION " + id(EventEnvelopeFunction.NAME) + " AS '"
-                + EventEnvelopeFunction.class.getName()
-                + "' USING JAR 'confluent-artifact://<artifact-id>/<version-id>'");
+                + EventEnvelopeFunction.class.getName() + using);
             if (enrichment) {
                 p.addSetup(null, "CREATE FUNCTION " + id(EventEnrichFunction.NAME) + " AS '"
-                    + EventEnrichFunction.class.getName()
-                    + "' USING JAR 'confluent-artifact://<artifact-id>/<version-id>'");
+                    + EventEnrichFunction.class.getName() + using);
             }
         }
 
@@ -260,8 +280,11 @@ public final class AgentSqlPipelineBuilder {
         p.addSetup(agentId, createView(name + "_out", "SELECT * FROM " + id(fn) + "(\n"
             + "    events => TABLE " + id(name + "_in") + " PARTITION BY " + id("entity_id") + ",\n"
             + "    on_time => DESCRIPTOR(" + id("event_ts") + "),\n"
-            + (options.dialect == Dialect.CONFLUENT
-                ? "    agent_config => " + lit(AgentDescriptors.toJson(agent)) + ",\n" : "")
+            + (options.dialect != Dialect.CONFLUENT ? ""
+                : options.bundledAgentsFile != null
+                    ? "    agents_file => " + lit(options.bundledAgentsFile) + ",\n"
+                        + "    agent_id => " + lit(agentId) + ",\n"
+                    : "    agent_config => " + lit(AgentDescriptors.toJson(agent)) + ",\n")
             + "    uid => " + lit("agent-processor-" + agentId) + ")"));
 
         // 5. sinks
@@ -455,8 +478,13 @@ public final class AgentSqlPipelineBuilder {
         return v != null && !v.isBlank() ? v : def;
     }
 
-    private static String createView(String name, String query) {
-        return "CREATE TEMPORARY VIEW " + id(name) + " AS\n" + query;
+    /**
+     * Confluent Cloud has no temporary views: each statement is submitted on its own, so the
+     * views are persistent catalog objects there.
+     */
+    private String createView(String name, String query) {
+        return "CREATE " + (options.dialect == Dialect.CONFLUENT ? "" : "TEMPORARY ")
+            + "VIEW " + id(name) + " AS\n" + query;
     }
 
     /** Lower-case identifier safe for table, view and function names. */

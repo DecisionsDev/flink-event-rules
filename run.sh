@@ -173,9 +173,9 @@ perform_clean_state() {
     print_info "3/4 Destroying all savepoints, checkpoints, and recovery state..."
     rm -rf "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints"
     mkdir -p "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints"
-    chmod 775 "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints" 2>/dev/null || true
+    chmod 777 "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints" 2>/dev/null || true
     find "$PROJECT_ROOT" -name node_modules -prune -o -type d -name ".ipynb_checkpoints" -exec rm -rf {} + 2>/dev/null || true
-    print_info "  ✓ Destroyed checkpoints and savepoints; reset directories to clean initial state (mode 775)"
+    print_info "  ✓ Destroyed checkpoints and savepoints; reset directories to clean initial state (mode 777)"
 
     # 4. Reset application and BFF runtime job state
     print_info "4/4 Resetting persisted application and agent job state..."
@@ -269,9 +269,9 @@ perform_cleanup() {
     print_info "3/7 Destroying all savepoints, checkpoints, and recovery state..."
     rm -rf "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints"
     mkdir -p "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints"
-    chmod 775 "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints" 2>/dev/null || true
+    chmod 777 "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints" 2>/dev/null || true
     find "$PROJECT_ROOT" -name node_modules -prune -o -type d -name ".ipynb_checkpoints" -exec rm -rf {} + 2>/dev/null || true
-    print_info "  ✓ Destroyed checkpoints and savepoints; reset directories to clean initial state (mode 775)"
+    print_info "  ✓ Destroyed checkpoints and savepoints; reset directories to clean initial state (mode 777)"
 
     # 4. Reset application and BFF runtime job state
     print_info "4/7 Resetting persisted application and agent job state..."
@@ -396,7 +396,7 @@ case $COMMAND in
         print_info "Starting event-rule application (Zookeeper, Kafka, Flink, BFF, Frontend)..."
         print_info "Ensuring runtime directories exist..."
         mkdir -p "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints"
-        chmod 775 "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints" 2>/dev/null || true
+        chmod 777 "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/savepoints" 2>/dev/null || true
 
         print_info "After services are healthy, submit a Flink job with:"
         print_info "  ./samples/banking-fraud-agent/scripts/deploy.sh   # Banking fraud detection"

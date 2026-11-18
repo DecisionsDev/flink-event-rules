@@ -1380,6 +1380,54 @@
   border-color: var(--accent-border);
 }
 
+/* Refresh Rules sub-section of the Agent Management panel */
+.agent-mgmt-refresh {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.agent-mgmt-refresh-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.agent-mgmt-refresh-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.agent-mgmt-refresh-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.agent-mgmt-refresh-body[hidden] {
+  display: none;
+}
+
+.agent-mgmt-refresh-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.agent-mgmt-refresh-fields:disabled {
+  opacity: 0.5;
+}
+
 .agent-mgmt-error {
   font-size: 0.8rem;
   color: var(--red);

@@ -188,6 +188,107 @@ describe('DI Runtime (IBM Decision Intelligence) Router', () => {
     });
   });
 
+  describe('POST /api/ads-runtimes/:id/refresh-rules', () => {
+    const http = require('http');
+    const crypto = require('crypto');
+    const ARCHIVE = Buffer.from('fake-jar-content');
+    let server;
+    let published;
+
+    const refresh = async (query, { runtimeId = 'rt', publish } = {}) => {
+      const url = `http://127.0.0.1:${server.address().port}`;
+      const r = createAdsRouter({
+        diRuntimes: [{ id: 'rt', url }],
+        samplesDir: tmpDir,
+        isValidAgentId,
+        publishControlMessage: publish === undefined
+          ? async (topic, value) => { published.push({ topic, value }); }
+          : publish,
+        flinkSamplesMount: '/opt/flink/samples',
+      });
+      const match = r.stack.find(s => s.route && s.route.path === '/:id/refresh-rules' && s.route.methods.post);
+      const out = { status: 200 };
+      const res = { status: (s) => { out.status = s; return res; }, json: (d) => { out.body = d; return res; } };
+      await match.route.stack[0].handle({ params: { id: runtimeId }, query }, res);
+      return out;
+    };
+
+    const writeDescriptor = async (agents) => {
+      await fs.mkdir(path.join(tmpDir, 'uc'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, 'uc', 'agents.json'), JSON.stringify({ agents }));
+    };
+
+    beforeEach(async () => {
+      published = [];
+      server = http.createServer((req, res) => { res.end(ARCHIVE); });
+      await new Promise(r => server.listen(0, '127.0.0.1', r));
+    });
+
+    afterEach(async () => {
+      await new Promise(r => server.close(r));
+    });
+
+    test('saves the archive in the use-case folder and publishes a LOAD command', async () => {
+      await writeDescriptor([{ agentId: 'a', ruleset: { archiveControlTopic: 'uc-control' } }]);
+      const out = await refresh({ decisionId: 'proj/svc/1.0', useCaseId: 'uc' });
+
+      expect(out.status).toBe(200);
+      expect(out.body.refreshed).toBe(true);
+      expect(out.body.path).toBe('samples/uc/svc_1.0.jar');
+      expect(await fs.readFile(path.join(tmpDir, 'uc', 'svc_1.0.jar'))).toEqual(ARCHIVE);
+
+      expect(published).toHaveLength(1);
+      expect(published[0].topic).toBe('uc-control');
+      const cmd = JSON.parse(published[0].value);
+      expect(cmd).toMatchObject({
+        version: 'svc_1.0',
+        archiveUrl: 'file:///opt/flink/samples/uc/svc_1.0.jar',
+        sha256: crypto.createHash('sha256').update(ARCHIVE).digest('hex'),
+        commandType: 'LOAD',
+      });
+      expect(cmd.requestId).toMatch(/^refresh-rules-/);
+    });
+
+    test('publishes once per distinct archive-control topic', async () => {
+      await writeDescriptor([
+        { agentId: 'a', ruleset: { archiveControlTopic: 't1' } },
+        { agentId: 'b', ruleset: { archiveControlTopic: 't1' } },
+        { agentId: 'c', ruleset: { archiveControlTopic: 't2' } },
+      ]);
+      await refresh({ decisionId: 'proj/svc/1.0', useCaseId: 'uc' });
+      expect(published.map(p => p.topic)).toEqual(['t1', 't2']);
+    });
+
+    test('falls back to agent-<useCase>-archive-control when the descriptor declares none', async () => {
+      await writeDescriptor([{ agentId: 'a', ruleset: {} }]);
+      await refresh({ decisionId: 'proj/svc/1.0', useCaseId: 'uc' });
+      expect(published.map(p => p.topic)).toEqual(['agent-uc-archive-control']);
+    });
+
+    test('rejects an invalid use case id', async () => {
+      const out = await refresh({ decisionId: 'proj/svc/1.0', useCaseId: '../etc' });
+      expect(out.status).toBe(400);
+      expect(published).toHaveLength(0);
+    });
+
+    test('returns 404 when agents.json does not exist', async () => {
+      const out = await refresh({ decisionId: 'proj/svc/1.0', useCaseId: 'missing' });
+      expect(out.status).toBe(404);
+      expect(published).toHaveLength(0);
+    });
+
+    test('returns 404 for an unknown runtime', async () => {
+      const out = await refresh({ decisionId: 'proj/svc/1.0', useCaseId: 'uc' }, { runtimeId: 'nope' });
+      expect(out.status).toBe(404);
+    });
+
+    test('returns 503 when no Kafka publisher is available', async () => {
+      await writeDescriptor([{ agentId: 'a', ruleset: { archiveControlTopic: 't' } }]);
+      const out = await refresh({ decisionId: 'proj/svc/1.0', useCaseId: 'uc' }, { publish: null });
+      expect(out.status).toBe(503);
+    });
+  });
+
   describe('authentication towards the DI runtime', () => {
     const http = require('http');
     let server;

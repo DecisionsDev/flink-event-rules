@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { formatTooltipValue, extractTimestampMs, formatDuration } from './ScenarioTimeline';
+import { isSystemTopicType } from './systemTopics';
 
 /**
  * LiveExecutionTimeline
@@ -11,7 +12,8 @@ import { formatTooltipValue, extractTimestampMs, formatDuration } from './Scenar
  * • Output-only events → upward triangle (▲)  colour keyed by event type
  * • Input+Output events (chained topics) → filled square (■) colour keyed by event type
  *
- * Changelog / agent-error topics are always excluded.
+ * System topics (entity changelogs and agent errors) are excluded unless
+ * `showSystemTopics` is true.
  * Events are ordered left-to-right by timestamp.
  * Duration between consecutive events is shown below the track.
  * The legend labels use the event type (payload.type or schemaType), not the topic name.
@@ -21,6 +23,7 @@ import { formatTooltipValue, extractTimestampMs, formatDuration } from './Scenar
  *   eventsByType  {Object}  — map of topicName → event array (from useEventStream)
  *   descriptor    {Object}  — use-case descriptor with .topics and .outboundTopics
  *   maxEvents     {number}  — max recent events to display (default 60)
+ *   showSystemTopics {boolean} — include entity-changelog / agent-error events (default false)
  */
 
 // ── Colour palette (same as ScenarioTimeline) ─────────────────────────────
@@ -34,9 +37,6 @@ const TYPE_PALETTE = [
   '#ea580c', // orange
   '#65a30d', // lime
 ];
-
-// Topic types that are always excluded from the live timeline
-const EXCLUDED_TYPES = new Set(['entity-changelog', 'agent-error']);
 
 function typeColor(type, colorMap) {
   if (!colorMap.has(type)) {
@@ -106,7 +106,7 @@ function trianglePoints(cx, cy, size) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────
-export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEvents = 60 }) {
+export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEvents = 60, showSystemTopics = false }) {
   const containerRef = useRef(null);
   const [hovered, setHovered] = useState(null); // { index, anchorRect }
   const [width, setWidth]     = useState(600);
@@ -122,18 +122,20 @@ export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEve
     return () => ro.disconnect();
   }, []);
 
-  // ── Build excluded topic name set (changelog + agent-error) ──────────────
-  const excludedTopicNames = new Set(
+  // ── System topics (changelog + agent-error): topicName → legend label ─────
+  const systemTopicLabels = new Map(
     (descriptor?.outboundTopics || [])
-      .filter(ot => EXCLUDED_TYPES.has(ot.type))
-      .map(ot => ot.name)
+      .filter(ot => isSystemTopicType(ot.type))
+      .map(ot => [ot.name, ot.label || ot.type])
   );
+  // Hidden unless the "Show system topics" toggle is on
+  const excludedTopicNames = showSystemTopics ? new Set() : new Set(systemTopicLabels.keys());
 
   // ── Build input/output topic sets from descriptor ─────────────────────
   const inputNames  = new Set((descriptor?.topics || []).map(t => t.name));
   const outputNames = new Set(
     (descriptor?.outboundTopics || [])
-      .filter(ot => !EXCLUDED_TYPES.has(ot.type))
+      .filter(ot => !excludedTopicNames.has(ot.name))
       .map(ot => ot.name)
   );
 
@@ -173,6 +175,7 @@ export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEve
         ...normalised,
         topic: topicName,
         role,
+        _systemLabel: systemTopicLabels.get(topicName),
         _topicIdx: i,
         _seq,
       });
@@ -199,8 +202,12 @@ export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEve
   const colorMap  = new Map();
   // legendMap: colorKey → { role, schemaType } — mirrors ScenarioTimeline's legendMap
   const legendMap = new Map();
+  // System-topic events are keyed by their topic label so colour/legend don't
+  // depend on the (entity-specific) payload shape.
+  const colorKeyOf = (e) =>
+    e._systemLabel || e.payload?.type || e.schemaType || e.topic || 'Event';
   displayed.forEach(e => {
-    const colorKey = e.payload?.type || e.schemaType || e.topic || 'Event';
+    const colorKey = colorKeyOf(e);
     typeColor(colorKey, colorMap);
     if (!legendMap.has(colorKey)) legendMap.set(colorKey, { role: e.role, schemaType: e.schemaType || null });
   });
@@ -318,7 +325,7 @@ export default function LiveExecutionTimeline({ eventsByType, descriptor, maxEve
               {/* Events */}
               {displayed.map((evt, i) => {
                 const cx       = xForIdx(i);
-                const colorKey = evt.payload?.type || evt.schemaType || evt.topic || 'Event';
+                const colorKey = colorKeyOf(evt);
                 const color    = typeColor(colorKey, colorMap);
                 const isHov    = hovered?.index === i;
                 const s        = isHov ? R + 3 : R;

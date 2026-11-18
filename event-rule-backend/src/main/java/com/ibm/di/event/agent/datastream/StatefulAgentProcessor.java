@@ -31,6 +31,7 @@ import com.ibm.di.event.agent.ScheduleRequests;
 import com.ibm.di.event.agent.StateConfig;
 import com.ibm.di.event.agent.context.ContextBuilderRegistry;
 import com.ibm.di.event.rule.RuleEngineRunner;
+import com.ibm.di.event.rule.RulesetResourceResolver;
 import com.ibm.di.event.rule.broadcast.ArchiveControlCmd;
 import com.ibm.di.event.rule.broadcast.ArchiveDownloader;
 import com.ibm.di.event.rule.broadcast.ArchiveEntry;
@@ -58,7 +59,6 @@ import java.io.Serial;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -344,9 +344,7 @@ public class StatefulAgentProcessor
         // call that needs a runner will block on awaitWarmUp() — by then the warm-up is
         // almost always complete, so the wait is negligible in steady state.
         String rulesetPath = descriptor.getRuleset().getPath();
-        java.net.URI rulesetUri = rulesetPath.contains("://")
-            ? java.net.URI.create(rulesetPath)
-            : java.nio.file.Paths.get(rulesetPath).toUri();
+        java.net.URI rulesetUri = RulesetResourceResolver.resolve(rulesetPath);
 
         List<String> opsToWarm = descriptor.getSubscriptions() == null
             ? java.util.Collections.emptyList()
@@ -858,9 +856,7 @@ public class StatefulAgentProcessor
         } else {
             // Bootstrap entry — use local path
             String rulesetPath = descriptor.getRuleset().getPath();
-            jarUri = rulesetPath.contains("://")
-                ? java.net.URI.create(rulesetPath)
-                : java.nio.file.Paths.get(rulesetPath).toUri();
+            jarUri = RulesetResourceResolver.resolve(rulesetPath);
         }
         RuleEngineRunner runner = new RuleEngineRunner(operation, jarUri);
         runner.initializeEagerly();

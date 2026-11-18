@@ -1591,6 +1591,7 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
   const saveResetTimer = useRef(null);
   useEffect(() => () => clearTimeout(saveResetTimer.current), []);
   const [showClearModal, setShowClearModal] = useState(false);
+  const [showCloseConfirmModal, setShowCloseConfirmModal] = useState(false);
 
   // Top-level agents.json metadata (edited in the detail panel when no node is selected)
   // A brand-new application (no folder, no descriptor) starts with a default name and folder.
@@ -1612,10 +1613,12 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
     redo,
     pushSnapshot,
     updateDebouncedSnapshot,
+    commitDebounced,
     startDrag,
     stopDrag,
     setBaseline,
     presentRef,
+    isDirty,
   } = useDiagramHistory({
     nodes: initial?.nodes || [],
     edges: initial?.edges || [],
@@ -1749,10 +1752,11 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
   // Global keyboard shortcuts: Ctrl/Cmd+Z (Undo), Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y (Redo), Delete/Backspace
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (showClearModal) {
+      if (showClearModal || showCloseConfirmModal) {
         if (e.key === 'Escape') {
           e.preventDefault();
           setShowClearModal(false);
+          setShowCloseConfirmModal(false);
         }
         return;
       }
@@ -1790,7 +1794,7 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleUndo, handleRedo, deleteSelectedElement, selectedNode, selectedEdgeId, showClearModal]);
+  }, [handleUndo, handleRedo, deleteSelectedElement, selectedNode, selectedEdgeId, showClearModal, showCloseConfirmModal]);
 
   // Fit the diagram to the view once, when the editor opens and React Flow has measured every
   // node. The built-in `fitView` prop runs before the nodes are measured and leaves the viewport
@@ -2184,6 +2188,20 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
     setShowClearModal(false);
   };
 
+  const handleClose = useCallback(() => {
+    commitDebounced();
+    if (isDirty()) {
+      setShowCloseConfirmModal(true);
+    } else {
+      onClose();
+    }
+  }, [commitDebounced, isDirty, onClose]);
+
+  const handleConfirmClose = useCallback(() => {
+    setShowCloseConfirmModal(false);
+    onClose();
+  }, [onClose]);
+
   const handleExport = () => {
     const blob = new Blob([JSON.stringify(buildDiagramDescriptor(agentsMeta, nodes, edges), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -2268,7 +2286,6 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
       });
       if (savedNodes !== nodes) {
         setNodes(savedNodes);
-        setBaseline({ nodes: savedNodes, edges, agentsMeta });
       }
 
       const descriptor = buildDiagramDescriptor(agentsMeta, savedNodes, edges);
@@ -2288,6 +2305,7 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
         throw new Error(body.error || body.detail || `HTTP ${res.status}`);
       }
 
+      setBaseline({ nodes: savedNodes, edges, agentsMeta });
       setSaveState('saved');
       clearTimeout(saveResetTimer.current);
       saveResetTimer.current = setTimeout(() => {
@@ -2362,7 +2380,7 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
               )}
             </button>
           )}
-          <button className="ade-header-btn ade-header-btn--primary" onClick={onClose}>
+          <button className="ade-header-btn ade-header-btn--primary" onClick={handleClose}>
             ✕ Close Editor
           </button>
         </div>
@@ -2660,6 +2678,66 @@ function InnerEditor({ onClose, initialFolderName = '', initialDescriptor = null
                 onClick={handleConfirmClear}
               >
                 <span>Clear diagram</span>
+                <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor">
+                  <path d="M12 12h2v12h-2zm6 0h2v12h-2zM4 6v2h2l2 18a2 2 0 002 2h12a2 2 0 002-2l2-18h2V6zm5.88 20L8.06 8h15.88l-1.82 18H9.88zM12 4h8v2h-8z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Carbon Confirmation Modal for Unsaved Changes on Close ───────────── */}
+      {showCloseConfirmModal && (
+        <div
+          className="ade-modal-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowCloseConfirmModal(false);
+          }}
+        >
+          <div
+            className="ade-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ade-close-confirm-title"
+            aria-describedby="ade-close-confirm-body"
+          >
+            <div className="ade-confirm-header">
+              <span className="ade-confirm-label">Diagram Editor</span>
+              <h3 id="ade-close-confirm-title" className="ade-confirm-title">Unsaved changes</h3>
+              <button
+                type="button"
+                className="ade-confirm-close"
+                onClick={() => setShowCloseConfirmModal(false)}
+                aria-label="Close"
+                title="Close"
+              >
+                <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor">
+                  <path d="M24 9.4L22.6 8 16 14.6 9.4 8 8 9.4l6.6 6.6L8 22.6 9.4 24l6.6-6.6 6.6 6.6 1.4-1.4-6.6-6.6L24 9.4z" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="ade-confirm-body" id="ade-close-confirm-body">
+              <p className="ade-confirm-text">
+                You have unsaved changes that will be lost if you close the editor. Are you sure you want to discard your changes and close?
+              </p>
+            </div>
+
+            <div className="ade-confirm-footer">
+              <button
+                type="button"
+                className="ade-confirm-btn ade-confirm-btn--secondary"
+                onClick={() => setShowCloseConfirmModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ade-confirm-btn ade-confirm-btn--danger"
+                onClick={handleConfirmClose}
+              >
+                <span>Discard and close</span>
                 <svg width="16" height="16" viewBox="0 0 32 32" fill="currentColor">
                   <path d="M12 12h2v12h-2zm6 0h2v12h-2zM4 6v2h2l2 18a2 2 0 002 2h12a2 2 0 002-2l2-18h2V6zm5.88 20L8.06 8h15.88l-1.82 18H9.88zM12 4h8v2h-8z" />
                 </svg>

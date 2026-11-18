@@ -46,7 +46,7 @@
         }
       ],
       "ruleset": {
-        "path": "samples/banking-fraud-agent/Fraud_Detection_Service_1.5.2.jar",
+        "path": "samples/banking-fraud-agent/Fraud_Detection_Service_1.6.0.jar",
         "project": "samples/banking-fraud-agent/di-project/FraudDetectionService.zip",
         "archiveControlTopic": "agent-banking-archive-control",
         "operations": [

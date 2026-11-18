@@ -6,6 +6,7 @@ import {
   buildDiagramDescriptor,
   layoutNodes,
   HISTORY_IN_HANDLE,
+  validateDescriptor,
 } from './agentDiagramDescriptor';
 
 const SAMPLES_DIR = path.resolve(__dirname, '../../samples');
@@ -138,5 +139,19 @@ describe('descriptor <-> diagram round trip', () => {
     expect(JSON.stringify(nodes)).toBe(before);
     const keys = laid.map(n => `${n.position.x},${n.position.y}`);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe('validateDescriptor', () => {
+  const agent = { agentId: 'a', name: 'A', ruleset: { path: 'x.jar', archiveControlTopic: 'ctl' } };
+
+  test('reports an agent that is not linked to an Entity', () => {
+    const problems = validateDescriptor({ agents: [agent] });
+    expect(problems).toContain("Agent 'a': the agent must be linked to an Entity (with an Entity Type). Drop an Entity on the canvas and link it to the Agent.");
+  });
+
+  test('accepts an agent linked to an Entity', () => {
+    const problems = validateDescriptor({ agents: [{ ...agent, entityType: 'customer' }] });
+    expect(problems.filter(p => p.includes('Entity'))).toEqual([]);
   });
 });

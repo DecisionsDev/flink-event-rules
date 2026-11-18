@@ -15,490 +15,27 @@
  *   limitations under the License.
  *
  */
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+
+/*
+ * Agent Diagram View — read-only, interactive architecture map of an agents.json.
+ *
+ *   agentDiagramModel.js   pure graph model + layout (topics ⇄ agents, chaining, lineage, search)
+ *   AgentDiagramCanvas.jsx React Flow nodes / edges / minimap
+ *   useAgentLiveStats.js   live per-agent event counters from the BFF
+ *   this file              modal shell (toolbar, search, legend) + inspector side panel
+ */
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactFlowProvider, useReactFlow, useStore, useNodesInitialized } from '@xyflow/react';
 import './AgentDiagramModal.css';
 import { API_URL } from './config.js';
+import AgentDiagramCanvas from './AgentDiagramCanvas';
+import Icon from './AgentDiagramIcons';
+import { useAgentLiveStats } from './useAgentLiveStats';
+import {
+  buildGraph, lineage, edgeFocus, operationFocus, matchNodes, formatHorizon, TOPIC_KIND_META, PALETTE,
+} from './agentDiagramModel';
 
-// ─── Layout constants ──────────────────────────────────────────────────────────
-const AGENT_W      = 200;
-const AGENT_H      = 62;  // fixed height — name + id only
-
-const CYL_W        = 220;
-const CYL_H        = 50;
-const CYL_RY       = 10;  // half-height of the ellipse caps on horizontal cylinders
-
-const VERT_CYL_W   = 80;
-const VERT_CYL_H   = 70;
-const VERT_CYL_RX  = 18; // half-width of the ellipse caps on vertical cylinders
-
-const RE_BASE_H    = 54;  // rule-engine box base height (header + JAR line)
-const RE_OP_H      = 13;  // extra height per operation
-
-const COL_GAP      = 60;  // horizontal gap between columns
-const ROW_GAP      = 20;  // vertical gap between items in a column
-const AGENT_RE_GAP = 30;  // gap between entity↔agent and agent↔rule-engine boxes
-
-// ─── Colour palette (mirrors App.css tokens) ──────────────────────────────────
-const C = {
-  entity:        { fill: '#dbeafe', stroke: '#1d4ed8' }, // deep blue
-  agent:         { fill: '#eff6ff', stroke: '#2563eb' }, // accent blue
-  ruleEngine:    { fill: '#e0f2fe', stroke: '#0369a1' }, // sky blue
-  inbound:       { fill: '#eef2ff', stroke: '#4338ca' }, // indigo
-  outbound:      { fill: '#f0f9ff', stroke: '#0284c7' }, // light sky
-  text:          '#1f2328',
-  textMuted:     '#57606a',
-  textFaint:     '#9ca3af',
-  connector:     '#93c5fd',
-  connectorDown: '#60a5fa',
-};
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Break a long string into lines of at most `maxChars` characters. */
-function wrapText(text, maxChars) {
-  if (!text) return [];
-  const words = String(text).split(' ');
-  const lines = [];
-  let current = '';
-  for (const w of words) {
-    if (current.length + w.length + 1 > maxChars && current) {
-      lines.push(current);
-      current = w;
-    } else {
-      current = current ? `${current} ${w}` : w;
-    }
-  }
-  if (current) lines.push(current);
-  return lines;
-}
-
-/** Shorten a path to just its filename. */
-function basename(p) {
-  if (!p) return '';
-  return String(p).replace(/.*[/\\]/, '');
-}
-
-// ─── SVG primitives ────────────────────────────────────────────────────────────
-
-/** Horizontal cylinder (for inbound subscriptions and outbound topics). */
-function HorizCylinder({ x, y, w, h, ry, fill, stroke, children }) {
-  const rx = ry; // same rx for caps
-  return (
-    <g>
-      {/* Body rectangle */}
-      <rect x={x + rx} y={y} width={w - 2 * rx} height={h} fill={fill} stroke={stroke} strokeWidth={1.2} />
-      {/* Left cap ellipse */}
-      <ellipse cx={x + rx} cy={y + h / 2} rx={rx} ry={h / 2} fill={fill} stroke={stroke} strokeWidth={1.2} />
-      {/* Right cap ellipse — drawn last so it overlaps the rect edge cleanly */}
-      <ellipse cx={x + w - rx} cy={y + h / 2} rx={rx} ry={h / 2} fill={fill} stroke={stroke} strokeWidth={1.2} />
-      {children}
-    </g>
-  );
-}
-
-/** Vertical cylinder (for the Entity). */
-function VertCylinder({ x, y, w, h, rx, fill, stroke, children }) {
-  const ry = rx * 0.4; // flatten the ellipse to look like a cylinder top
-  return (
-    <g>
-      {/* Body rectangle */}
-      <rect x={x} y={y + ry} width={w} height={h - 2 * ry} fill={fill} stroke={stroke} strokeWidth={1.2} />
-      {/* Bottom cap */}
-      <ellipse cx={x + w / 2} cy={y + h - ry} rx={w / 2} ry={ry} fill={fill} stroke={stroke} strokeWidth={1.2} />
-      {/* Top cap — drawn after bottom so it appears on top */}
-      <ellipse cx={x + w / 2} cy={y + ry} rx={w / 2} ry={ry} fill={fill} stroke={stroke} strokeWidth={1.2} />
-      {children}
-    </g>
-  );
-}
-
-/** Single connector line. dashed=true for horizontal subscriptions/outbounds. */
-function Connector({ x1, y1, x2, y2, color = C.connector, dashed = true }) {
-  return (
-    <line
-      x1={x1} y1={y1} x2={x2} y2={y2}
-      stroke={color}
-      strokeWidth={1.4}
-      strokeDasharray={dashed ? '4 3' : undefined}
-      markerEnd={dashed ? 'url(#arrow)' : 'url(#arrow-blue)'}
-    />
-  );
-}
-
-// ─── Clickable wrapper for SVG groups ─────────────────────────────────────────
-// Renders a transparent interactive rect on top of the real shape so we get
-// consistent hover/click feedback without touching the shape itself.
-function ClickableNode({ x, y, w, h, onClick, label }) {
-  return (
-    <rect
-      x={x} y={y} width={w} height={h}
-      fill="transparent"
-      stroke="transparent"
-      style={{ cursor: 'pointer' }}
-      rx={6} ry={6}
-      onClick={onClick}
-      aria-label={label}
-      role="button"
-      tabIndex={0}
-      onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onClick(e)}
-    />
-  );
-}
-
-// ─── Agent box (name + id only) ────────────────────────────────────────────────
-function AgentBox({ x, y, w, h, agent, onClick }) {
-  const { agentId, name } = agent;
-  const pad = 10;
-  return (
-    <g>
-      <rect x={x} y={y} width={w} height={h} rx={6} ry={6}
-        fill={C.agent.fill} stroke={C.agent.stroke} strokeWidth={1.5} />
-
-      {/* Header bar */}
-      <rect x={x} y={y} width={w} height={22} rx={6} ry={6}
-        fill={C.agent.stroke} />
-      <rect x={x} y={y + 16} width={w} height={6} fill={C.agent.stroke} />
-
-      <text x={x + w / 2} y={y + 14} textAnchor="middle"
-        fill="#fff" fontSize={9} fontWeight="700" letterSpacing="0.04em">
-        AGENT
-      </text>
-
-      {/* Name */}
-      <text x={x + pad} y={y + 34} fill={C.text} fontSize={9} fontWeight="700">
-        {name || agentId}
-      </text>
-
-      {/* ID */}
-      <text x={x + pad} y={y + 48} fill={C.textFaint} fontSize={8}
-        fontFamily="'SF Mono','Fira Code',Consolas,monospace">
-        {agentId}
-      </text>
-
-      {/* Invisible click target over the whole box */}
-      {onClick && (
-        <ClickableNode
-          x={x} y={y} w={w} h={h}
-          label={`Inspect agent: ${name || agentId}`}
-          onClick={onClick}
-        />
-      )}
-    </g>
-  );
-}
-
-// ─── Rule Engine box ───────────────────────────────────────────────────────────
-function RuleEngineBox({ x, y, w, h, ruleset }) {
-  const jar  = basename(ruleset?.path);
-  const ops  = ruleset?.operations?.map(o => o.operation) ?? [];
-  const pad  = 10;
-  const lineH = RE_OP_H;
-
-  return (
-    <g>
-      <rect x={x} y={y} width={w} height={h} rx={6} ry={6}
-        fill={C.ruleEngine.fill} stroke={C.ruleEngine.stroke} strokeWidth={1.5} />
-
-      {/* Header bar */}
-      <rect x={x} y={y} width={w} height={20} rx={6} ry={6}
-        fill={C.ruleEngine.stroke} />
-      <rect x={x} y={y + 14} width={w} height={6} fill={C.ruleEngine.stroke} />
-
-      <text x={x + w / 2} y={y + 13} textAnchor="middle"
-        fill="#fff" fontSize={8} fontWeight="700" letterSpacing="0.05em">
-        DI RULE ENGINE
-      </text>
-
-      {/* JAR */}
-      {jar && (
-        <text x={x + pad} y={y + 31} fill={C.textMuted} fontSize={7.5}>
-          {jar}
-        </text>
-      )}
-
-      {/* Operations label */}
-      {ops.length > 0 && (
-        <text x={x + pad} y={y + (jar ? 43 : 31)} fill={C.textMuted} fontSize={7}
-          fontWeight="700" letterSpacing="0.05em">
-          OPERATIONS
-        </text>
-      )}
-
-      {/* Operations list */}
-      {ops.map((op, i) => {
-        const baseY = jar ? 43 : 31;
-        return (
-          <text key={op} x={x + pad} y={y + baseY + 10 + i * lineH}
-            fill={C.text} fontSize={8}>
-            {'• '}{op}
-          </text>
-        );
-      })}
-    </g>
-  );
-}
-
-// ─── Main diagram layout function ─────────────────────────────────────────────
-function buildLayout(agents) {
-  // We render one row per agent, stacking vertically.
-  const nodes   = [];  // { type, x, y, w, h, agent?, data? }
-  const edges   = [];  // { x1, y1, x2, y2 }
-  const MARGIN  = 20;
-
-  let cursorY = MARGIN;
-
-  // Column x positions (left edges)
-  const xInbound  = MARGIN;
-  const xAgent    = xInbound + CYL_W + COL_GAP;
-  const xOutbound = xAgent + AGENT_W + COL_GAP;
-
-  // Entity is horizontally centred on the agent box
-  const entityX = xAgent + (AGENT_W - VERT_CYL_W) / 2;
-
-  for (const agent of agents) {
-    const subs    = agent.subscriptions ?? [];
-    const outputs = agent.outputs ?? [];
-    const ops     = agent.ruleset?.operations ?? [];
-    const hasJar  = !!agent.ruleset?.path;
-
-    // Rule engine box height: header + JAR line (optional) + ops
-    const reH = RE_BASE_H + (hasJar ? 0 : -12) + ops.length * RE_OP_H;
-
-    // Centre column: entity (above) + agent + rule engine (below)
-    const centerColH = VERT_CYL_H + AGENT_RE_GAP + AGENT_H + AGENT_RE_GAP + reH;
-
-    // Left column (inbound subscriptions)
-    const leftH = subs.length > 0 ? subs.length * (CYL_H + ROW_GAP) - ROW_GAP : 0;
-    // Right column (outbound outputs)
-    const rightH = outputs.length > 0 ? outputs.length * (CYL_H + ROW_GAP) - ROW_GAP : 0;
-    const rowH   = Math.max(centerColH, leftH, rightH);
-
-    // Centre column anchored at the top of the row
-    const centerStartY = cursorY + Math.max(0, (rowH - centerColH) / 2);
-    const entityY = centerStartY;
-    const agentY  = entityY + VERT_CYL_H + AGENT_RE_GAP;
-    const reY     = agentY + AGENT_H + AGENT_RE_GAP;
-
-    const agentCX = xAgent + AGENT_W / 2;
-    const agentCY = agentY + AGENT_H / 2;
-
-    // ── Entity (above agent, centre column) ──
-    nodes.push({
-      type: 'entity',
-      x: entityX, y: entityY, w: VERT_CYL_W, h: VERT_CYL_H,
-      data: { entityType: agent.entityType },
-      agent,   // carried so the click handler can derive useCaseId / agentId
-    });
-    // Solid downward connector: entity bottom → agent top
-    edges.push({ x1: agentCX, y1: entityY + VERT_CYL_H, x2: agentCX, y2: agentY, dashed: false });
-
-    // ── Agent box ──
-    nodes.push({ type: 'agent',      x: xAgent, y: agentY, w: AGENT_W, h: AGENT_H, agent });
-
-    // ── Rule engine box (below agent) ──
-    nodes.push({ type: 'ruleEngine', x: xAgent, y: reY,    w: AGENT_W, h: reH, data: { ruleset: agent.ruleset } });
-    // Solid downward connector: agent bottom → rule engine top
-    edges.push({ x1: agentCX, y1: agentY + AGENT_H, x2: agentCX, y2: reY, dashed: false });
-
-    // ── Inbound subscriptions (left column, centred vertically) ──
-    const subTotalH = subs.length > 0 ? subs.length * (CYL_H + ROW_GAP) - ROW_GAP : 0;
-    const subStartY = cursorY + (rowH - subTotalH) / 2;
-    subs.forEach((sub, i) => {
-      const sy = subStartY + i * (CYL_H + ROW_GAP);
-      nodes.push({ type: 'inbound', x: xInbound, y: sy, w: CYL_W, h: CYL_H, data: sub });
-      edges.push({ x1: xInbound + CYL_W, y1: sy + CYL_H / 2, x2: xAgent, y2: agentCY, dashed: true });
-    });
-
-    // ── Outbound outputs (right column, centred vertically) ──
-    const outTotalH = outputs.length > 0 ? outputs.length * (CYL_H + ROW_GAP) - ROW_GAP : 0;
-    const outStartY = cursorY + (rowH - outTotalH) / 2;
-    outputs.forEach((out, i) => {
-      const oy = outStartY + i * (CYL_H + ROW_GAP);
-      nodes.push({ type: 'outbound', x: xOutbound, y: oy, w: CYL_W, h: CYL_H, data: out });
-      edges.push({
-        x1: xAgent + AGENT_W, y1: agentCY,
-        x2: xOutbound, y2: oy + CYL_H / 2,
-        dashed: true,
-      });
-    });
-
-    cursorY += rowH + ROW_GAP * 2;
-  }
-
-  const totalW = xOutbound + CYL_W + MARGIN;
-  const totalH = cursorY + MARGIN;
-  return { nodes, edges, totalW, totalH };
-}
-
-// ─── Diagram SVG ──────────────────────────────────────────────────────────────
-function AgentDiagramSVG({ agents, svgRef, onNodeClick }) {
-  const { nodes, edges, totalW, totalH } = buildLayout(agents);
-
-  return (
-    <svg
-      ref={svgRef}
-      viewBox={`0 0 ${totalW} ${totalH}`}
-      width={totalW}
-      height={totalH}
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ display: 'block', maxWidth: '100%' }}
-    >
-      <defs>
-        <marker id="arrow" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
-          <path d="M0,0 L0,7 L7,3.5 z" fill={C.connector} />
-        </marker>
-        <marker id="arrow-blue" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
-          <path d="M0,0 L0,7 L7,3.5 z" fill={C.connectorDown} />
-        </marker>
-      </defs>
-
-      {/* Edges drawn first so they appear behind nodes */}
-      {edges.map((e, i) => (
-        <Connector key={i} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
-          dashed={e.dashed !== false}
-          color={e.dashed === false ? C.connectorDown : C.connector}
-        />
-      ))}
-
-      {/* Nodes */}
-      {nodes.map((n, i) => {
-        if (n.type === 'agent') {
-          return (
-            <AgentBox key={i} x={n.x} y={n.y} w={n.w} h={n.h} agent={n.agent}
-              onClick={() => onNodeClick && onNodeClick({ kind: 'agent', agent: n.agent })}
-            />
-          );
-        }
-
-        if (n.type === 'ruleEngine') {
-          return (
-            <RuleEngineBox key={i} x={n.x} y={n.y} w={n.w} h={n.h} ruleset={n.data.ruleset} />
-          );
-        }
-
-        if (n.type === 'entity') {
-          const { entityType } = n.data;
-          const agentForNode   = n.agent;
-          return (
-            <g key={i}>
-              <VertCylinder x={n.x} y={n.y} w={n.w} h={n.h} rx={VERT_CYL_RX}
-                fill={C.entity.fill} stroke={C.entity.stroke}>
-                <text x={n.x + n.w / 2} y={n.y + n.h / 2 - 4} textAnchor="middle"
-                  fill={C.entity.stroke} fontSize={8} fontWeight="700" letterSpacing="0.05em">
-                  ENTITY
-                </text>
-                <text x={n.x + n.w / 2} y={n.y + n.h / 2 + 8} textAnchor="middle"
-                  fill={C.text} fontSize={9} fontWeight="600">
-                  {entityType || '—'}
-                </text>
-              </VertCylinder>
-              {/* Hover ring — shown as a subtle highlight around the cylinder shape */}
-              <ellipse
-                cx={n.x + n.w / 2} cy={n.y + VERT_CYL_RX * 0.4}
-                rx={n.w / 2 + 3} ry={VERT_CYL_RX * 0.4 + 3}
-                fill="none" stroke={C.entity.stroke} strokeWidth={1.5}
-                strokeDasharray="3 3" opacity={0.5}
-                style={{ pointerEvents: 'none' }}
-              />
-              <ClickableNode
-                x={n.x - 3} y={n.y - 3} w={n.w + 6} h={n.h + 6}
-                label={`Inspect entity state: ${entityType}`}
-                onClick={() => onNodeClick && onNodeClick({
-                  kind: 'entity',
-                  agent: agentForNode,
-                  agentId: agentForNode?.agentId,
-                  entityType,
-                })}
-              />
-            </g>
-          );
-        }
-
-        if (n.type === 'inbound') {
-          const { topic, eventType, operation, horizon } = n.data;
-          const horizonStr = horizon
-            ? (horizon.type === 'count'
-                ? `${horizon.countLimit ?? horizon.value} events`
-                : horizon.type === 'time'
-                  ? horizon.timeLimit
-                  : horizon.type === 'hybrid'
-                    ? `${horizon.countLimit}ev / ${horizon.timeLimit}`
-                    : horizon.type)
-            : null;
-          return (
-            <HorizCylinder key={i} x={n.x} y={n.y} w={n.w} h={n.h} ry={CYL_RY}
-              fill={C.inbound.fill} stroke={C.inbound.stroke}>
-              <text x={n.x + n.w / 2} y={n.y + 12} textAnchor="middle"
-                fill={C.inbound.stroke} fontSize={7} fontWeight="700" letterSpacing="0.06em">
-                EVENT SUBSCRIPTION
-              </text>
-              <text x={n.x + n.w / 2} y={n.y + 22} textAnchor="middle"
-                fill={C.text} fontSize={8} fontWeight="600">
-                {topic || 'no Kafka topic'}
-              </text>
-              <text x={n.x + n.w / 2} y={n.y + 33} textAnchor="middle"
-                fill={C.textMuted} fontSize={7.5}>
-                {eventType}{operation ? ` · ${operation}` : ''}
-              </text>
-              {horizonStr && (
-                <text x={n.x + n.w / 2} y={n.y + 44} textAnchor="middle"
-                  fill={C.textFaint} fontSize={7}>
-                  ⧖ {horizonStr}
-                </text>
-              )}
-            </HorizCylinder>
-          );
-        }
-
-        if (n.type === 'outbound') {
-          const { topic, eventType, label, description } = n.data;
-          // The dashboard label is the most meaningful caption; fall back to the description.
-          const descLines = (label || description) ? wrapText(label || description, 22) : [];
-          return (
-            <HorizCylinder key={i} x={n.x} y={n.y} w={n.w} h={n.h} ry={CYL_RY}
-              fill={C.outbound.fill} stroke={C.outbound.stroke}>
-              <text x={n.x + n.w / 2} y={n.y + 12} textAnchor="middle"
-                fill={C.outbound.stroke} fontSize={7} fontWeight="700" letterSpacing="0.06em">
-                OUTPUT
-              </text>
-              <text x={n.x + n.w / 2} y={n.y + 22} textAnchor="middle"
-                fill={C.text} fontSize={8} fontWeight="600">
-                {topic}
-              </text>
-              <text x={n.x + n.w / 2} y={n.y + 33} textAnchor="middle"
-                fill={C.textMuted} fontSize={7.5}>
-                {eventType}
-              </text>
-              {descLines[0] && (
-                <text x={n.x + n.w / 2} y={n.y + 44} textAnchor="middle"
-                  fill={C.textFaint} fontSize={7}>
-                  {descLines[0]}
-                </text>
-              )}
-            </HorizCylinder>
-          );
-        }
-
-        return null;
-      })}
-    </svg>
-  );
-}
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Formats a HorizonConfig object from agents.json into a compact human-readable string.
- * e.g. { type: 'hybrid', countLimit: 100, timeLimit: '30d' } → "100 events / 30d"
- */
-function formatHorizon(horizon) {
-  if (!horizon) return null;
-  const { type, countLimit, value, timeLimit } = horizon;
-  if (type === 'count')  return `${countLimit ?? value ?? 0} events`;
-  if (type === 'time')   return timeLimit || null;
-  if (type === 'hybrid') return `${countLimit ?? value ?? 0} events / ${timeLimit || '?'}`;
-  return type || null;
-}
+const ENTITY_POLL_MS = 3000;
 
 // ─── Agent Detail view (operational) ─────────────────────────────────────────
 /**
@@ -573,8 +110,6 @@ function AgentDetailView({ selected, agentDescriptor }) {
  *
  * Polls every POLL_MS to stay current without requiring a page reload.
  */
-const ENTITY_POLL_MS = 3000;
-
 function EntityDetailView({ useCaseId, agentId, entityType }) {
   const [entities,        setEntities]        = useState([]);
   const [selectedId,      setSelectedId]      = useState(null);
@@ -794,148 +329,390 @@ function SelectionDetailPanel({ useCaseId, selection, onClose }) {
   );
 }
 
+
+// ─── Topic / link inspectors (config-only: no backend needed) ─────────────────
+
+function TopicPanel({ node, onClose, onPickAgent }) {
+  const d = node.data;
+  const meta = TOPIC_KIND_META[d.kind];
+  return (
+    <div className="esp-panel" role="complementary" aria-label="Selection detail">
+      <div className="esp-header">
+        <span className="esp-title">
+          <span className="esp-type-badge adv-kind-badge" style={{ '--k': meta.color }}>{d.schedule ? 'Scheduler' : meta.label}</span>
+          <span className="esp-sub-label" title={d.name}>{d.name}</span>
+        </span>
+        <button className="esp-close" onClick={onClose} aria-label="Close panel">×</button>
+      </div>
+      <div className="esp-detail adv-scroll">
+        {(d.label || d.description) && (
+          <div className="esp-section">
+            <div className="esp-section-title">About</div>
+            <div className="adv-prose">{d.label || d.description}</div>
+            {d.label && d.description && d.description !== d.label && <div className="adv-prose adv-prose--muted">{d.description}</div>}
+          </div>
+        )}
+        <div className="esp-section">
+          <div className="esp-section-title">Event types</div>
+          <div className="adv-chip-row">
+            {d.eventTypes.length ? d.eventTypes.map(t => <span key={t} className="adv-chip adv-chip--type">{t}</span>) : <span className="esp-no-data">None declared.</span>}
+          </div>
+          {d.chained && (
+            <div className="adv-note"><Icon name="bolt" size={13} /> Chained — events flow in-process between the agents; no Kafka round trip.</div>
+          )}
+        </div>
+        <div className="esp-section">
+          <div className="esp-section-title">Produced by ({d.producers.length})</div>
+          {d.producers.length === 0 && <div className="esp-no-data">External publishers (Kafka producers, scenarios, scripts).</div>}
+          {d.producers.map((p, i) => (
+            <button key={`${p.agentId}-${i}`} type="button" className="adv-rel" onClick={() => onPickAgent(p.agentId)}>
+              <Icon name="agent" size={14} /> <span className="adv-rel-main">{p.agentName}</span>
+              <span className="adv-chip adv-chip--type">{p.eventType}</span>
+            </button>
+          ))}
+        </div>
+        <div className="esp-section">
+          <div className="esp-section-title">Consumed by ({d.consumers.length})</div>
+          {d.consumers.length === 0 && <div className="esp-no-data">Terminal output — nothing in this application consumes it.</div>}
+          {d.consumers.map((c, i) => (
+            <button key={`${c.agentId}-${i}`} type="button" className="adv-rel" onClick={() => onPickAgent(c.agentId)}>
+              <Icon name="agent" size={14} />
+              <span className="adv-rel-main">{c.agentName}
+                {c.operation && <span className="adv-rel-sub">→ {c.operation}</span>}
+              </span>
+              {c.horizon && <span className="adv-chip" title="History retained"><Icon name="hourglass" size={11} /> {c.horizon}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LinkPanel({ edge, graph, live, onClose, onPickNode }) {
+  const d = edge.data;
+  const src = graph.nodes.find(n => n.id === edge.source);
+  const tgt = graph.nodes.find(n => n.id === edge.target);
+  const nameOf = n => (n.type === 'agent' ? n.data.name : n.data.name);
+  const count = d.direction === 'in' ? live?.[d.agentId]?.counts?.[d.eventType] : undefined;
+  return (
+    <div className="esp-panel" role="complementary" aria-label="Selection detail">
+      <div className="esp-header">
+        <span className="esp-title">
+          <span className="esp-type-badge adv-kind-badge" style={{ '--k': d.direction === 'in' ? d.srcColor : d.tgtColor }}>
+            {d.direction === 'in' ? 'Subscription' : 'Output'}
+          </span>
+          <span className="esp-sub-label" title={d.eventType}>{d.eventType}</span>
+        </span>
+        <button className="esp-close" onClick={onClose} aria-label="Close panel">×</button>
+      </div>
+      <div className="esp-detail adv-scroll">
+        <div className="esp-section">
+          <div className="esp-section-title">Route</div>
+          <button type="button" className="adv-rel" onClick={() => onPickNode(src.id)}>
+            <Icon name={src.type === 'agent' ? 'agent' : 'stream'} size={14} /> <span className="adv-rel-main">{nameOf(src)}</span>
+          </button>
+          <div className="adv-route-arrow" aria-hidden="true">↓</div>
+          <button type="button" className="adv-rel" onClick={() => onPickNode(tgt.id)}>
+            <Icon name={tgt.type === 'agent' ? 'agent' : 'stream'} size={14} /> <span className="adv-rel-main">{nameOf(tgt)}</span>
+          </button>
+        </div>
+        <div className="esp-section">
+          <div className="esp-section-title">Details</div>
+          <dl className="adv-dl">
+            <dt>Event type</dt><dd>{d.eventType}</dd>
+            {d.operation && <><dt>Invokes operation</dt><dd>{d.operation}</dd></>}
+            {d.direction === 'out' && d.ops.length > 0 && <><dt>Emitted by operation</dt><dd>{d.ops.join(', ')}</dd></>}
+            {d.horizon && <><dt>History retained</dt><dd>{d.horizon}</dd></>}
+            <dt>Transport</dt><dd>{d.chained ? 'In-process (agent chaining)' : 'Kafka'}</dd>
+            {count !== undefined && <><dt>Processed (live)</dt><dd>{Number(count).toLocaleString()}</dd></>}
+          </dl>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Modal shell ──────────────────────────────────────────────────────────────
-const ZOOM_MIN  = 0.25;
-const ZOOM_MAX  = 3;
-const ZOOM_STEP = 0.2;
 
-export default function AgentDiagramModal({ agentsJson, useCaseId, onClose }) {
-  const agents  = agentsJson?.agents ?? [];
-  const [zoom, setZoom]     = useState(null); // null = not yet calculated
-  const bodyRef             = useRef(null);
-  const svgRef              = useRef(null);
-  // Selection detail panel: null when hidden, { kind, agent, entityType? } when open
-  const [selection, setSelection] = useState(null);
+const selectionKey = (s) => {
+  if (!s) return null;
+  if (s.kind === 'agent' || s.kind === 'entity') return `${s.kind}:${s.agent?.agentId}`;
+  return `${s.kind}:${s.nodeId || s.edgeId}`;
+};
 
-  const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+function ToolButton({ icon, label, pressed, onClick, disabled, title, children }) {
+  return (
+    <button
+      type="button"
+      className={`adv-tool${pressed ? ' adv-tool--on' : ''}`}
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={pressed}
+      aria-label={label}
+      title={title || label}
+    >
+      <Icon name={icon} size={15} />
+      {children && <span className="adv-tool-text">{children}</span>}
+    </button>
+  );
+}
 
-  // Compute the zoom that makes the SVG fit inside the body with some padding.
-  const calcFitZoom = useCallback(() => {
-    const body = bodyRef.current;
-    const svg  = svgRef.current;
-    if (!body || !svg) return 1;
-    const PADDING = 48; // total horizontal + vertical breathing room
-    const scaleW  = (body.clientWidth  - PADDING) / svg.getAttribute('width');
-    const scaleH  = (body.clientHeight - PADDING) / svg.getAttribute('height');
-    return clampZoom(parseFloat(Math.min(scaleW, scaleH).toFixed(3)));
+function LegendItem({ color, label, dashed }) {
+  return (
+    <span className="adv-legend-item">
+      <span className={`adv-legend-swatch${dashed ? ' adv-legend-swatch--dashed' : ''}`} style={{ '--k': color }} />
+      {label}
+    </span>
+  );
+}
+
+function DiagramShell({ agentsJson, useCaseId, onClose }) {
+  const agents = useMemo(() => agentsJson?.agents ?? [], [agentsJson]);
+  const { zoomIn, zoomOut, fitView } = useReactFlow();
+  const zoomPct = useStore(s => Math.round(s.transform[2] * 100));
+
+  const [expanded, setExpanded]     = useState(() => new Set());
+  const [showAlerts, setShowAlerts] = useState(true);
+  const [showErrors, setShowErrors] = useState(true);
+  const [showLabels, setShowLabels] = useState(true);
+  const [animate, setAnimate]       = useState(true);
+  const [showMap, setShowMap]       = useState(true);
+  const [query, setQuery]           = useState('');
+  const [selection, setSelection]   = useState(null);
+  const [hoverId, setHoverId]       = useState(null);
+  const [hoverEdgeId, setHoverEdgeId] = useState(null);
+  const [opFocus, setOpFocus]       = useState(null);
+  const searchRef = useRef(null);
+
+  const hidden = useMemo(() => {
+    const h = new Set();
+    if (!showAlerts) h.add('alert');
+    if (!showErrors) h.add('error');
+    return h;
+  }, [showAlerts, showErrors]);
+
+  const graph = useMemo(() => buildGraph(agentsJson, { expanded, hidden }), [agentsJson, expanded, hidden]);
+  const live = useAgentLiveStats(useCaseId, useMemo(() => agents.map(a => a.agentId), [agents]));
+  const matches = useMemo(() => matchNodes(graph, query), [graph, query]);
+
+  // Frame the whole diagram once nodes are initialised and the pane has a real size.
+  const nodesReady = useNodesInitialized();
+  const paneReady = useStore(s => s.width > 0 && s.height > 0);
+  const framed = useRef(false);
+  useEffect(() => {
+    if (!nodesReady || !paneReady || framed.current) return;
+    framed.current = true;
+    fitView({ padding: 0.14, maxZoom: 1 });
+  }, [nodesReady, paneReady, fitView]);
+
+  // Agents whose card can be expanded (have decision operations) — the single source of truth
+  // shared by the card toggles and the toolbar "Operations" button.
+  const expandableIds = useMemo(
+    () => graph.nodes.filter(n => n.type === 'agent' && n.data.ops.length > 0).map(n => n.data.agentId),
+    [graph],
+  );
+  const allExpanded = expandableIds.length > 0 && expandableIds.every(id => expanded.has(id));
+
+  // Re-frame the diagram when whole layers are toggled (not on every card expand).
+  const reframeKey = `${showAlerts}|${showErrors}|${allExpanded}`;
+  const firstFrame = useRef(true);
+  useEffect(() => {
+    if (firstFrame.current) { firstFrame.current = false; return undefined; }
+    const t = setTimeout(() => fitView({ padding: 0.14, maxZoom: 1, duration: 450 }), 60);
+    return () => clearTimeout(t);
+  }, [reframeKey, fitView]);
+
+  // Search: glide to the matching nodes.
+  useEffect(() => {
+    if (!matches || matches.size === 0) return undefined;
+    const t = setTimeout(() => fitView({ nodes: [...matches].map(id => ({ id })), padding: 0.5, maxZoom: 1, duration: 450 }), 180);
+    return () => clearTimeout(t);
+  }, [matches, fitView]);
+
+  const selectedNodeId = !selection ? null
+    : selection.kind === 'topic' ? selection.nodeId
+    : (selection.kind === 'agent' || selection.kind === 'entity') ? `agent:${selection.agent.agentId}`
+    : null;
+
+  // What is lit up: op trace > hover > selected node > selected link.
+  const focus = useMemo(() => {
+    if (opFocus) return operationFocus(graph, opFocus.agentId, opFocus.name);
+    const nodeId = hoverId || selectedNodeId;
+    if (nodeId && graph.nodes.some(n => n.id === nodeId)) return lineage(graph, nodeId);
+    if (selection?.kind === 'edge') {
+      const e = graph.edges.find(x => x.id === selection.edgeId);
+      if (e) return edgeFocus(e);
+    }
+    return null;
+  }, [graph, opFocus, hoverId, selectedNodeId, selection]);
+
+  const toggleSelection = useCallback((next) => {
+    setSelection(p => (selectionKey(p) === selectionKey(next) ? null : next));
   }, []);
 
-  // Set fit-zoom once after first render (body has real dimensions by then).
-  useEffect(() => {
-    setZoom(calcFitZoom());
-  }, [calcFitZoom]);
+  const actions = useMemo(() => ({
+    hoverNode: setHoverId,
+    selectNode: (id) => {
+      const n = graph.nodes.find(x => x.id === id);
+      if (!n) return;
+      setOpFocus(null);
+      toggleSelection(n.type === 'agent'
+        ? { kind: 'agent', agent: n.data.agent, agentId: n.data.agentId }
+        : { kind: 'topic', nodeId: id });
+    },
+    selectEntity: (agentId) => {
+      const n = graph.nodes.find(x => x.id === `agent:${agentId}`);
+      if (!n) return;
+      setOpFocus(null);
+      toggleSelection({ kind: 'entity', agent: n.data.agent, agentId, entityType: n.data.entityType });
+    },
+    toggleExpand: (agentId) => {
+      setOpFocus(null);
+      setExpanded(prev => {
+        const next = new Set(prev);
+        if (next.has(agentId)) next.delete(agentId); else next.add(agentId);
+        return next;
+      });
+    },
+    focusOperation: (agentId, name) => {
+      setOpFocus(p => (p && p.agentId === agentId && p.name === name ? null : { agentId, name }));
+    },
+  }), [graph, toggleSelection]);
 
-  const zoomIn    = useCallback(() => setZoom(z => clampZoom(parseFloat(((z ?? 1) + ZOOM_STEP).toFixed(2)))), []);
-  const zoomOut   = useCallback(() => setZoom(z => clampZoom(parseFloat(((z ?? 1) - ZOOM_STEP).toFixed(2)))), []);
-  // Reset returns to fit-zoom, not 1.
-  const zoomReset = useCallback(() => setZoom(calcFitZoom()), [calcFitZoom]);
+  const context = useMemo(() => ({
+    focus, matches, live, animate, showLabels,
+    selectedId: selectedNodeId, selectedEdgeId: selection?.kind === 'edge' ? selection.edgeId : null,
+    hoverEdgeId, opFocus, actions,
+  }), [focus, matches, live, animate, showLabels, selectedNodeId, selection, hoverEdgeId, opFocus, actions]);
 
-  // Close on Escape; zoom on +/- keys
+  const toggleAll = () => {
+    setOpFocus(null);
+    setExpanded(allExpanded ? new Set() : new Set(expandableIds));
+  };
+
+  const pickAgent = useCallback((agentId) => actions.selectNode(`agent:${agentId}`), [actions]);
+  const pickNode = useCallback((id) => {
+    const n = graph.nodes.find(x => x.id === id);
+    if (n) { setSelection(n.type === 'agent' ? { kind: 'agent', agent: n.data.agent, agentId: n.data.agentId } : { kind: 'topic', nodeId: id }); }
+  }, [graph]);
+
+  // Keyboard: Esc peels back one layer; + − 0 zoom; f fit; / search.
   useEffect(() => {
     const handler = (e) => {
-      // Escape: close selection panel first, then the whole modal on second press
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName || '') || e.target?.isContentEditable;
       if (e.key === 'Escape') {
+        if (opFocus) { setOpFocus(null); return; }
         if (selection) { setSelection(null); return; }
         onClose();
         return;
       }
-      if (e.key === '=' || e.key === '+') { zoomIn();    return; }
-      if (e.key === '-' || e.key === '_') { zoomOut();   return; }
-      if (e.key === '0')                  { zoomReset(); return; }
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === '=' || e.key === '+') { zoomIn({ duration: 200 }); return; }
+      if (e.key === '-' || e.key === '_') { zoomOut({ duration: 200 }); return; }
+      if (e.key === '0' || e.key === 'f' || e.key === 'F') { fitView({ padding: 0.14, maxZoom: 1, duration: 350 }); return; }
+      if (e.key === '/') { e.preventDefault(); searchRef.current?.focus(); }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [onClose, zoomIn, zoomOut, zoomReset, selection]);
+  }, [onClose, zoomIn, zoomOut, fitView, selection, opFocus]);
 
-  // Ctrl/⌘ + wheel zooms; plain wheel scrolls
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el) return;
-    const handler = (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-      setZoom(z => clampZoom(parseFloat((z + delta).toFixed(2))));
-    };
-    el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
-  }, []);
-
-  const zoomPct = zoom !== null ? Math.round(zoom * 100) : '…';
+  const clearAll = () => { setSelection(null); setOpFocus(null); };
+  const selectedEdge = selection?.kind === 'edge' ? graph.edges.find(e => e.id === selection.edgeId) : null;
+  const selectedTopic = selection?.kind === 'topic' ? graph.nodes.find(n => n.id === selection.nodeId) : null;
+  const panelOpen = (selection?.kind === 'agent' || selection?.kind === 'entity') ? !!useCaseId : !!(selectedEdge || selectedTopic);
+  const noMatch = matches && matches.size === 0;
+  const stats = graph.stats;
 
   return (
     <div className="agent-diagram-overlay" onClick={onClose}>
       <div
-        className="agent-diagram-modal"
+        className="agent-diagram-modal adv-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Agent Diagram View"
       >
-        <div className="agent-diagram-header">
-          <span className="agent-diagram-title">Agent Diagram View</span>
-
-          {/* Zoom controls */}
-          <div className="agent-diagram-zoom">
-            <button
-              className="adz-btn"
-              onClick={zoomOut}
-              disabled={zoom <= ZOOM_MIN}
-              aria-label="Zoom out"
-              title="Zoom out (−)"
-            >−</button>
-            <button
-              className="adz-pct"
-              onClick={zoomReset}
-              title="Reset zoom (0)"
-              aria-label={`Zoom ${zoomPct}% — click to reset`}
-            >{zoomPct}%</button>
-            <button
-              className="adz-btn"
-              onClick={zoomIn}
-              disabled={zoom >= ZOOM_MAX}
-              aria-label="Zoom in"
-              title="Zoom in (+)"
-            >+</button>
+        <div className="agent-diagram-header adv-header">
+          <span className="adv-title-icon"><Icon name="map" size={20} /></span>
+          <div className="adv-title-block">
+            <span className="agent-diagram-title">Agent Diagram View</span>
+            <span className="adv-subtitle">
+              {stats.agents} agent{stats.agents === 1 ? '' : 's'} · {stats.topics} topic{stats.topics === 1 ? '' : 's'} · {stats.links} link{stats.links === 1 ? '' : 's'}
+              {stats.chains > 0 && <> · <span className="adv-subtitle-chain"><Icon name="bolt" size={11} /> {stats.chains} chained</span></>}
+              {useCaseId && Object.keys(live).length > 0 && <> · <span className="adv-subtitle-live"><span className="adv-pulse adv-pulse--on" /> live</span></>}
+            </span>
           </div>
 
-          <button
-            className="agent-diagram-close"
-            onClick={onClose}
-            aria-label="Close diagram"
-          >
-            ×
-          </button>
+          <div className="adv-search">
+            <Icon name="search" size={15} />
+            <input
+              ref={searchRef}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}
+              placeholder="Find agent, topic, event type, operation…  ( / )"
+              aria-label="Search the diagram"
+              spellCheck={false}
+            />
+            {matches && <span className={`adv-search-count${noMatch ? ' adv-search-count--none' : ''}`} aria-live="polite">{matches.size} match{matches.size === 1 ? '' : 'es'}</span>}
+          </div>
+
+          <div className="adv-toolgroup" role="group" aria-label="View options">
+            <ToolButton icon={allExpanded ? 'fold' : 'unfold'} label={allExpanded ? 'Collapse all agents' : 'Expand all agents'} onClick={toggleAll} pressed={allExpanded}>Operations</ToolButton>
+            <ToolButton icon="bell" label="Show alert outputs" pressed={showAlerts} onClick={() => setShowAlerts(v => !v)}>Alerts</ToolButton>
+            <ToolButton icon="warn" label="Show error outputs" pressed={showErrors} onClick={() => setShowErrors(v => !v)}>Errors</ToolButton>
+            <ToolButton icon="list" label="Show event labels on links" pressed={showLabels} onClick={() => setShowLabels(v => !v)} />
+            <ToolButton icon="pulse" label="Animate event flow" pressed={animate} onClick={() => setAnimate(v => !v)} />
+            <ToolButton icon="map" label="Show minimap" pressed={showMap} onClick={() => setShowMap(v => !v)} />
+          </div>
+
+          <div className="agent-diagram-zoom" role="group" aria-label="Zoom">
+            <button className="adz-btn" onClick={() => zoomOut({ duration: 200 })} aria-label="Zoom out" title="Zoom out (−)"><Icon name="minus" size={14} /></button>
+            <button className="adz-pct" onClick={() => fitView({ padding: 0.14, maxZoom: 1, duration: 350 })} title="Fit to screen (0 / F)" aria-label={`Zoom ${zoomPct}% — click to fit`}>{zoomPct}%</button>
+            <button className="adz-btn" onClick={() => zoomIn({ duration: 200 })} aria-label="Zoom in" title="Zoom in (+)"><Icon name="plus" size={14} /></button>
+            <button className="adz-btn" onClick={() => fitView({ padding: 0.14, maxZoom: 1, duration: 350 })} aria-label="Fit to screen" title="Fit to screen (F)"><Icon name="fit" size={14} /></button>
+          </div>
+
+          <button className="agent-diagram-close" onClick={onClose} aria-label="Close diagram">×</button>
         </div>
 
-        <div className="agent-diagram-body" ref={bodyRef}>
+        <div className="agent-diagram-body adv-body">
           {agents.length === 0 ? (
             <p className="agent-diagram-empty">No agent data available.</p>
           ) : (
-            <div className={`agent-diagram-canvas${selection ? ' agent-diagram-canvas--with-panel' : ''}`}>
-              <div
-                className="agent-diagram-scroll"
-                style={{ transform: zoom !== null ? `scale(${zoom})` : 'none' }}
-              >
-                <AgentDiagramSVG
-                  agents={agents}
-                  svgRef={svgRef}
-                  onNodeClick={(sel) =>
-                    setSelection(p =>
-                      p && p.kind === sel.kind &&
-                      p.agent?.agentId === sel.agent?.agentId &&
-                      p.entityType === sel.entityType
-                        ? null   // clicking the same node again closes the panel
-                        : sel
-                    )
-                  }
-                />
+            <div className="adv-canvas">
+              <AgentDiagramCanvas
+                graph={graph}
+                context={context}
+                showMiniMap={showMap}
+                onEdgeHover={setHoverEdgeId}
+                onEdgeClick={(edgeId) => { setOpFocus(null); toggleSelection({ kind: 'edge', edgeId }); }}
+                onPaneClick={clearAll}
+              />
+
+              {noMatch && <div className="adv-nomatch" role="status">Nothing matches “{query}”.</div>}
+
+              <div className="adv-legend" aria-label="Legend">
+                <LegendItem color={PALETTE.source} label="Event source" />
+                <LegendItem color={PALETTE.agent} label="Agent" />
+                <LegendItem color={PALETTE.link} label="Chained topic" />
+                <LegendItem color={PALETTE.sink} label="Output" />
+                <LegendItem color={PALETTE.alert} label="Alert" />
+                <LegendItem color={PALETTE.error} label="Error" />
+                <span className="adv-legend-hint">Hover to trace lineage · click to inspect · Esc to step back</span>
               </div>
             </div>
           )}
 
-          {/* Selection detail side panel */}
-          {selection && useCaseId && (
+          {panelOpen && selection.kind === 'topic' && (
+            <TopicPanel node={selectedTopic} onClose={() => setSelection(null)} onPickAgent={pickAgent} />
+          )}
+          {panelOpen && selection.kind === 'edge' && (
+            <LinkPanel edge={selectedEdge} graph={graph} live={live} onClose={() => setSelection(null)} onPickNode={pickNode} />
+          )}
+          {panelOpen && (selection.kind === 'agent' || selection.kind === 'entity') && (
             <SelectionDetailPanel
               useCaseId={useCaseId}
               selection={selection}
@@ -943,8 +720,15 @@ export default function AgentDiagramModal({ agentsJson, useCaseId, onClose }) {
             />
           )}
         </div>
-
       </div>
     </div>
+  );
+}
+
+export default function AgentDiagramModal(props) {
+  return (
+    <ReactFlowProvider>
+      <DiagramShell {...props} />
+    </ReactFlowProvider>
   );
 }

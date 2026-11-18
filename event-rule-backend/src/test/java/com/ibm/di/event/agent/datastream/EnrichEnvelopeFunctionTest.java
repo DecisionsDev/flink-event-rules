@@ -26,13 +26,20 @@ import com.ibm.di.event.agent.EventEnvelope;
 import com.ibm.di.event.agent.FieldMapping;
 import com.ibm.di.event.agent.ReferenceConfig;
 import com.ibm.di.event.agent.enrichment.EnrichmentSpec;
+import org.apache.flink.runtime.client.JobStatusMessage;
+import org.apache.flink.runtime.minicluster.MiniCluster;
+import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
+import org.apache.flink.api.common.JobStatus;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.apache.flink.streaming.api.graph.StreamNode;
+import org.apache.flink.test.junit5.InjectMiniCluster;
+import org.apache.flink.test.junit5.MiniClusterExtension;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,6 +52,19 @@ class EnrichEnvelopeFunctionTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String DIR = "samples/airline-agent/enrichment/";
+
+    /**
+     * Shared MiniCluster managed by JUnit. Without it, {@code executeAndCollect()} spins up a
+     * per-job MiniCluster that shuts itself down the moment the job finishes, so
+     * {@code CollectResultFetcher} later polls job status on a closed cluster and logs
+     * "MiniCluster is not yet running or has already been shut down".
+     */
+    @RegisterExtension
+    static final MiniClusterExtension MINI_CLUSTER = new MiniClusterExtension(
+        new MiniClusterResourceConfiguration.Builder()
+            .setNumberTaskManagers(1)
+            .setNumberSlotsPerTaskManager(2)
+            .build());
 
     private static EnrichmentSpec spec(String reference, String file, String key, String on, String into,
                                        String... fields) {
@@ -102,7 +122,7 @@ class EnrichEnvelopeFunctionTest {
 
     @Test
     @DisplayName("the operator runs in a local DataStream job")
-    void runsInLocalJob() throws Exception {
+    void runsInLocalJob(@InjectMiniCluster MiniCluster cluster) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
         EnrichmentSpec spec = spec("passengers", DIR + "passengers.csv", "passengerId",
@@ -118,6 +138,12 @@ class EnrichEnvelopeFunctionTest {
             });
         }
         assertEquals(List.of("Lisa Williams", "-"), names);
+
+        // Regression: the job must have run on the shared cluster, which outlives result collection.
+        // A per-job MiniCluster is closed when the job ends, before the result fetcher polls its status.
+        assertEquals(1, cluster.listJobs().get().size(), "the job ran on the shared MiniCluster");
+        assertEquals(JobStatus.FINISHED, cluster.listJobs().get().stream()
+            .map(JobStatusMessage::getJobState).findFirst().orElseThrow());
     }
 
     @Test

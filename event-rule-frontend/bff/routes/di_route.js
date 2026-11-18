@@ -30,12 +30,17 @@
  *        → download decision archive and save under samples/<agentId>/
  *   GET  /api/ads-runtimes/:id/archive?decisionId=<id>[&deploymentSpace=<space>]
  *        → stream decision archive to the caller without storing it
+ *   POST /api/ads-runtimes/:id/refresh-rules?decisionId=<id>&useCaseId=<id>[&deploymentSpace=<space>]
+ *        → download decision archive, save it under samples/<useCaseId>/ and publish a LOAD
+ *          command to the archive-control topic(s) of the use case (live rules refresh)
  *
- * Factory export: createAdsRouter({ diRuntimes, samplesDir, isValidAgentId })
+ * Factory export: createAdsRouter({ diRuntimes, samplesDir, isValidAgentId,
+ *                                   publishControlMessage, flinkSamplesMount })
  */
 
 'use strict';
 
+const crypto  = require('crypto');
 const express = require('express');
 const https   = require('https');
 const http    = require('http');
@@ -103,12 +108,30 @@ function diRequest(url, username, apiKey, binary = false, rejectUnauthorized = t
 // ── Router factory ────────────────────────────────────────────────────────────
 
 /**
- * @param {object} opts
- * @param {Array}    opts.diRuntimes     - parsed DI_RUNTIMES array
- * @param {string}   opts.samplesDir     - absolute path to the samples directory
- * @param {Function} opts.isValidAgentId - id validation predicate
+ * Distinct archive-control topics declared by the agents of a descriptor
+ * (agents[].ruleset.archiveControlTopic), same discovery as scripts/broadcast-reload.sh.
  */
-function createAdsRouter({ diRuntimes, samplesDir, isValidAgentId }) {
+function archiveControlTopics(descriptor) {
+  const topics = new Set();
+  for (const agent of (descriptor?.agents || [])) {
+    const t = agent?.ruleset?.archiveControlTopic;
+    if (typeof t === 'string' && t.trim()) topics.add(t.trim());
+  }
+  return [...topics];
+}
+
+/**
+ * @param {object} opts
+ * @param {Array}    opts.diRuntimes            - parsed DI_RUNTIMES array
+ * @param {string}   opts.samplesDir            - absolute path to the samples directory
+ * @param {Function} opts.isValidAgentId        - id validation predicate
+ * @param {Function} [opts.publishControlMessage] - async (topic, jsonString) => void, Kafka publisher
+ * @param {string}   [opts.flinkSamplesMount]   - path where samples/ is mounted in the Flink containers
+ */
+function createAdsRouter({
+  diRuntimes, samplesDir, isValidAgentId,
+  publishControlMessage, flinkSamplesMount = '/opt/flink/samples',
+}) {
   const router = express.Router();
 
   const findRuntime = (id) => diRuntimes.find(r => r.id === id);
@@ -287,6 +310,65 @@ function createAdsRouter({ diRuntimes, samplesDir, isValidAgentId }) {
     res.set('X-Archive-Filename', archive.filename);
     res.set('Access-Control-Expose-Headers', 'X-Archive-Filename');
     return res.status(200).send(archive.buffer);
+  });
+
+  /**
+   * POST /api/ads-runtimes/:id/refresh-rules?decisionId=<encoded>&useCaseId=<id>[&deploymentSpace=<space>]
+   * Live refresh of the rules of a deployed job: downloads the decision archive, stores it in
+   * samples/<useCaseId>/ and publishes a LOAD ArchiveControlCmd (see scripts/broadcast-reload.sh)
+   * to the archive-control topic(s) of the use case.
+   */
+  router.post('/:id/refresh-rules', async (req, res) => {
+    const { useCaseId } = req.query;
+    if (!findRuntime(req.params.id)) {
+      return res.status(404).json({ error: `DI runtime '${req.params.id}' not configured` });
+    }
+    if (!useCaseId || !isValidAgentId(useCaseId)) {
+      return res.status(400).json({ error: 'useCaseId query parameter is required and must be a valid use case id' });
+    }
+    if (typeof publishControlMessage !== 'function') {
+      return res.status(503).json({ error: 'Kafka publishing is not available' });
+    }
+
+    let descriptor;
+    try {
+      descriptor = JSON.parse(await fs.readFile(path.join(samplesDir, useCaseId, 'agents.json'), 'utf8'));
+    } catch (err) {
+      if (err.code === 'ENOENT') return res.status(404).json({ error: `agents.json not found for '${useCaseId}'` });
+      return res.status(500).json({ error: `Could not read agents.json: ${err.message}` });
+    }
+    const topics = archiveControlTopics(descriptor);
+    if (topics.length === 0) topics.push(`agent-${useCaseId}-archive-control`);
+
+    const archive = await downloadArchive(req, res);
+    if (!archive) return undefined;
+
+    try {
+      const dir = path.join(samplesDir, useCaseId);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, archive.filename), archive.buffer);
+
+      const sha256    = crypto.createHash('sha256').update(archive.buffer).digest('hex');
+      const version   = archive.filename.replace(/\.jar$/, '');
+      const requestId = `refresh-rules-${Date.now()}`;
+      const payload   = JSON.stringify({
+        version,
+        archiveUrl:  `file://${flinkSamplesMount.replace(/\/$/, '')}/${useCaseId}/${archive.filename}`,
+        sha256,
+        commandType: 'LOAD',
+        requestId,
+      });
+      for (const topic of topics) await publishControlMessage(topic, payload);
+
+      console.log(`[di] Rules refresh for '${useCaseId}': ${archive.filename} sha256=${sha256} → ${topics.join(', ')}`);
+      return res.status(200).json({
+        refreshed: true, filename: archive.filename, path: `samples/${useCaseId}/${archive.filename}`,
+        version, sha256, requestId, topics,
+      });
+    } catch (err) {
+      console.error(`[di] Rules refresh failed for '${useCaseId}':`, err.message);
+      return res.status(500).json({ error: `Rules refresh failed: ${err.message}` });
+    }
   });
 
   return router;

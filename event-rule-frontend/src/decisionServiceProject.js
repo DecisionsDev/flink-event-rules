@@ -1,7 +1,7 @@
 /*
  * Decision Service Project (.zip) explorer.
  *
- * Scans a zipped ODM/DI decision service project and extracts:
+ * Scans a zipped Decision Intelligence decision service project and extracts:
  *   - operations: the value of <tags key="operationName"> of every *.dop file
  *   - classes:    every "<qualified.ClassName>#concept.label = <label>" line of
  *                 every *.voc file, as { className, label }

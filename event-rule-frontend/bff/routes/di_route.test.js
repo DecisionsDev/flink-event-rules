@@ -27,7 +27,7 @@ describe('DI Runtime (IBM Decision Intelligence) Router', () => {
         url: 'http://localhost:9999',
         deploymentSpace: 'custom-space',
         username: 'admin',
-        apiKey: 'secret-api-key'
+        apiKey: 'secret-api-key' // pragma: allowlist secret (dummy test fixture)
       },
       {
         id: 'runtime-2',
@@ -319,6 +319,7 @@ describe('DI Runtime (IBM Decision Intelligence) Router', () => {
 
     test('sends the Zen API key as "Authorization: ZenApiKey base64(username:apiKey)"', async () => {
       const url = `http://127.0.0.1:${server.address().port}`;
+      // pragma: allowlist nextline secret (dummy test fixture)
       await listDecisions({ id: 'rt', url, username: 'cpadmin', apiKey: 'abc123' });
       expect(seenAuth).toBe(`ZenApiKey ${Buffer.from('cpadmin:abc123').toString('base64')}`);
     });

@@ -37,9 +37,9 @@
 		<!-- Shared artifact versions — child modules reference these without repeating the version -->
 		<jackson.version>2.16.2</jackson.version>
 		<ads-annotations.version>2.0.21</ads-annotations.version>
-		<foundation.version>16.5.1</foundation.version>
-		<execution.api.version>4.0.11</execution.api.version>
-		<engine.de.api.version>3.12.0</engine.de.api.version>
+		<foundation.version>16.8.0</foundation.version>
+		<execution.api.version>5.0.4</execution.api.version>
+		<engine.de.api.version>3.13.0</engine.de.api.version>
 		<junit.version>5.10.1</junit.version>
 		<mockito.version>5.10.0</mockito.version>
 	</properties>
@@ -82,6 +82,12 @@
 				<groupId>com.ibm.decision.execution</groupId>
 				<artifactId>execution-api</artifactId>
 				<version>${execution.api.version}</version>
+				<exclusions>
+					<exclusion>
+						<groupId>com.ibm.rules</groupId>
+						<artifactId>ads-common-libs-optim</artifactId>
+					</exclusion>
+				</exclusions>
 			</dependency>
 			<dependency>
 				<groupId>com.ibm.decision</groupId>

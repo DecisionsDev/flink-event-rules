@@ -136,6 +136,19 @@ public class StatefulAgentProcessor
     private final OutputTag<EventEnvelope> changelogTag;
 
     /**
+     * Side output carrying one {@code archive-status} acknowledgement per subtask for every
+     * {@code LOAD} / {@code ROLLBACK} command, so a caller can tell which archive the running
+     * job actually loaded (and whether the load failed). See {@link #emitArchiveStatus}.
+     */
+    private final OutputTag<EventEnvelope> archiveStatusTag;
+
+    /** Event type of the acknowledgements on {@link #archiveStatusTag}. */
+    public static final String ARCHIVE_STATUS_EVENT_TYPE = "archive-status";
+
+    /** Acks captured by the broadcast test helpers (no Flink runtime). */
+    private transient List<EventEnvelope> archiveStatusCapture;
+
+    /**
      * Sentinel event type that clears the keyed state for a single entity when received
      * on the event stream.
      *
@@ -248,6 +261,17 @@ public class StatefulAgentProcessor
         this.changelogTag = new OutputTag<>(
             "entity-changelog-" + descriptor.getAgentId(),
             TypeInformation.of(EventEnvelope.class));
+        this.archiveStatusTag = new OutputTag<>(
+            "archive-status-" + descriptor.getAgentId(),
+            TypeInformation.of(EventEnvelope.class));
+    }
+
+    /**
+     * Returns the per-agent archive-status {@link OutputTag}, used by
+     * {@link AgentBasedDataStreamJob#wireAgent} to sink the acknowledgements.
+     */
+    public OutputTag<EventEnvelope> getArchiveStatusTag() {
+        return archiveStatusTag;
     }
 
     /**
@@ -468,7 +492,10 @@ public class StatefulAgentProcessor
                 break; // LOAD / ROLLBACK fall through
         }
 
-        if (!validateCmd(cmd)) return;
+        if (!validateCmd(cmd)) {
+            emitArchiveStatus(cmd, ctx, "FAILED", "Invalid archive-control command (version, archiveUrl or sha256 missing)");
+            return;
+        }
 
         RuleEngineRunner newRunner = null;
         try {
@@ -512,15 +539,19 @@ public class StatefulAgentProcessor
 
             LOG.info("[{}] ✓ Archive reloaded: v={} requestId={}",
                 agentTag(), cmd.getVersion(), cmd.getRequestId());
+            // Acknowledge only now: the broadcast state already points at the new archive.
+            emitArchiveStatus(cmd, ctx, "LOADED", null);
 
         } catch (com.ibm.di.event.rule.broadcast.ArchiveVerificationException ave) {
             LOG.error("[{}] ✗ SHA-256 mismatch for requestId={}: {}",
                 agentTag(), cmd.getRequestId(), ave.getMessage());
             ArchiveDownloader.evict(cmd.getSha256());
+            emitArchiveStatus(cmd, ctx, "FAILED", "SHA-256 mismatch: " + ave.getMessage());
         } catch (Exception e) {
             LOG.error("[{}] ✗ Archive reload failed for requestId={} v={}: {}",
                 agentTag(), cmd.getRequestId(), cmd.getVersion(), e.getMessage());
             ArchiveDownloader.evict(cmd.getSha256());
+            emitArchiveStatus(cmd, ctx, "FAILED", e.getMessage());
         } finally {
             if (newRunner != null) {
                 // Runners were never fully activated — remove all versioned cache entries
@@ -541,6 +572,49 @@ public class StatefulAgentProcessor
                         });
                 }
             }
+        }
+    }
+
+    /**
+     * Emits one {@code archive-status} acknowledgement for a LOAD / ROLLBACK command on the
+     * archive-status side output. The payload names the archive the subtask is running after
+     * the command (on failure: the one it kept), which is what callers must treat as the
+     * source of truth. Never throws: an ack problem must not turn a successful load into a failure.
+     */
+    private void emitArchiveStatus(ArchiveControlCmd cmd, Context ctx, String status, String error) {
+        try {
+            int subtask = 0;
+            int parallelism = 1;
+            try {
+                subtask     = getRuntimeContext().getTaskInfo().getIndexOfThisSubtask();
+                parallelism = getRuntimeContext().getTaskInfo().getNumberOfParallelSubtasks();
+            } catch (IllegalStateException noRuntime) {
+                // unit tests invoke the broadcast side without a Flink runtime
+            }
+            ObjectNode payload = objectMapper.createObjectNode();
+            payload.put("agentId",     descriptor.getAgentId());
+            payload.put("status",      status);
+            payload.put("commandType", cmd.getCommandType() == null ? "" : cmd.getCommandType().name());
+            payload.put("requestId",   safeString(cmd.getRequestId()));
+            payload.put("requestedVersion", safeString(cmd.getVersion()));
+            payload.put("subtask",     subtask);
+            payload.put("parallelism", parallelism);
+            payload.put("timestamp",   System.currentTimeMillis());
+            if (error != null) payload.put("error", error);
+
+            // Version the subtask is running now (unchanged on failure).
+            ArchiveEntry active = ctx.getBroadcastState(ARCHIVE_STATE_DESC).get(ACTIVE_KEY);
+            payload.put("activeVersion", active != null ? active.getVersion() : "bootstrap");
+
+            EventEnvelope ack = new EventEnvelope();
+            ack.setEventType(ARCHIVE_STATUS_EVENT_TYPE);
+            ack.setEntityId(descriptor.getAgentId());
+            ack.setTimestamp(System.currentTimeMillis());
+            ack.setPayload(payload);
+            ctx.output(archiveStatusTag, ack);
+        } catch (Exception e) {
+            LOG.warn("[{}] Could not emit archive-status ack for requestId={}: {}",
+                agentTag(), cmd.getRequestId(), e.getMessage());
         }
     }
 
@@ -1499,7 +1573,9 @@ public class StatefulAgentProcessor
             @Override public long currentWatermark()      { return Long.MIN_VALUE; }
             @Override
             public <X> void output(org.apache.flink.util.OutputTag<X> tag, X value) {
-                // DLQ outputs are swallowed in unit tests; callers inspect runnerCache directly
+                // Archive-status acks are captured for assertions; DLQ outputs are swallowed
+                // in unit tests (callers inspect runnerCache directly).
+                if (archiveStatusTag.equals(tag)) archiveStatusForTest().add((EventEnvelope) value);
             }
         };
     }
@@ -1519,6 +1595,14 @@ public class StatefulAgentProcessor
         }
         // Also register under the legacy "bootstrap" key so invokeForTest still works.
         injectRunner("bootstrap", engine);
+    }
+
+    /** Archive-status acks emitted by the broadcast-test helpers, oldest first. */
+    public List<EventEnvelope> getArchiveStatusForTest() { return archiveStatusForTest(); }
+
+    private List<EventEnvelope> archiveStatusForTest() {
+        if (archiveStatusCapture == null) archiveStatusCapture = new ArrayList<>();
+        return archiveStatusCapture;
     }
 
     /**

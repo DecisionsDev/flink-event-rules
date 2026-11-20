@@ -15,8 +15,58 @@
  *   limitations under the License.
  *
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { API_URL } from './config.js';
+import ArchiveProjectBrowser, { statusTone } from './ArchiveProjectBrowser.jsx';
+
+export { statusTone };
+
+/**
+ * Parts shown on an archive card.  The BFF parses the decision id (the only place that knows its
+ * shape) and returns `service`, `version`, `build` and `group`; this only derives display strings.
+ */
+export function describeArchive(d) {
+  const service = d.service || d.name || d.id;
+  const version = d.version || '';
+  const project = d.group && d.group !== service ? d.group : '';
+  return { service, version, project, label: version ? `${service} ${version}` : service };
+}
+
+/** Decision Services the BFF resolved for the use case (X-Decision-Services header). */
+function readBoundServices(response) {
+  try {
+    const raw = response.headers?.get?.('X-Decision-Services');
+    const parsed = raw ? JSON.parse(decodeURIComponent(raw)) : null;
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+const normKey = (name) => String(name ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/**
+ * The listed archive that is the jar the job runs, or null. An archive saved from the runtime
+ * carries the exact jar name; the jar a use case ships with (`<Service>_<version>.jar`) has no
+ * build suffix, so it is matched by service + version, and only when that is unambiguous.
+ */
+export function findArchiveForJar(archives, jar) {
+  if (!jar) return null;
+  const exact = archives.filter(a => a.filename && a.filename === jar.filename);
+  if (exact.length === 1) return exact[0].id;
+  if (exact.length > 1) return null;
+  if (!jar.service || !jar.version) return null;
+  const loose = archives.filter(a => normKey(a.service) === normKey(jar.service) && a.version === jar.version);
+  return loose.length === 1 ? loose[0].id : null;
+}
+
+export function SkeletonCards() {
+  return (
+    <div className="rr-grid" aria-hidden="true">
+      {[0, 1, 2].map(i => <div key={i} className="rr-card rr-card--skeleton" />)}
+    </div>
+  );
+}
 
 /**
  * "Refresh Rules" sub-section of the Agent Management panel: live refresh of the rules of a
@@ -36,12 +86,20 @@ export default function DiRuntimeRulesRefresh({ useCaseId, disabled = false, dis
   const [runtimeId, setRuntimeId]           = useState('');
   const [space, setSpace]                   = useState('');
   const [decisions, setDecisions]           = useState([]);
+  const [boundServices, setBoundServices]   = useState(null); // null = unknown
   const [decisionsState, setDecisionsState] = useState('idle'); // idle|loading|ready|error
   const [decisionsError, setDecisionsError] = useState(null);
   const [decisionId, setDecisionId]         = useState('');
   const [refreshState, setRefreshState]     = useState('idle'); // idle|refreshing|done|error
   const [refreshMsg, setRefreshMsg]         = useState(null);
   const [expanded, setExpanded]             = useState(false);
+  // Explicit opt-in: also write the refreshed archive into agents.json (ruleset.path).
+  const [updateAgentsJson, setUpdateAgentsJson] = useState(false);
+  // READY TO APPLY details: user-controlled only; selecting/clearing an archive never changes it.
+  const [detailsOpen, setDetailsOpen]       = useState(false);
+  // What the job really runs, as recorded in agents.json once the job confirmed a load.
+  // It changes only after a confirmed refresh/restore, never on a failure.
+  const [rules, setRules]                   = useState(null); // {active, default, isDefault, inSync} | null
 
   useEffect(() => {
     if (disabled || runtimes !== null) return;
@@ -51,19 +109,40 @@ export default function DiRuntimeRulesRefresh({ useCaseId, disabled = false, dis
       .catch(err => { setRuntimes([]); setRuntimesError(err.message); });
   }, [disabled, runtimes]);
 
+  const loadRules = async () => {
+    try {
+      const r = await fetch(`${API_URL}/api/ads-runtimes/rules-status?useCaseId=${encodeURIComponent(useCaseId ?? '')}`);
+      const body = await r.json().catch(() => ({}));
+      if (r.ok && body && typeof body === 'object') setRules(body);
+    } catch {
+      // keep what is shown: an unreadable status must not change the indicator
+    }
+  };
+
+  useEffect(() => {
+    if (disabled || !useCaseId) return;
+    loadRules();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disabled, useCaseId]);
+
   const resetSelection = () => { setDecisionId(''); setRefreshState('idle'); setRefreshMsg(null); };
 
   const loadDecisions = async (rtId, spaceValue) => {
     setDecisionsState('loading');
     setDecisionsError(null);
     setDecisions([]);
+    setBoundServices(null);
     resetSelection();
     try {
       const sp = (spaceValue || '').trim();
-      const query = sp ? `?deploymentSpace=${encodeURIComponent(sp)}` : '';
+      // useCaseId makes the BFF return only the versions of the Decision Service bound to the
+      // use case; it is always sent so that an archive of another service is never listed.
+      const query = `?useCaseId=${encodeURIComponent(useCaseId ?? '')}`
+        + (sp ? `&deploymentSpace=${encodeURIComponent(sp)}` : '');
       const r = await fetch(`${API_URL}/api/ads-runtimes/${encodeURIComponent(rtId)}/decisions${query}`);
       const body = await r.json();
       if (!r.ok) throw new Error(body.error || r.statusText);
+      setBoundServices(readBoundServices(r));
       setDecisions(body);
       setDecisionsState('ready');
     } catch (err) {
@@ -83,27 +162,55 @@ export default function DiRuntimeRulesRefresh({ useCaseId, disabled = false, dis
     loadDecisions(rtId, seed);
   };
 
-  const handleRefresh = async () => {
-    if (!runtimeId || !decisionId) return;
+  const selectDecision = (id) => { setDecisionId(id); setRefreshState('idle'); setRefreshMsg(null); };
+
+  // Both actions are confirmed by the job before the BFF answers 200; only then is the
+  // indicator re-read. On any error the previous indicator stays.
+  const runRulesAction = async (url, failure, success) => {
     setRefreshState('refreshing');
     setRefreshMsg(null);
     try {
-      const sp = space.trim();
-      const spaceQuery = sp ? `&deploymentSpace=${encodeURIComponent(sp)}` : '';
-      const r = await fetch(
-        `${API_URL}/api/ads-runtimes/${encodeURIComponent(runtimeId)}/refresh-rules`
-        + `?decisionId=${encodeURIComponent(decisionId)}&useCaseId=${encodeURIComponent(useCaseId)}${spaceQuery}`,
-        { method: 'POST' },
-      );
+      const r = await fetch(url, { method: 'POST' });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || r.statusText);
       setRefreshState('done');
-      setRefreshMsg(`Archive ${body.filename} saved; reload command sent to ${(body.topics || []).join(', ')}.`);
+      setRefreshMsg(success(body));
+      await loadRules();
     } catch (err) {
       setRefreshState('error');
-      setRefreshMsg(`Refresh failed: ${err.message}`);
+      setRefreshMsg(`${failure}: ${err.message}`);
     }
   };
+
+  const handleRefresh = () => {
+    if (!runtimeId || !decisionId) return undefined;
+    const sp = space.trim();
+    const spaceQuery = sp ? `&deploymentSpace=${encodeURIComponent(sp)}` : '';
+    return runRulesAction(
+      `${API_URL}/api/ads-runtimes/${encodeURIComponent(runtimeId)}/refresh-rules`
+        + `?decisionId=${encodeURIComponent(decisionId)}&useCaseId=${encodeURIComponent(useCaseId)}${spaceQuery}`
+        + `&updateAgentsJson=${updateAgentsJson}`,
+      'Refresh failed',
+      body => `Archive ${body.filename} is now running — confirmed by the job (${(body.topics || []).join(', ')}).`,
+    );
+  };
+
+  const handleRestoreDefault = () => runRulesAction(
+    `${API_URL}/api/ads-runtimes/restore-default?useCaseId=${encodeURIComponent(useCaseId)}`,
+    'Restore failed',
+    body => `Default archive ${body.filename} restored — confirmed by the job.`,
+  );
+
+  const archives = useMemo(
+    () => decisions.map(d => ({ ...d, ...describeArchive(d) })),
+    [decisions],
+  );
+  const selected = archives.find(a => a.id === decisionId) || null;
+  const activeJar  = rules?.active || null;
+  const defaultJar = rules?.default || null;
+  const activeId   = useMemo(() => findArchiveForJar(archives, activeJar), [archives, activeJar]);
+  const defaultId  = useMemo(() => findArchiveForJar(archives, defaultJar), [archives, defaultJar]);
+  const refreshing = refreshState === 'refreshing';
 
   return (
     <section className="agent-mgmt-refresh" aria-label="Refresh Rules" data-testid="refresh-rules-section">
@@ -120,87 +227,235 @@ export default function DiRuntimeRulesRefresh({ useCaseId, disabled = false, dis
           {expanded ? '−' : '+'}
         </button>
         Refresh Rules
+        {!expanded && selected && (
+          <span className="rr-header-chip" title={selected.id}>{selected.label}</span>
+        )}
       </div>
       <div id="refresh-rules-body" hidden={!expanded} className="agent-mgmt-refresh-body">
-      {disabled && disabledReason && <div className="ade-field-hint">{disabledReason}</div>}
-      <fieldset className="agent-mgmt-refresh-fields" disabled={disabled}>
-        {runtimesError && <div className="ade-field-error">Could not load runtimes: {runtimesError}</div>}
-        {runtimes === null && !runtimesError && !disabled && <div className="ade-field-hint">Loading runtimes…</div>}
-        {runtimes !== null && runtimes.length === 0 && !runtimesError && (
-          <div className="ade-field-hint">
-            No DI runtimes configured. Add entries to <code>DI_RUNTIMES</code> in your <code>.env</code> file.
-          </div>
-        )}
-        <label className="ade-field-label" htmlFor="refresh-rules-runtime">DI Runtime</label>
-        <select
-          id="refresh-rules-runtime"
-          className="ade-field-input"
-          aria-label="Select DI runtime"
-          value={runtimeId}
-          onChange={e => onRuntimeChange(e.target.value)}
-        >
-          <option value="">— select a runtime —</option>
-          {(runtimes || []).map(rt => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
-        </select>
+        {disabled && disabledReason && <div className="rr-note rr-note--warn">{disabledReason}</div>}
+        <fieldset className="agent-mgmt-refresh-fields" disabled={disabled}>
+          {runtimesError && <div className="rr-note rr-note--error" role="alert">Could not load runtimes: {runtimesError}</div>}
+          {runtimes === null && !runtimesError && !disabled && <div className="rr-note">Loading runtimes…</div>}
+          {runtimes !== null && runtimes.length === 0 && !runtimesError && (
+            <div className="rr-note">
+              No DI runtimes configured. Add entries to <code>DI_RUNTIMES</code> in your <code>.env</code> file.
+            </div>
+          )}
 
-        {runtimeId && (
-          <>
-            <label className="ade-field-label" htmlFor="refresh-rules-space">Deployment Space</label>
-            <div className="ade-di-fetch-row">
-              <input
-                id="refresh-rules-space"
-                className="ade-field-input"
-                type="text"
-                aria-label="Deployment space"
-                value={space}
-                placeholder="embedded"
-                spellCheck={false}
-                onChange={e => setSpace(e.target.value)}
+          {/* What the job runs now, and the way back to the default */}
+          {activeJar && (
+            <div className={`rr-running${rules.isDefault ? '' : ' rr-running--custom'}`} data-testid="rr-running">
+              <span className="rr-running-dot" aria-hidden="true" />
+              <div className="rr-running-text">
+                <span className="rr-running-label">Running now</span>
+                <span className="rr-running-name" title={activeJar.path}>{activeJar.filename}</span>
+              </div>
+              <span className={`rr-badge ${rules.isDefault ? 'rr-badge--ok' : 'rr-badge--accent'}`}>
+                {rules.isDefault ? 'Default' : 'Custom'}
+              </span>
+              {!rules.isDefault && defaultJar && (
+                <button
+                  type="button"
+                  className="rr-btn"
+                  disabled={refreshing}
+                  title={`Reload the default archive (${defaultJar.filename}) into the running job`}
+                  onClick={handleRestoreDefault}
+                >
+                  Restore default
+                </button>
+              )}
+              {rules.inSync === false && (
+                <span className="rr-running-warn" role="alert">
+                  The agents of this use case do not use the same archive.
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Step 1 — where do the archives come from */}
+          <div className="rr-step">
+            <div className="rr-step-head"><span className="rr-step-num">1</span>Source</div>
+            <div className="rr-source">
+              <div className="rr-field">
+                <label className="rr-label" htmlFor="refresh-rules-runtime">DI Runtime</label>
+                <select
+                  id="refresh-rules-runtime"
+                  className="rr-input"
+                  aria-label="Select DI runtime"
+                  value={runtimeId}
+                  onChange={e => onRuntimeChange(e.target.value)}
+                >
+                  <option value="">— select a runtime —</option>
+                  {(runtimes || []).map(rt => <option key={rt.id} value={rt.id}>{rt.name}</option>)}
+                </select>
+              </div>
+              {runtimeId && (
+                <div className="rr-field">
+                  <label className="rr-label" htmlFor="refresh-rules-space">Deployment Space</label>
+                  <div className="rr-inline">
+                    <input
+                      id="refresh-rules-space"
+                      className="rr-input"
+                      type="text"
+                      aria-label="Deployment space"
+                      value={space}
+                      placeholder="embedded"
+                      spellCheck={false}
+                      onChange={e => setSpace(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && space.trim() && decisionsState !== 'loading') {
+                          e.preventDefault();
+                          loadDecisions(runtimeId, space);
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="rr-btn"
+                      disabled={!space.trim() || decisionsState === 'loading'}
+                      onClick={() => loadDecisions(runtimeId, space)}
+                    >
+                      {decisionsState === 'loading' ? 'Loading…' : 'Load Decisions'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Step 2 — choose the decision service archive */}
+          <div className="rr-step">
+            <div className="rr-step-head">
+              <span className="rr-step-num">2</span>
+              <span>Decision service archive</span>
+              {decisionsState === 'ready' && archives.length > 0 && (
+                <span className="rr-count">{archives.length} available</span>
+              )}
+            </div>
+
+            {!runtimeId && (
+              <div className="rr-empty">
+                <strong>Select a runtime to browse archives</strong>
+                <span>Deployed decision service archives will appear here.</span>
+              </div>
+            )}
+
+            {runtimeId && decisionsState === 'loading' && (
+              <div aria-busy="true">
+                <SkeletonCards />
+                <span className="rr-sr-only" role="status">Loading archives…</span>
+              </div>
+            )}
+
+            {runtimeId && decisionsState === 'error' && (
+              <div className="rr-note rr-note--error rr-note--row" role="alert">
+                <span>Could not load decisions: {decisionsError}</span>
+                <button type="button" className="rr-btn" onClick={() => loadDecisions(runtimeId, space)}>Retry</button>
+              </div>
+            )}
+
+            {decisionsState === 'ready' && archives.length === 0 && boundServices && boundServices.length === 0 && (
+              <div className="rr-empty">
+                <strong>This use case has no decision service binding</strong>
+                <span>
+                  Set <code>ruleset.path</code> (<code>&lt;Service&gt;_&lt;version&gt;.jar</code>) or{' '}
+                  <code>ruleset.project</code> in its agents.json so its archives can be listed.
+                </span>
+              </div>
+            )}
+
+            {decisionsState === 'ready' && archives.length === 0 && !(boundServices && boundServices.length === 0) && (
+              <div className="rr-empty">
+                <strong>No version of this use case&apos;s decision service on this runtime</strong>
+                <span>
+                  {boundServices && boundServices.length > 0
+                    ? <>Looked for <strong>{boundServices.join(', ')}</strong> in this deployment space. </>
+                    : null}
+                  Only versions of the decision service bound to this use case are listed.
+                  Check the deployment space, then load again.
+                </span>
+              </div>
+            )}
+
+            {decisionsState === 'ready' && archives.length > 0 && (
+              <ArchiveProjectBrowser
+                archives={archives}
+                decisionId={decisionId}
+                onSelect={selectDecision}
+                radioName="refresh-rules-decision"
+                ariaLabelFor={a => (a.id === activeId ? `${a.label} (running now)` : a.label)}
+                isHighlighted={a => a.id === activeId}
+                tagsFor={a => (
+                  <>
+                    {a.id === activeId && <span className="rr-card-active">Running</span>}
+                    {a.id === defaultId && <span className="rr-card-default">Default</span>}
+                  </>
+                )}
               />
+            )}
+          </div>
+
+          {/* Step 3 — review and apply */}
+          <div className="rr-footer">
+            <div className="rr-summary" aria-live="polite">
+              {selected ? (
+                <>
+                  <button
+                    type="button"
+                    className="rr-summary-toggle"
+                    aria-expanded={detailsOpen}
+                    aria-controls="rr-summary-details"
+                    onClick={() => setDetailsOpen(o => !o)}
+                  >
+                    <span className="rr-summary-caret" aria-hidden="true">{detailsOpen ? '▾' : '▸'}</span>
+                    <span className="rr-summary-label">Ready to apply</span>
+                    <span className="rr-summary-value">{selected.label}</span>
+                  </button>
+                  <span id="rr-summary-details" className="rr-summary-meta" hidden={!detailsOpen}>{selected.id}</span>
+                </>
+              ) : (
+                <span className="rr-summary-label">Select an archive to continue</span>
+              )}
+            </div>
+            <div className="rr-footer-actions">
+              <label
+                className="rr-checkbox"
+                title="Checked: write the refreshed archive to agents.json and keep the archive file. Unchecked: the archive file is deleted once the job confirmed the new rules."
+              >
+                <input
+                  type="checkbox"
+                  checked={updateAgentsJson}
+                  disabled={refreshing}
+                  onChange={e => setUpdateAgentsJson(e.target.checked)}
+                />
+                Persist Rules
+              </label>
+              {selected && !refreshing && (
+                <button type="button" className="rr-btn rr-btn--ghost" onClick={() => selectDecision('')}>
+                  Clear
+                </button>
+              )}
               <button
                 type="button"
-                className="ade-di-fetch-btn"
-                disabled={!space.trim() || decisionsState === 'loading'}
-                onClick={() => loadDecisions(runtimeId, space)}
+                className="rr-btn rr-btn--primary"
+                disabled={!runtimeId || !decisionId || refreshing}
+                title="Save the selected archive in the use-case folder and send the reload command to the archive control topic"
+                onClick={handleRefresh}
               >
-                {decisionsState === 'loading' ? 'Loading…' : 'Load Decisions'}
+                {refreshing ? 'Waiting for the job…' : 'Refresh Rules'}
               </button>
             </div>
-            <label className="ade-field-label" htmlFor="refresh-rules-decision">Decision service archive</label>
-            {decisionsState === 'error' && <div className="ade-field-error">Could not load decisions: {decisionsError}</div>}
-            {decisionsState === 'ready' && decisions.length === 0 && (
-              <div className="ade-field-hint">No decisions deployed on this runtime.</div>
-            )}
-            {decisionsState === 'ready' && decisions.length > 0 && (
-              <select
-                id="refresh-rules-decision"
-                className="ade-field-input"
-                aria-label="Select decision"
-                value={decisionId}
-                onChange={e => { setDecisionId(e.target.value); setRefreshState('idle'); setRefreshMsg(null); }}
-              >
-                <option value="">— select a decision —</option>
-                {decisions.map(d => <option key={d.id} value={d.id}>{d.name || d.id}</option>)}
-              </select>
-            )}
-          </>
-        )}
+          </div>
 
-        <div className="ade-di-fetch-row">
-          <button
-            type="button"
-            className="ade-di-fetch-btn ade-di-fetch-btn--primary"
-            disabled={!runtimeId || !decisionId || refreshState === 'refreshing'}
-            title="Save the selected archive in the use-case folder and send the reload command to the archive control topic"
-            onClick={handleRefresh}
-          >
-            {refreshState === 'refreshing' ? 'Refreshing…' : 'Refresh Rules'}
-          </button>
-        </div>
-        {refreshMsg && (
-          <div className={refreshState === 'error' ? 'ade-field-error' : 'ade-field-hint'}>{refreshMsg}</div>
-        )}
-      </fieldset>
+          {refreshMsg && (
+            <div
+              className={`rr-note ${refreshState === 'error' ? 'rr-note--error' : 'rr-note--success'}`}
+              role={refreshState === 'error' ? 'alert' : 'status'}
+            >
+              <span>{refreshMsg}</span>
+            </div>
+          )}
+        </fieldset>
       </div>
     </section>
   );

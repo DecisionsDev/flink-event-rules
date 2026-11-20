@@ -46,7 +46,7 @@ echo ""
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # settings.xml prepends https:// itself, so DI_ZEN_HOSTNAME must be a bare hostname.
-# Accept values with a scheme or trailing slash and strip them.
+# Accept values with a scheme or trailing slash and strip them (only used in DI CMS mode, see below).
 if [ -n "${DI_ZEN_HOSTNAME:-}" ]; then
     DI_ZEN_HOSTNAME="${DI_ZEN_HOSTNAME#https://}"
     DI_ZEN_HOSTNAME="${DI_ZEN_HOSTNAME#http://}"
@@ -69,14 +69,35 @@ fi
 MVN_EXTRA_FLAGS=""
 if [ "${DI_SKIP_TLS_VERIFY:-false}" = "true" ]; then
     # Maven 3.9's default transport ignores maven.wagon.http.ssl.*: force Wagon (as resolve-di-dependencies.sh does).
-    MVN_EXTRA_FLAGS="-Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true"
+    MVN_EXTRA_FLAGS="-Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true -Dmaven.wagon.http.ssl.ignore.validity.dates=true"
+fi
+
+# Maven settings selection. The IBM Decision artifacts come from one of two sources:
+#   - DI CMS (Decision Designer) Maven repository: repository settings.xml, profile maven-designer.
+#     Selected when DI_ZEN_HOSTNAME and DI_ZEN_API_KEY_B64 are set. DI_ZEN_API_KEY_B64 is derived from
+#     DI_ZEN_USERNAME + DI_ZEN_API_KEY when both are set.
+#   - Otherwise (for example IBM Artifactory): your own ~/.m2/settings.xml.
+# --settings REPLACES ~/.m2/settings.xml, so it is only passed in the first case.
+if [ -n "${DI_ZEN_USERNAME:-}" ] && [ -n "${DI_ZEN_API_KEY:-}" ]; then
+    DI_ZEN_API_KEY_B64="$(printf '%s:%s' "$DI_ZEN_USERNAME" "$DI_ZEN_API_KEY" | base64 | tr -d '\n')"
+    export DI_ZEN_API_KEY_B64
+fi
+
+MVN_SETTINGS_ARGS=()
+if [ -n "${DI_ZEN_HOSTNAME:-}" ] && [ -n "${DI_ZEN_API_KEY_B64:-}" ]; then
+    echo "Maven settings: DI CMS mode (settings.xml, profile maven-designer, https://${DI_ZEN_HOSTNAME}/ads/static/maven-releases)"
+    MVN_SETTINGS_ARGS=(--settings "$PROJECT_ROOT/settings.xml" -P maven-designer)
+else
+    if [ -n "${DI_ZEN_HOSTNAME:-}${DI_ZEN_API_KEY_B64:-}" ]; then
+        echo "⚠ DI CMS settings incomplete (need DI_ZEN_HOSTNAME and DI_ZEN_API_KEY_B64, or DI_ZEN_USERNAME + DI_ZEN_API_KEY): ignoring them." >&2
+    fi
+    echo "Maven settings: user mode (~/.m2/settings.xml, for example IBM Artifactory)"
 fi
 
 # Run Maven clean package (which compiles, runs all unit/regression tests, and packages the fat JAR)
 # shellcheck disable=SC2086
 mvn clean package \
-    --settings "$PROJECT_ROOT/settings.xml" \
-    -P maven-designer \
+    "${MVN_SETTINGS_ARGS[@]}" \
     -DskipTests=false \
     $MVN_EXTRA_FLAGS
 

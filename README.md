@@ -104,12 +104,15 @@ running application. When rules change, the application automatically picks up t
 For the full list of runtime environment variables, see [`.env.example`](.env.example) and
 [`DOCKER.md`](DOCKER.md).
 
-To build and run this solution, you need to have access to an instance of IBM Decision Intelligence CMS and register the following environment variables to access it: 
+The IBM Decision Intelligence Maven artifacts needed at build time come either from IBM Artifactory or from the Maven repository of an IBM Decision Intelligence CMS instance.
+
+To build with a DI CMS instance, register the following environment variables to access it:
 
 * export DI_ZEN_HOSTNAME=<URL of your IBM DI CMS instance>
 * export DI_ZEN_USERNAME=<User name used on this instance>
-* export DI_ZEN_PASSWORD=<User passwork used on this instance>
 * export DI_ZEN_API_KEY=<Zen API Key you created in this instance>
+
+(`DI_ZEN_PASSWORD`, listed in `.env.example`, is not read by any script in this repository.)
 
 You can copy the `.env.example` to a `.env.local` and set the values of the expected variables. Initialize your environment by running the following command in terminal:
 
@@ -122,8 +125,7 @@ source .env.local
 When compiling with an instance of IBM Decision Intelligence CMS, you need to run the following script:
 
 ```bash
-cd scripts
-./resolve-di-dependencies.sh
+./scripts/resolve-di-dependencies.sh
 ```
 
 ---
@@ -547,7 +549,8 @@ startup). Each entry is a JSON object:
     "name":     "DI Development",
     "url":      "http://ads-dev:9060",
     "username": "admin",
-    "apiKey":   "<zen api key>"
+    "apiKey":   "<zen api key>",
+    "token":    "<bearer token>"
   }
 ]
 ```
@@ -559,6 +562,7 @@ startup). Each entry is a JSON object:
 | `url`      | ✓        | Base URL of the DI runtime (no trailing slash)          |
 | `username` |          | Zen user name the API key belongs to                     |
 | `apiKey`   |          | Zen API key; sent as `Authorization: ZenApiKey base64(<username>:<apiKey>)` (both `username` and `apiKey` are needed to authenticate) |
+| `token`    |          | Bearer token; sent as `Authorization: Bearer <token>` (takes precedence over `apiKey`) |
 
 Credentials are consumed server-side only and are **never sent to the browser**.
 
@@ -570,11 +574,51 @@ See [`.env.example`](.env.example) for the full configuration block and
 | Method | Path                                                              | Description                                                |
 |--------|-------------------------------------------------------------------|------------------------------------------------------------|
 | `GET`  | `/api/ads-runtimes`                                               | List configured DI runtimes (no credentials)               |
-| `GET`  | `/api/ads-runtimes/:id/decisions`                                 | List decisions deployed on a runtime                       |
+| `GET`  | `/api/ads-runtimes/:id/decisions[?useCaseId=]`                    | List decisions deployed on a runtime. With `useCaseId`, only versions of the Decision Service bound to that use case (see below) |
 | `GET`  | `/api/ads-runtimes/:id/archive?decisionId=`                       | Stream an archive from a runtime to the editor             |
 | `POST` | `/api/ads-runtimes/:id/archive?decisionId=&agentId=`              | Download an archive server-side and save it under `samples/<agentId>/` |
+| `POST` | `/api/ads-runtimes/:id/refresh-rules?decisionId=&useCaseId=[&updateAgentsJson=true]` | Live rules refresh; rejects archives of a Decision Service not bound to the use case (403/422). Answers 200 only after the job confirmed the load. `agents.json` (`ruleset.path`) is rewritten, and the downloaded jar kept in `samples/<useCase>/`, only with `updateAgentsJson=true` (UI checkbox "Persist Rules", off by default). Without it, the jar is deleted once the job confirmed the load (`archiveDeleted` in the response) unless it already existed or `agents.json` references it; failed, partial or timed-out loads never delete anything |
+| `POST` | `/api/ads-runtimes/restore-default?useCaseId=`                    | Reload the use case's default archive (`ruleset.defaultPath`) the same way |
+| `GET`  | `/api/ads-runtimes/rules-status?useCaseId=`                       | `{active, default, isDefault, inSync}` read from `agents.json` |
 | `POST` | `/api/agents`                                                     | Save the descriptor                                        |
 | `POST` | `/api/agents/:id/jar`, `/project`, `/reference`                   | Upload decision archive, Decision Service project and reference CSV files |
+
+**Decision Service binding of a use case (Refresh Rules).** The BFF derives the Decision Service(s) of a
+use case from `agents[].ruleset` in its `agents.json`, and the *Refresh Rules* list and the
+`refresh-rules` endpoint apply the same rule:
+
+1. `ruleset.path` is authoritative. Its jar must be named `<Service>_<version>.jar`
+   (e.g. `AirlineDecisionService_1.6.0.jar` → `AirlineDecisionService`).
+2. `ruleset.project` (`…/<Service>.zip`) is used **only when `ruleset.path` is absent or blank**. A path that is
+   present but unrecognizable is never overridden by `project`.
+3. The binding is the union over all agents. It **fails closed**: when it cannot be resolved the listing is `[]`
+   and `refresh-rules` answers `422`; an archive of another service is answered `403`.
+4. Runtime decision ids look like `<tenant>/<repo>/<service lowercase>/<serviceCamel>DecisionService/<version>-<build timestamp>`
+   (not `project/service/version`). The BFF parses the service, version and build out of the id and compares
+   services ignoring case, spaces, `_` and `-` (`Air Traffic Control Service` = `Air_Traffic_Control_Service` =
+   `air_traffic_control_service`). Archives saved by the editor or a refresh (named after the decision id) bind to the
+   same service.
+5. The listing returns the resolved service names in the `X-Decision-Services` header, so the UI can tell
+   "this use case has no binding" from "no version of `<Service>` on this runtime".
+
+**Active archive and `agents.json` (Refresh Rules).** The rules loaded in the Flink job are the source of truth.
+Every `LOAD` is acknowledged by each parallel subtask of every agent on `<archiveControlTopic>-status`; the BFF
+starts listening *before* it publishes (`ARCHIVE_ACK_TIMEOUT_MS`, default 30 s) and answers:
+
+| Outcome | HTTP | `agents.json` / active indicator |
+|---|---|---|
+| every subtask `LOADED` | 200 | `ruleset.path` = the loaded jar; `ruleset.defaultPath` set once to the previous path |
+| job rejected it (bad SHA, unreadable archive, failed smoke test) | 502 | unchanged — the job keeps its previous rules |
+| only some subtasks loaded it | 502, `outOfSync` | unchanged, but the job runs mixed rules: retry or restore the default |
+| no/partial answer in time | 504 | unchanged (the load may still happen later; the status is re-read on the next refresh) |
+
+The dashboard highlights the card of the archive named by `ruleset.path` ("Running"), marks the default one, and
+offers *Restore default* while another archive runs. Only one refresh/restore per use case runs at a time (409).
+Matching `ruleset.path` to a listed archive is by jar name (archives saved from a runtime) or, for the jar a use
+case ships with, by service and version when that is unambiguous; otherwise the "Running now" banner still names the jar.
+A job started before the acknowledgement was added must be redeployed, otherwise refreshes end in 504.
+Hot reload (and so this tracking) is DataStream-only.
+
 
 ---
 
@@ -707,10 +751,11 @@ export DI_ZEN_API_KEY="<api-key-from-cp4ba-ui>"
 ./scripts/resolve-di-dependencies.sh
 ```
 
-Then build with:
+Then build with (`build.sh` selects `settings.xml` and the `maven-designer` profile because `DI_ZEN_HOSTNAME`
+and `DI_ZEN_USERNAME` / `DI_ZEN_API_KEY` are set; without them it uses your own `~/.m2/settings.xml`):
 
 ```bash
-mvn clean package -s settings.xml -P maven-designer -pl event-rule-backend
+./build.sh
 ```
 
 See [Building against a local Decision Designer installation](#building-against-a-local-decision-designer-installation)
@@ -748,7 +793,7 @@ export DI_ZEN_API_KEY="<api-key-from-cp4ba-ui>"
 
 ./scripts/resolve-di-dependencies.sh
 
-mvn clean package -s settings.xml -P maven-designer -pl event-rule-backend
+./build.sh
 ```
 
 Set `DI_SKIP_TLS_VERIFY=true` for self-signed certificates (development only).

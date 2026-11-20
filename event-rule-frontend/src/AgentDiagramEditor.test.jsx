@@ -478,7 +478,7 @@ describe('AgentDiagramEditor', () => {
             return {
               ok: true,
               headers: { get: (h) => (h === 'X-Archive-Filename' ? 'svc_1.0.jar' : null) },
-              blob: async () => new Blob(['jar-bytes']),
+              blob: async () => new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2])]),
             };
           }
           if (url.endsWith('/jar')) {
@@ -495,7 +495,7 @@ describe('AgentDiagramEditor', () => {
         selectNode('Order Agent');
         fireEvent.click(screen.getByRole('button', { name: /Fetch from DI Runtime/i }));
         fireEvent.change(await screen.findByLabelText('Select DI runtime'), { target: { value: 'rt1' } });
-        fireEvent.change(await screen.findByLabelText('Select decision'), { target: { value: 'svc/1.0' } });
+        fireEvent.click(within(await screen.findByRole('radiogroup', { name: 'Select decision' })).getByRole('radio', { name: 'Service 1.0' }));
         fireEvent.click(screen.getByRole('button', { name: /Fetch Archive/i }));
         expect(await screen.findByText(/Archive fetched \(svc_1\.0\.jar\)/)).toBeInTheDocument();
       };

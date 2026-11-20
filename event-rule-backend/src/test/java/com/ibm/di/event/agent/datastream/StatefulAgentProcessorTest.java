@@ -1463,6 +1463,89 @@ class StatefulAgentProcessorTest {
                 "Failed LOAD must not update broadcast state");
         }
 
+        // ── archive-status acknowledgements ───────────────────────────────────
+
+        private static JsonNode lastAck(StatefulAgentProcessor p) {
+            List<EventEnvelope> acks = p.getArchiveStatusForTest();
+            assertFalse(acks.isEmpty(), "an archive-status ack must have been emitted");
+            assertEquals(StatefulAgentProcessor.ARCHIVE_STATUS_EVENT_TYPE,
+                acks.get(acks.size() - 1).getEventType());
+            return acks.get(acks.size() - 1).getPayload();
+        }
+
+        @Test
+        @DisplayName("Failed LOAD acks FAILED and reports the archive that stayed active")
+        void failedLoadAcksFailedAndKeepsActive() {
+            StatefulAgentProcessor p = new StatefulAgentProcessor(descriptorWith("ctrl"));
+            Map<String, ArchiveEntry> store = new HashMap<>();
+            store.put("ACTIVE", new ArchiveEntry("v1", "file:///tmp/v1.jar", "sha1", 1L));
+
+            ArchiveControlCmd cmd = loadCmd("v-fail");
+            cmd.setArchiveUrl("file:///nonexistent/path/archive.jar");
+            cmd.setSha256("deadbeef00112233445566778899aabbccddeeff00112233445566778899aabb");
+            p.invokeProcessBroadcastForTest(cmd, store);
+
+            JsonNode ack = lastAck(p);
+            assertEquals("FAILED", ack.get("status").asText());
+            assertEquals("v-fail", ack.get("requestedVersion").asText());
+            assertEquals("v1", ack.get("activeVersion").asText(), "failure must report the kept archive");
+            assertEquals("req-v-fail", ack.get("requestId").asText());
+            assertTrue(ack.hasNonNull("error"));
+            assertEquals("v1", store.get("ACTIVE").getVersion());
+        }
+
+        @Test
+        @DisplayName("Invalid LOAD (blank sha256) acks FAILED")
+        void invalidLoadAcksFailed() {
+            StatefulAgentProcessor p = new StatefulAgentProcessor(descriptorWith("ctrl"));
+            ArchiveControlCmd cmd = loadCmd("v3");
+            cmd.setSha256("  ");
+            p.invokeProcessBroadcastForTest(cmd, new HashMap<>());
+
+            assertEquals("FAILED", lastAck(p).get("status").asText());
+        }
+
+        @Test
+        @DisplayName("NOOP / PREFETCH emit no ack — only LOAD and ROLLBACK change the active archive")
+        void noopAndPrefetchEmitNoAck() {
+            StatefulAgentProcessor p = new StatefulAgentProcessor(descriptorWith("ctrl"));
+            ArchiveControlCmd noop = new ArchiveControlCmd();
+            noop.setCommandType(ArchiveControlCmd.CommandType.NOOP);
+            p.invokeProcessBroadcastForTest(noop, new HashMap<>());
+            p.invokeProcessBroadcastForTest(prefetchCmd("v9"), new HashMap<>());
+
+            assertTrue(p.getArchiveStatusForTest().isEmpty());
+        }
+
+        @Test
+        @DisplayName("Successful LOAD of a real archive acks LOADED with the new version, after the state is updated")
+        void successfulLoadAcksLoaded() throws Exception {
+            java.nio.file.Path jar = java.nio.file.Path.of(
+                "../samples/banking-fraud-agent/Fraud_Detection_Service_1.6.0.jar");
+            org.junit.jupiter.api.Assumptions.assumeTrue(java.nio.file.Files.exists(jar),
+                "sample archive must exist to run this test");
+            String sha = java.util.HexFormat.of().formatHex(java.security.MessageDigest
+                .getInstance("SHA-256").digest(java.nio.file.Files.readAllBytes(jar)));
+
+            AgentDescriptor d = descriptorWith("ctrl");
+            d.setSubscriptions(List.of(new EventSubscription(
+                "txn", "transactions", "EvaluateTransaction", HorizonConfig.count(10))));
+            StatefulAgentProcessor p = new StatefulAgentProcessor(d);
+            Map<String, ArchiveEntry> store = new HashMap<>();
+
+            ArchiveControlCmd cmd = loadCmd("Fraud_Detection_Service_1.6.0");
+            cmd.setArchiveUrl(jar.toAbsolutePath().toUri().toString());
+            cmd.setSha256(sha);
+            p.invokeProcessBroadcastForTest(cmd, store);
+
+            JsonNode ack = lastAck(p);
+            assertEquals("LOADED", ack.get("status").asText());
+            assertEquals("Fraud_Detection_Service_1.6.0", ack.get("activeVersion").asText());
+            assertEquals("Fraud_Detection_Service_1.6.0", store.get("ACTIVE").getVersion());
+            assertFalse(ack.has("error"));
+        }
+
+
         // ── PREFETCH ──────────────────────────────────────────────────────────
 
         @Test

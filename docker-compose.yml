@@ -224,6 +224,7 @@ services:
       FLINK_URL: http://jobmanager:8081
       JAR_PATH: /app/flink-jars/event-rule-backend-1.0-SNAPSHOT.jar
       DI_RUNTIMES: ${DI_RUNTIMES:-}
+      IN_DOCKER: "true"
       # Must match the Flink containers: it changes the PTF SQL the BFF generates for the SQL view.
       CHAINING_ENABLED: ${CHAINING_ENABLED:-false}
     ports:
@@ -231,6 +232,8 @@ services:
     volumes:
       - ./samples:/app/samples
       - ./event-rule-backend/target:/app/flink-jars:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - event-rule-network
     restart: unless-stopped

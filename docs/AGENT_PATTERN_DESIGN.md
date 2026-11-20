@@ -1484,7 +1484,10 @@ Key points:
 
 - One Kafka source per subscription (no shared global consumer).
 - `StatefulAgentProcessor` connects the keyed event stream with a **broadcast stream** of
-  `ArchiveControlCmd` messages, enabling live archive hot-swap without job restart.
+  `ArchiveControlCmd` messages, enabling live archive hot-swap without job restart. Every `LOAD` /
+  `ROLLBACK` is acknowledged by each subtask on `<archiveControlTopic>-status` (`archive-status` event:
+  `status` `LOADED`|`FAILED`, `requestId`, `activeVersion`, `subtask`, `parallelism`, `error`), which is how
+  the dashboard learns which archive the job really runs. A failed load keeps the previous rules.
 - Agent chaining (an Agent's output feeding another Agent's input, in-process) is resolved by
   `AgentChainBuilder.resolveTopology()`. Each agent is wired exactly once in a single pass;
   the chain topology (edges, entity-key normalisation, Kafka source suppression) is computed
@@ -1594,7 +1597,8 @@ Key points:
 | `subscriptions[].sqlEnrichment.inputViewName` | No              | Temporary view name for the raw incoming stream. Default: `"raw_events"`. |
 | `subscriptions[].sqlEnrichment.outputViewName` | No             | View name from which enriched rows are read. Must be defined by the SQL script. Default: `"enriched_events"`. |
 | `ruleset.path`                             | **Yes**             | Path to the Decision Intelligence archive JAR                                                   |
-| `ruleset.archiveControlTopic`              | No                  | Kafka topic for zero-downtime archive reload; omit to disable                                   |
+| `ruleset.archiveControlTopic`              | No                  | Kafka topic for zero-downtime archive reload; omit to disable. Acknowledgements are published on `<topic>-status` |
+| `ruleset.defaultPath`                      | No                  | Written by the dashboard's *Refresh Rules* the first time it loads another archive: the jar the use case shipped with (the previous `ruleset.path`). *Restore default* reloads it. `ruleset.path` always names the archive the job confirmed it loaded |
 | `ruleset.operations[].operation`           | **Yes** (per op)    | IBM Decision Intelligence operation name this mapping applies to                                |
 | `ruleset.operations[].entityField`         | No                  | Field name used for the entity in the Decision Service **input**. Also the field read from the result to persist updated entity state, unless `outboundEntityField` is set. Unset → input alias defaults to `"entity"`; blank (`""`) → no entity is injected into the input. See [§7.1](#71-the-entityfield-contract--input-and-output). |
 | `ruleset.operations[].outboundEntityField` | No                  | Field name under which the Decision Service **result** carries the updated entity, when it differs from the input name (`entityField`). Unset or blank → `entityField` is used for the result too. See [§7.1](#71-the-entityfield-contract--input-and-output). |

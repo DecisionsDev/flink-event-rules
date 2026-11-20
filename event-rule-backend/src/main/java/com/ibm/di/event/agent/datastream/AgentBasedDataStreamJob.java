@@ -512,6 +512,18 @@ public class AgentBasedDataStreamJob {
             LOG.info("[{}] Wired agent-error DLQ sink → topic={}", agentId, dlqTopic);
         }
 
+        // ── 5b'. Archive-status acknowledgements ──────────────────────────────
+        // One ack per subtask for every LOAD/ROLLBACK, so the BFF can tell which archive the
+        // running job really loaded before it records it in agents.json.
+        if (agent.getRuleset().hasBroadcastReload()) {
+            String statusTopic = archiveStatusTopic(agent.getRuleset().getArchiveControlTopic());
+            processed.getSideOutput(processor.getArchiveStatusTag())
+                .sinkTo(buildKafkaSink(bootstrapServers, statusTopic, agentId + "-archive-status"))
+                .uid("agent-archive-status-" + agentId)
+                .name("ArchiveStatus[" + agentId + " → " + statusTopic + "]");
+            LOG.info("[{}] Wired archive-status sink → topic={}", agentId, statusTopic);
+        }
+
         // ── 5c. Entity-state changelog sink ───────────────────────────────────
         if (agent.getStateConfig() != null && agent.getStateConfig().hasChangeLogTopic()) {
             String changeLogTopic = agent.getStateConfig().getChangeLogTopic();
@@ -639,6 +651,11 @@ public class AgentBasedDataStreamJob {
 
         return env.fromSource(source, watermarks,
             "Kafka[" + agent.getAgentId() + "/" + topic + "]");
+    }
+
+    /** Topic of the archive-status acknowledgements for an archive-control topic. */
+    public static String archiveStatusTopic(String archiveControlTopic) {
+        return archiveControlTopic + "-status";
     }
 
     // ── Kafka sink builder ────────────────────────────────────────────────────

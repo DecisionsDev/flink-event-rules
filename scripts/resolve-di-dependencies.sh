@@ -62,7 +62,7 @@
 #   2. Computes DI_ZEN_API_KEY_B64 = base64(username:apikey) for the Zen header
 #   3. Queries /ads/index.json to discover execution-api and engine-de-api versions
 #   4. Validates the Maven repository endpoint is reachable with the resolved auth header
-#   5. Verifies the versions in pom.xml match index.json (warns on mismatch)
+#   5. Verifies the versions in pom.xml match index.json (fails on mismatch)
 #   6. Runs mvn dependency:resolve -P maven-designer to download all required JARs
 #   7. Prints a summary of what was resolved
 
@@ -394,10 +394,10 @@ for path in sys.argv[1:]:
         if [[ "$EXEC_API_VERSION" == "$POM_EXEC_VERSION" ]]; then
             info "✓ execution-api version matches index.json ($POM_EXEC_VERSION)"
         else
-            warn "Version mismatch for execution-api:"
-            warn "  pom.xml    : $POM_EXEC_VERSION"
-            warn "  index.json : $EXEC_API_VERSION"
-            warn "Update <execution.api.version> in pom.xml to: $EXEC_API_VERSION"
+            error "Version mismatch for execution-api:"
+            error "  pom.xml    : $POM_EXEC_VERSION"
+            error "  index.json : $EXEC_API_VERSION"
+            error "Update <execution.api.version> in pom.xml to: $EXEC_API_VERSION"
         fi
     fi
 
@@ -405,10 +405,10 @@ for path in sys.argv[1:]:
         if [[ "$ENGINE_DE_API_VERSION" == "$POM_ENGINE_VERSION" ]]; then
             info "✓ engine-de-api version matches index.json ($POM_ENGINE_VERSION)"
         else
-            warn "Version mismatch for engine-de-api:"
-            warn "  pom.xml    : $POM_ENGINE_VERSION"
-            warn "  index.json : $ENGINE_DE_API_VERSION"
-            warn "Update <engine.de.api.version> in pom.xml to: $ENGINE_DE_API_VERSION"
+            error "Version mismatch for engine-de-api:"
+            error "  pom.xml    : $POM_ENGINE_VERSION"
+            error "  index.json : $ENGINE_DE_API_VERSION"
+            error "Update <engine.de.api.version> in pom.xml to: $ENGINE_DE_API_VERSION"
         fi
     fi
 
@@ -469,8 +469,9 @@ else
     echo ""
     echo "  Common causes:"
     echo "  - Artifact not present in the Decision Designer Maven repository."
-    echo "    Verify: curl $CURL_TLS_FLAG -s -H 'Authorization: $AUTH_HEADER' \\"
-    echo "      '${MAVEN_REPO_URL}/com/ibm/decision/execution/execution-api/maven-metadata.xml'"
+    echo "    Verify (use the execution-api version listed by index.json above):"
+    echo "    curl $CURL_TLS_FLAG -s -o /dev/null -w '%{http_code}\n' -H 'Authorization: $AUTH_HEADER' \\"
+    echo "      '${MAVEN_REPO_URL}/com/ibm/decision/execution/execution-api/<version>/execution-api-<version>.pom'"
     echo ""
     echo "  - TLS certificate error."
     echo "    Set DI_SKIP_TLS_VERIFY=true (dev/CI only) or import the Zen CA into your JVM truststore."

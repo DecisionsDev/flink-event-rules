@@ -20,6 +20,7 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const { Kafka, Partitioners } = require('kafkajs');
 const cors = require('cors');
+const syncFs = require('fs');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
@@ -174,13 +175,26 @@ function safeJoin(...parts) {
 // ── DI Runtime configuration ─────────────────────────────────────────────────
 // DI_RUNTIMES is a JSON array of runtime objects:
 //   [{ "id": "di-prod", "name": "DI Production", "url": "https://di.example.com",
-//      "username": "...", "password": "..." }]
-// username/password are optional and used for HTTP Basic auth.
+//      "username": "...", "apiKey": "...", "token": "..." }]
+// Authentication can use either `token` (Bearer authorization) or `username` + `apiKey` (ZenApiKey).
 // When omitted the env var defaults to an empty array (no runtimes configured).
 // IMPORTANT: credentials are intentionally never logged — only id/name/url are
 // emitted in warning messages to avoid leaking secrets to stdout/log aggregators.
-const DI_RUNTIMES = (() => {
-  const raw = process.env.DI_RUNTIMES;
+
+// Detect if running inside a Docker/container environment.
+// When inside a container, loopback addresses (localhost/127.0.0.1/::1) in DI_RUNTIMES
+// point to the container itself, so we rewrite them to host.docker.internal to reach
+// services running on the host machine. Outside Docker, loopback addresses are preserved.
+const isInsideDocker = () => {
+  if (process.env.IN_DOCKER === 'true' || process.env.RUNNING_IN_DOCKER === 'true') return true;
+  try {
+    return syncFs.existsSync('/.dockerenv');
+  } catch {
+    return false;
+  }
+};
+
+function resolveDiRuntimes(raw, inDocker = false) {
   if (!raw || !raw.trim()) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -189,13 +203,30 @@ const DI_RUNTIMES = (() => {
       console.warn('[ads] DI_RUNTIMES must be a JSON array — ignoring');
       return [];
     }
-    return parsed.filter(r => r && typeof r.id === 'string' && typeof r.url === 'string');
+    return parsed
+      .filter(r => r && typeof r.id === 'string' && typeof r.url === 'string')
+      .map(r => {
+        if (inDocker) {
+          try {
+            const parsedUrl = new URL(r.url);
+            if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsedUrl.hostname)) {
+              parsedUrl.hostname = 'host.docker.internal';
+              return { ...r, url: parsedUrl.toString().replace(/\/$/, '') };
+            }
+          } catch {
+            // Keep original url if invalid URL format
+          }
+        }
+        return r;
+      });
   } catch (e) {
     // Do NOT log `e.message` here — it may contain portions of the raw JSON including credentials
     console.warn('[ads] Failed to parse DI_RUNTIMES JSON (check for syntax errors)');
     return [];
   }
-})();
+}
+
+const DI_RUNTIMES = resolveDiRuntimes(process.env.DI_RUNTIMES, isInsideDocker());
 
 // Fat JAR path — explicit env var wins (Docker mount); otherwise auto-resolved from the
 // local build output so local-dev works without any extra env configuration.
@@ -1051,6 +1082,7 @@ async function startKafkaConsumerForUseCase(useCase, descriptor, changelogTopicA
 // in isolation without requiring the full server context.
 const { createAdsRouter }       = require('./routes/di_route');
 const { createScenariosRouter } = require('./routes/scenarios');
+const { createArchiveAckWaiter } = require('./routes/archive_status');
 
 app.use('/api/ads-runtimes',                  createAdsRouter({
   diRuntimes:    DI_RUNTIMES,
@@ -1061,6 +1093,9 @@ app.use('/api/ads-runtimes',                  createAdsRouter({
     await ensureProducerConnected();
     await sharedProducer.send({ topic, messages: [{ value }] });
   },
+  // The running job acknowledges each command on <archiveControlTopic>-status.
+  awaitArchiveAcks: createArchiveAckWaiter({ kafka }),
+  ackTimeoutMs: Number(process.env.ARCHIVE_ACK_TIMEOUT_MS) || 30000,
   // Where ./samples is mounted in the Flink containers (docker-compose.yml).
   flinkSamplesMount: process.env.FLINK_SAMPLES_MOUNT || '/opt/flink/samples',
 }));
@@ -4089,6 +4124,7 @@ if (typeof module !== 'undefined') {
     runtimeOfJobState,
     getFlinkRuntime,
     setFlinkRuntime,
+    resolveDiRuntimes,
     // Exported for unit tests — these helpers are pure / have no side-effects when
     // invoked with a mocked child_process.spawn or a controlled input object.
     invokeArchiveSampleGenerator,

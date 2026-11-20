@@ -670,18 +670,13 @@ To fetch a new archive version that has been deployed to the embedded deployment
 runtime, use [`scripts/get-dsa.sh`](scripts/get-dsa.sh). It saves
 `AirlineDecisionService_<version>.jar` into this directory:
 
+Set environment variables to point to your Decision Intelligence CMS instance. See `.env.example`.
+
 ```bash
-export DIADMIN_USER=<user>
-export DIADMIN_PASSWORD=<password>
-
-# Optional, defaults shown. Replace with URL of IBM DI CMS installation
-export DI_CMS_URL=https://localhost:3000
-export DI_TOKEN_URL=https://localhost:18082
-
 ./samples/airline-agent/scripts/get-dsa.sh 1.1.0
 ```
 
-Requires `curl` and `jq`. After downloading a new version, update `ruleset.path` in
+After downloading a new version, update `ruleset.path` in
 [`agents.json`](agents.json) to the new file name. Then either redeploy the job or hot-swap the
 archive with [`scripts/broadcast-reload.sh`](../../scripts/README.md) through the archive control
 topic `agent-airline-archive-control`.

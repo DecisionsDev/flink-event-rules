@@ -69,6 +69,10 @@ public final class AgentDescriptorValidator {
                 registerUid(seenUids, "agent-error-dlq-" + agentId, agentId);
             }
 
+            if (agent.getRuleset() != null && agent.getRuleset().hasBroadcastReload()) {
+                registerUid(seenUids, "agent-archive-status-" + agentId, agentId);
+            }
+
             if (agent.getStateConfig() != null && agent.getStateConfig().hasChangeLogTopic()) {
                 registerUid(seenUids, "agent-changelog-sink-" + agentId, agentId);
             }

@@ -1092,3 +1092,40 @@ Caused by: java.lang.IllegalArgumentException: agentId=banking-fraud: ruleset.ar
     expect(fn(undefined)).toBe('');
   });
 });
+
+// ── resolveDiRuntimes ────────────────────────────────────────────────────────
+describe('resolveDiRuntimes', () => {
+  const fn = server.resolveDiRuntimes;
+
+  test('returns empty array when input is empty or null', () => {
+    expect(fn('')).toEqual([]);
+    expect(fn(null)).toEqual([]);
+    expect(fn('   ')).toEqual([]);
+  });
+
+  test('preserves localhost/127.0.0.1 when not in Docker', () => {
+    const raw = JSON.stringify([
+      { id: 'di-dev', url: 'https://127.0.0.1:3000' },
+      { id: 'di-local', url: 'http://localhost:8080/path' },
+      { id: 'di-remote', url: 'https://remote.example.com' },
+    ]);
+    const runtimes = fn(raw, false);
+    expect(runtimes[0].url).toBe('https://127.0.0.1:3000');
+    expect(runtimes[1].url).toBe('http://localhost:8080/path');
+    expect(runtimes[2].url).toBe('https://remote.example.com');
+  });
+
+  test('rewrites localhost, 127.0.0.1 and ::1 to host.docker.internal when in Docker', () => {
+    const raw = JSON.stringify([
+      { id: 'di-dev', url: 'https://127.0.0.1:3000' },
+      { id: 'di-local', url: 'http://localhost:8080/path' },
+      { id: 'di-ipv6', url: 'http://[::1]:9000' },
+      { id: 'di-remote', url: 'https://remote.example.com' },
+    ]);
+    const runtimes = fn(raw, true);
+    expect(runtimes[0].url).toBe('https://host.docker.internal:3000');
+    expect(runtimes[1].url).toBe('http://host.docker.internal:8080/path');
+    expect(runtimes[2].url).toBe('http://host.docker.internal:9000');
+    expect(runtimes[3].url).toBe('https://remote.example.com');
+  });
+});
